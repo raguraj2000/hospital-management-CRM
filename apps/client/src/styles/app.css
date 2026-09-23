@@ -1,0 +1,981 @@
+@import "./tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  /* Bahnschrift is a single variable-weight font; without pinning the
+     weight axis explicitly, some renderers pick a default instance
+     noticeably heavier than true regular, making all body text look
+     semibold. Pin it so plain text actually reads as plain text. */
+  font-weight: 400;
+  font-variation-settings: 'wght' 400;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.meta-row {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.meta-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.meta-value {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-ink);
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  margin: 0 0 var(--space-2) 0;
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: 22px;
+}
+h2 {
+  font-size: 17px;
+}
+h3 {
+  font-size: 14px;
+  color: var(--color-ink-soft);
+}
+
+a {
+  color: var(--color-brand);
+}
+
+/* ---------- App shell: top bar + left sidebar + content ---------- */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 52px;
+  flex-shrink: 0;
+  padding: 0 var(--space-5);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: 13px;
+}
+
+.topbar-user .name {
+  color: var(--color-ink-soft);
+}
+
+.topbar-user .name strong {
+  color: var(--color-ink);
+}
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4) 0;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-4) var(--space-4);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sidebar-brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  background: var(--color-brand);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.sidebar-brand-name {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-2);
+  flex: 1;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  color: var(--color-ink-soft);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.sidebar-link:hover {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+.sidebar-link.active {
+  background: var(--color-positive-bg);
+  color: var(--color-brand);
+}
+
+.sidebar-user {
+  padding: var(--space-3) var(--space-4) 0 var(--space-4);
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-3);
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+.sidebar-user strong {
+  display: block;
+  color: var(--color-ink);
+  font-size: 13px;
+}
+
+.main {
+  flex: 1;
+  padding: var(--space-5) var(--space-6);
+  max-width: 1100px;
+}
+
+/* ---------- Page header ---------- */
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.page-header p {
+  color: var(--color-ink-soft);
+  margin: 0;
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-block;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  text-decoration: none;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.06s ease, box-shadow 0.12s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--color-ink-soft);
+  background: var(--color-paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-brand-hover);
+  border-color: var(--color-brand-hover);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+}
+
+.btn-text {
+  background: none;
+  border: none;
+  color: var(--color-brand);
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: var(--radius);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.btn-text:hover:not(:disabled) {
+  background: var(--color-positive-bg);
+  color: var(--color-brand-hover);
+  text-decoration: underline;
+}
+
+.btn-text:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- Searchable combobox (medicine picker) ---------- */
+
+.combobox {
+  position: relative;
+}
+
+.combobox-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+}
+
+.combobox-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  background: none;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  color: var(--color-ink);
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.combobox-option:hover,
+.combobox-option:focus-visible {
+  background: var(--color-positive-bg);
+  outline: none;
+}
+
+.combobox-option-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.combobox-option-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.combobox-option-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink-soft);
+}
+
+.combobox-option-balance {
+  font-size: 11px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+
+.combobox-empty {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--color-ink-soft);
+}
+
+/* ---------- Forms ---------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--space-3);
+}
+
+.field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+}
+
+.input,
+.field input,
+.field select,
+.field textarea {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.input:focus,
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -1px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 var(--space-4);
+}
+
+.form-section-title {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-brand);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: var(--space-3) 0 var(--space-1) 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.form-section-title:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+/* ---------- Cards / surfaces ---------- */
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+}
+
+/* ---------- Stat tiles ---------- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.stat-tile {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-brand);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+}
+
+.stat-tile.warning {
+  border-left-color: var(--color-warning);
+}
+.stat-tile.critical {
+  border-left-color: var(--color-critical);
+}
+.stat-tile.positive {
+  border-left-color: var(--color-positive);
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+  margin-top: 2px;
+}
+
+/* ---------- Quick links ---------- */
+
+.quick-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+.quick-link {
+  display: block;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  text-decoration: none;
+  color: var(--color-ink);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.06s ease;
+}
+
+.quick-link:hover {
+  border-color: var(--color-brand);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.quick-link-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.quick-link-desc {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+/* ---------- Tables ---------- */
+
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.data-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.data-table td.num {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.data-table tr.row-warning {
+  background: var(--color-warning-bg);
+}
+.data-table tr.row-critical {
+  background: var(--color-critical-bg);
+}
+
+/* ---------- Badges ---------- */
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 100px;
+}
+.badge-positive {
+  background: var(--color-positive-bg);
+  color: var(--color-positive);
+}
+.badge-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+.badge-critical {
+  background: var(--color-critical-bg);
+  color: var(--color-critical);
+}
+.badge-neutral {
+  background: var(--color-paper);
+  color: var(--color-ink-soft);
+}
+
+/* ---------- Login ---------- */
+
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+}
+
+.login-brand-panel {
+  flex: 1;
+  background: var(--color-brand);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--space-7);
+  position: relative;
+  overflow: hidden;
+}
+
+.login-brand-mark {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 22px;
+  margin-bottom: var(--space-5);
+}
+
+.login-brand-panel h1 {
+  font-size: 30px;
+  margin-bottom: var(--space-2);
+}
+
+.login-brand-tagline {
+  color: rgba(255, 255, 255, 0.75);
+  max-width: 34ch;
+  margin: 0;
+}
+
+.vital-line {
+  position: absolute;
+  bottom: 48px;
+  left: -20px;
+  right: -20px;
+  opacity: 0.5;
+}
+
+.login-form-panel {
+  width: 420px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--space-7);
+}
+
+.login-form-panel h2 {
+  margin-bottom: var(--space-5);
+}
+
+.login-error {
+  background: var(--color-critical-bg);
+  color: var(--color-critical);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  font-size: 13px;
+  margin-bottom: var(--space-3);
+}
+
+@media (max-width: 760px) {
+  .login-brand-panel {
+    display: none;
+  }
+  .login-form-panel {
+    width: 100%;
+  }
+}
+
+/* ---------- Top bar appearance switch (Light / Dark / Automatic) ---------- */
+
+.theme-switch {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.theme-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  padding: 0 8px;
+  height: 28px;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.theme-switch button + button {
+  border-left: 1px solid var(--color-border);
+}
+
+.theme-switch button:hover {
+  color: var(--color-ink);
+}
+
+.theme-switch button.active {
+  background: var(--color-brand);
+  color: #fff;
+}
+
+/* The picker's box already spans the field; make its text input fill it too. */
+.combobox input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ---------- Invoice / printed bill ---------- */
+
+.invoice-sheet {
+  max-width: 760px;
+}
+
+.invoice-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 2px solid var(--color-ink);
+  margin-bottom: var(--space-3);
+}
+
+.invoice-patient {
+  margin-bottom: var(--space-3);
+}
+
+.invoice-table {
+  margin-bottom: var(--space-3);
+}
+
+.invoice-totals {
+  margin-left: auto;
+  max-width: 380px;
+}
+
+.invoice-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 3px 0;
+  font-size: 14px;
+}
+
+.invoice-grand-total {
+  border-top: 2px solid var(--color-ink);
+  margin-top: 6px;
+  padding-top: 6px;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.invoice-notes {
+  margin-top: var(--space-4);
+}
+
+.invoice-signature {
+  margin-top: 48px;
+  text-align: right;
+  border-top: 1px solid var(--color-border);
+  padding-top: 6px;
+  width: 200px;
+  margin-left: auto;
+}
+
+/* Shown only on paper; hidden on screen (where the editable inputs show). */
+.print-only {
+  display: none;
+}
+
+@media print {
+  /* Print the bill alone: no sidebar, top bar, banners or buttons, and
+     always on white so it doesn't waste ink in dark mode. */
+  .no-print,
+  .sidebar,
+  .topbar,
+  .connection-banner,
+  .page-header {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block;
+  }
+
+  html,
+  body,
+  .shell,
+  .shell-body,
+  .main {
+    background: #fff !important;
+    color: #000 !important;
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .invoice-sheet,
+  .card {
+    border: none !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    color: #000 !important;
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .data-table th,
+  .data-table td {
+    border-color: #999 !important;
+    color: #000 !important;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
+
+/* ---------- Pharmacy (tabs, POS, alerts, receipt) ---------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-4);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-ink-soft);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: var(--color-ink);
+}
+
+.tab.active {
+  color: var(--color-brand);
+  border-bottom-color: var(--color-brand);
+}
+
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-critical);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sidebar-link .count-badge {
+  margin-left: auto;
+}
+
+.alert {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  margin-bottom: var(--space-3);
+}
+
+.alert-critical {
+  background: var(--color-critical-bg);
+  color: var(--color-critical);
+  border: 1px solid var(--color-critical);
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: var(--space-3);
+  font-size: 13px;
+}
+
+.filter-bar label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pos-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.pos-cart {
+  position: sticky;
+  top: 0;
+}
+
+.qty-btn {
+  min-width: 30px;
+  padding: 2px 8px;
+}
+
+@media (max-width: 1000px) {
+  .pos-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Receipt: 80 mm thermal-roll layout (72 mm printable), also fine on A4. */
+.receipt-sheet {
+  width: 72mm;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 12px;
+  background: #fff;
+  color: #000;
+}
+
+.receipt-center {
+  text-align: center;
+}
+
+.receipt-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.receipt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.receipt-total {
+  font-weight: 700;
+  font-size: 14px;
+  margin: 2px 0;
+}
+
+.receipt-small {
+  font-size: 10px;
+}
+
+.receipt-rule {
+  border-top: 1px dashed #000;
+  margin: 6px 0;
+}
+
+@media print {
+  .alert {
+    display: none !important;
+  }
+
+  .receipt-sheet {
+    page: receipt;
+    width: 72mm !important;
+    padding: 0 !important;
+  }
+
+  @page receipt {
+    size: 80mm auto;
+    margin: 4mm;
+  }
+}
+
+/* Inputs in the narrow Bill column must shrink with it, not spill out. */
+.pos-cart .form-grid .field input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}

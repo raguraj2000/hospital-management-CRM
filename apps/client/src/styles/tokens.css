@@ -1,0 +1,65 @@
+/*
+  Design notes (frontend-design pass):
+  - Subject: internal clinic/pharmacy desktop tool for Aadhi Hospital. Daily-use
+    staff software, not a marketing surface -- legibility and calm reliability
+    over flourish.
+  - Fonts are system-only (Bahnschrift / Consolas) on purpose: the spec
+    requires no internet dependency, so no Google Fonts CDN.
+  - One bold moment: the heartbeat-trace line on the login screen. Everything
+    else stays quiet and disciplined.
+  - Avoided on purpose: warm-cream+terracotta, near-black+neon, rounded-card
+    SaaS kit with uniform grey shadows, ALL-CAPS eyebrows, arrow-suffixed
+    buttons, monospace-as-decoration (monospace here is only for real
+    tabular numerals: stock counts, prices, dosages).
+*/
+
+:root {
+  --color-ink: #1e2b3a;
+  --color-ink-soft: #4b5a6b;
+  --color-paper: #f5f7f9;
+  --color-surface: #ffffff;
+  --color-border: #dfe4e9;
+  --color-brand: #154a82;
+  --color-brand-hover: #103c6b;
+  --color-positive: #2f8f6e;
+  --color-positive-bg: #eaf5f0;
+  --color-warning: #c77d1e;
+  --color-warning-bg: #fbf1e2;
+  --color-critical: #b3432e;
+  --color-critical-bg: #fbeae6;
+
+  --font-ui: Bahnschrift, "Segoe UI", system-ui, sans-serif;
+  --font-mono: Consolas, "Cascadia Mono", monospace;
+
+  --radius: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+}
+
+/*
+  Dark mode is applied via [data-theme="dark"] on <html>, controlled by
+  state/theme.ts (Light / Dark / Automatic, where Automatic follows local
+  clock time 6pm-6am -- not the OS prefers-color-scheme, since the ward's
+  night-shift lighting need is the actual driver here, not the OS setting).
+*/
+:root[data-theme='dark'] {
+  --color-ink: #e6ebf1;
+  --color-ink-soft: #93a1b0;
+  --color-paper: #0f151d;
+  --color-surface: #182029;
+  --color-border: #2a333e;
+  --color-brand: #4f8fd1;
+  --color-brand-hover: #6aa3db;
+  --color-positive: #4bb08a;
+  --color-positive-bg: #16281f;
+  --color-warning: #dba54a;
+  --color-warning-bg: #302408;
+  --color-critical: #e07564;
+  --color-critical-bg: #331812;
+}
+

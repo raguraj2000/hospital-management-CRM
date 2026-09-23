@@ -1,0 +1,17 @@
+{
+  "name": "clinic-system",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace=apps/server",
+    "build:shared": "npm run build --workspace=packages/shared",
+    "build:server": "npm run build:shared && npm run build --workspace=apps/server",
+    "start:server": "npm run start --workspace=apps/server",
+    "migrate": "npm run migrate --workspace=apps/server",
+    "seed": "npm run seed --workspace=apps/server",
+    "test:server": "npm run test --workspace=apps/server"
+  }
+}

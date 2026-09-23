@@ -1,0 +1,17 @@
+[package]
+name = "clinic-system"
+version = "0.4.1"
+description = "Clinic/Pharmacy management desktop client"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+name = "clinic_system_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

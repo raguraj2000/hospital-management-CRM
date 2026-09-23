@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Aadhi Hospital",
+  "version": "0.4.1",
+  "identifier": "com.clinic.system",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Aadhi Hospital",
+        "width": 1280,
+        "height": 800
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
+  }
+}
