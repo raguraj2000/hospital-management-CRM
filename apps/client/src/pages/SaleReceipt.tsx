@@ -4,6 +4,7 @@ import { get, mutate, describeError } from '../api/client.js';
 import { useHasPermission } from '../state/permissions.js';
 import { ConfirmDelete } from '../components/ConfirmDelete.js';
 import { formatRupees } from '../lib/money.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 interface SaleData {
   sale: {
@@ -52,7 +53,7 @@ export function SaleReceipt() {
     }
   }, [data, searchParams, setSearchParams]);
 
-  if (error) return <p className="login-error">{error}</p>;
+  if (error) return <ErrorMessage error={error} />;
   if (!data) return <p>Loading…</p>;
   const { sale, lines, clinic } = data;
   const change = sale.amount_received_cents != null ? sale.amount_received_cents - sale.total_cents : null;

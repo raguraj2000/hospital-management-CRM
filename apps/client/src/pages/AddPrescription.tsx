@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { get, mutate, describeError } from '../api/client.js';
 import { getSessionUser } from '../state/auth-store.js';
 import { MedicineCombobox } from '../components/MedicineCombobox.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 interface StaffOption {
   id: number;
@@ -254,7 +255,7 @@ export function AddPrescription() {
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
         </div>
 
-        {error && <p className="login-error">{error}</p>}
+        <ErrorMessage error={error} />
 
         <button type="submit" className="btn btn-primary" disabled={saving}>
           {saving ? 'Dispensing…' : 'Save & dispense'}

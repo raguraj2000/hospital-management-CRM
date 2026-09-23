@@ -7,6 +7,7 @@ import { requirePermission } from '../middleware/rbac.js';
 import { ADMIN_ROLE, EDITABLE_ROLES, type Permission } from '@clinic/shared';
 import { getPermissionMatrix, setPermissionsFor } from '../services/permission-service.js';
 import { insertAuditLog } from '../services/audit-service.js';
+import { revokeUserSessions } from '../services/auth-service.js';
 import {
   runBackupNow,
   getBackupSettings,
@@ -49,6 +50,18 @@ export function createAdminRoutes(db: Database.Database): Hono {
   const app = new Hono();
   app.use('*', requireAuth(db));
 
+  function isAdminAccount(userId: number): boolean {
+    const row = db
+      .prepare(`SELECT r.name AS role_name FROM user u JOIN role r ON r.id = u.role_id WHERE u.id = ?`)
+      .get(userId) as { role_name: string } | undefined;
+    return row?.role_name === ADMIN_ROLE;
+  }
+
+  // "Manage staff accounts" can be ticked for other roles in Settings; that
+  // must never let them take over the Admin account (edit it, reset its
+  // password). Only the Admin may change the Admin account.
+  const ADMIN_ONLY = "Only the Admin can change the Admin account.";
+
   // Without `page`, behaves exactly as before (LIMIT 200, no `total`);
   // pass `page` (and optional `pageSize`, default 20) for pagination.
   app.get('/audit-log', requirePermission('auditLog.view'), (c) => {
@@ -89,6 +102,7 @@ export function createAdminRoutes(db: Database.Database): Hono {
 
   app.patch('/users/:id', requirePermission('user.manage'), async (c) => {
     const id = Number(c.req.param('id'));
+    if (isAdminAccount(id) && c.get('user').role !== ADMIN_ROLE) return c.json({ error: ADMIN_ONLY }, 403);
     const parsed = updateUserSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
     const body = parsed.data;
@@ -129,12 +143,16 @@ export function createAdminRoutes(db: Database.Database): Hono {
 
     const user = db.prepare('SELECT id FROM user WHERE id = ?').get(id);
     if (!user) return c.json({ error: 'Not found' }, 404);
+    if (isAdminAccount(id) && c.get('user').role !== ADMIN_ROLE) return c.json({ error: ADMIN_ONLY }, 403);
 
     const passwordHash = await argon2.hash(parsed.data.newPassword);
     db.prepare(`UPDATE user SET password_hash = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(
       passwordHash,
       id,
     );
+    // Old password is gone, so are the sessions opened with it (except the caller's own).
+    const callerToken = (c.req.header('Authorization') ?? '').slice('Bearer '.length);
+    revokeUserSessions(db, id, callerToken);
     return c.json({ ok: true });
   });
 
@@ -161,7 +179,10 @@ export function createAdminRoutes(db: Database.Database): Hono {
 
   app.post('/users/:id/deactivate', requirePermission('user.manage'), (c) => {
     const id = Number(c.req.param('id'));
+    // Deactivating the only Admin would lock everyone out of Settings.
+    if (isAdminAccount(id)) return c.json({ error: "The Admin account can't be deactivated." }, 400);
     db.prepare(`UPDATE user SET is_active = 0, deactivated_at = datetime('now', 'localtime') WHERE id = ?`).run(id);
+    revokeUserSessions(db, id);
     return c.json({ ok: true });
   });
 

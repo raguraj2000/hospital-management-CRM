@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { mutate, ApiError, describeError } from '../api/client.js';
 import { PhoneInput } from '../components/PhoneInput.js';
 import { toIndianPhoneValue } from '../lib/phone.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 interface FormState {
   currentName: string;
@@ -184,7 +185,7 @@ export function AddPatient() {
         </div>
 
         {duplicateWarning && (
-          <div className="login-error" style={{ marginTop: 8 }}>
+          <div className="error-message" style={{ marginTop: 8 }}>
             A patient named "{form.currentName}" with the same date of birth already exists (
             {duplicateWarning.customer_code}).{' '}
             <button type="button" className="btn-text" onClick={() => submit(true)} disabled={submitting}>
@@ -192,7 +193,7 @@ export function AddPatient() {
             </button>
           </div>
         )}
-        {error && <p className="login-error">{error}</p>}
+        <ErrorMessage error={error} />
 
         <div style={{ marginTop: 16 }}>
           <button type="submit" className="btn btn-primary" disabled={submitting}>

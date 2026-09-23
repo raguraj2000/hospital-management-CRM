@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { mutate, describeError, ApiError } from '../api/client.js';
-import { getSessionUser, patchSessionUser } from '../state/auth-store.js';
+import { getSessionUser, patchSessionUser, getMustChangePassword, setMustChangePassword } from '../state/auth-store.js';
 import { useThemePreference } from '../state/theme.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 function Appearance() {
   const [pref, choose] = useThemePreference();
@@ -67,6 +69,7 @@ function MyAccount() {
 }
 
 function ChangePassword() {
+  const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -83,6 +86,11 @@ function ChangePassword() {
     setSaving(true);
     try {
       await mutate('/auth/me', 'PATCH', { currentPassword, newPassword });
+      if (getMustChangePassword()) {
+        setMustChangePassword(false);
+        navigate('/home');
+        return;
+      }
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
@@ -94,7 +102,9 @@ function ChangePassword() {
         err instanceof ApiError && err.status === 401
           ? 'Current password is incorrect.'
           : err instanceof ApiError && err.status === 400
-            ? 'Could not change password — new password needs 8+ characters.'
+            ? (err.body as { error?: unknown } | undefined)?.error === 'Choose a password other than the default one'
+              ? 'Choose a password other than the default one.'
+              : 'Could not change password — new password needs 8+ characters.'
             : describeError(err, 'change your password');
       setStatus({ ok: false, message });
     } finally {
@@ -137,7 +147,8 @@ function ChangePassword() {
             required
           />
         </div>
-        {status && <p className={status.ok ? undefined : 'login-error'}>{status.message}</p>}
+        {status?.ok && <p>{status.message}</p>}
+        <ErrorMessage error={status && !status.ok ? status.message : null} />
         <button type="submit" className="btn btn-primary" disabled={saving}>
           {saving ? 'Saving…' : 'Change password'}
         </button>
@@ -155,6 +166,11 @@ export function Preferences() {
           <p>Personal to your account on this computer.</p>
         </div>
       </div>
+      {getMustChangePassword() && (
+        <div className="alert alert-critical" style={{ marginBottom: 16 }}>
+          You're signed in with the default password. Set a new password below to continue.
+        </div>
+      )}
       <Appearance />
       <MyAccount />
       <ChangePassword />

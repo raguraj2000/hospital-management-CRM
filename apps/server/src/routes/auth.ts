@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type Database from 'better-sqlite3';
 import argon2 from 'argon2';
 import { z } from 'zod';
-import { login, logout } from '../services/auth-service.js';
+import { login, logout, revokeUserSessions, LoginLockedError, DEFAULT_PASSWORD } from '../services/auth-service.js';
 import { getPermissionsFor } from '../services/permission-service.js';
 import { requireAuth } from '../middleware/auth.js';
 
@@ -22,11 +22,12 @@ export function createAuthRoutes(db: Database.Database): Hono {
     if (!body.success) return c.json({ error: 'Invalid request body' }, 400);
 
     try {
-      const { token, user } = await login(db, body.data.username, body.data.password);
+      const { token, user, mustChangePassword } = await login(db, body.data.username, body.data.password);
       // The app hides/shows controls from this list, so a permission change in
       // Settings takes effect for a staff member the next time they sign in.
-      return c.json({ token, user, permissions: getPermissionsFor(db, user.role) });
-    } catch {
+      return c.json({ token, user, permissions: getPermissionsFor(db, user.role), mustChangePassword });
+    } catch (err) {
+      if (err instanceof LoginLockedError) return c.json({ error: err.message }, 429);
       return c.json({ error: 'Invalid credentials' }, 401);
     }
   });
@@ -56,11 +57,17 @@ export function createAuthRoutes(db: Database.Database): Hono {
       if (!row || !(await argon2.verify(row.password_hash, body.currentPassword))) {
         return c.json({ error: 'Current password is incorrect' }, 401);
       }
+      if (body.newPassword === DEFAULT_PASSWORD) {
+        return c.json({ error: 'Choose a password other than the default one' }, 400);
+      }
       const newHash = await argon2.hash(body.newPassword);
       db.prepare(`UPDATE user SET password_hash = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(
         newHash,
         user.userId,
       );
+      // Sign out this account everywhere else (e.g. a computer someone left logged in).
+      const currentToken = (c.req.header('Authorization') ?? '').slice('Bearer '.length);
+      revokeUserSessions(db, user.userId, currentToken);
     }
 
     if (body.fullName) {

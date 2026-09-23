@@ -228,8 +228,15 @@ Write-Host "Granting start/stop control to logged-in users (for the app's Restar
 
 # --- 7. Firewall -- without this, other clinic computers are silently refused
 Write-Host "Opening TCP $Port on Windows Firewall (so other clinic computers can connect)..." -ForegroundColor Cyan
+# Only the clinic's own network: Private/Domain profiles and the local subnet,
+# never a Public network (e.g. someone plugging the PC into a phone hotspot).
+# When more clinic computers are added, the clinic network must be set to
+# "Private" in Windows network settings or they won't be able to connect.
 if (-not (Get-NetFirewallRule -DisplayName "Clinic System Server" -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName "Clinic System Server" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Any | Out-Null
+    New-NetFirewallRule -DisplayName "Clinic System Server" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
+} else {
+    # Tighten a rule created by an older version (which allowed every network).
+    Set-NetFirewallRule -DisplayName "Clinic System Server" -Profile Private,Domain -RemoteAddress LocalSubnet | Out-Null
 }
 
 # --- 8. Start + health check ------------------------------------------------

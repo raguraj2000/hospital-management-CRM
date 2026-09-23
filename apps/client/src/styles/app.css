@@ -636,7 +636,7 @@ table.data-table {
   margin-bottom: var(--space-5);
 }
 
-.login-error {
+.error-message {
   background: var(--color-critical-bg);
   color: var(--color-critical);
   padding: var(--space-2) var(--space-3);

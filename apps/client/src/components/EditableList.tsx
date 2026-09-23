@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { describeError } from '../api/client.js';
 import { ConfirmDelete } from './ConfirmDelete.js';
+import { ErrorMessage } from './ErrorMessage.js';
 
 export interface EditableListItem {
   id: number;
@@ -99,7 +100,7 @@ export function EditableList({
       <button className="btn" onClick={() => setEditing(null)} disabled={saving}>
         Cancel
       </button>
-      {error && <p className="login-error" style={{ width: '100%', margin: 0 }}>{error}</p>}
+      <ErrorMessage error={error} style={{ width: '100%', margin: 0 }} />
     </div>
   );
 

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { get, uploadFile, describeError } from '../api/client.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 const COMMON_TITLES = ['Blood Test', 'X-Ray', 'Urine Test', 'ECG', 'Ultrasound', 'MRI/CT Scan'];
 
@@ -161,14 +162,14 @@ export function AddLabReport() {
             </div>
           </div>
 
-          {error && <p className="login-error">{error}</p>}
+          <ErrorMessage error={error} />
 
           <button type="submit" className="btn btn-primary" disabled={saving}>
             {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Save lab report'}
           </button>
         </form>
       )}
-      {!loaded && error && <p className="login-error">{error}</p>}
+      {!loaded && <ErrorMessage error={error} />}
     </div>
   );
 }

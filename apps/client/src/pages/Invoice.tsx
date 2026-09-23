@@ -4,6 +4,7 @@ import { get, mutate, describeError } from '../api/client.js';
 import { useHasPermission } from '../state/permissions.js';
 import { ConfirmDelete } from '../components/ConfirmDelete.js';
 import { centsToRupees, formatRupees, rupeesToCents } from '../lib/money.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 interface Clinic {
   name: string;
@@ -207,7 +208,7 @@ export function Invoice() {
   }
 
   if (loading) return <p>Loading…</p>;
-  if (error && !clinic) return <p className="login-error">{error}</p>;
+  if (error && !clinic) return <ErrorMessage error={error} />;
 
   return (
     <div>
@@ -243,7 +244,7 @@ export function Invoice() {
         </div>
       </div>
 
-      {error && <p className="login-error no-print">{error}</p>}
+      <ErrorMessage error={error} className="no-print" />
       {savedMessage && <p className="no-print" style={{ color: 'var(--color-positive)' }}>{savedMessage}</p>}
 
       {/* Visit picker: only for a brand-new combined bill. */}

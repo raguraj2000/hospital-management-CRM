@@ -20,11 +20,13 @@ import { createLabReportRoutes } from './routes/lab-reports.js';
 import { createInvoiceRoutes } from './routes/invoices.js';
 import { createPharmacyRoutes } from './routes/pharmacy.js';
 import { scheduleBackups } from './services/backup-service.js';
+import { handleUncaughtError } from './errors.js';
 
 const db = openDatabase({ filePath: defaultDbPath() });
 runMigrations(db);
 
 const app = new Hono();
+app.onError(handleUncaughtError);
 
 // Desktop clients hit this API from a different origin than the API itself
 // (the Tauri webview serves the UI from tauri://localhost / http://tauri.localhost,

@@ -4,6 +4,7 @@ import { useHasPermission } from '../state/permissions.js';
 import { ALL_PERMISSIONS, PERMISSION_LABELS } from '@clinic/shared';
 import { ServerStatusPanel } from '../components/ServerStatusPanel.js';
 import { Pagination } from '../components/Pagination.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 const AUDIT_PAGE_SIZE = 20;
 
@@ -192,14 +193,14 @@ function StaffAndRoles() {
               ))}
             </select>
           </div>
-          {addStatus && <p className="login-error">{addStatus}</p>}
+          <ErrorMessage error={addStatus} />
           <button type="submit" className="btn btn-primary">
             Save staff member
           </button>
         </form>
       )}
 
-      {error && <p className="login-error">{error}</p>}
+      <ErrorMessage error={error} />
 
       <table className="data-table">
         <thead>
@@ -251,9 +252,7 @@ function StaffAndRoles() {
                     {s.username}
                   </button>
                 )}
-                {editingUsernameId === s.id && usernameError && (
-                  <p className="login-error" style={{ fontSize: 12, margin: '4px 0 0' }}>{usernameError}</p>
-                )}
+                {editingUsernameId === s.id && <ErrorMessage error={usernameError} style={{ fontSize: 12, margin: '4px 0 0' }} />}
               </td>
               <td>
                 {s.role_name === 'admin' ? (
@@ -398,7 +397,7 @@ function RolesAndPermissions() {
         <strong>Admin always has everything</strong> and can't be changed — that's what stops the clinic being locked out
         of its own system.
       </p>
-      {status && <p className="login-error">{status}</p>}
+      <ErrorMessage error={status} />
       <div style={{ overflowX: 'auto' }}>
         <table className="data-table">
           <thead>
@@ -504,7 +503,7 @@ function Backups() {
             Automatic backups
           </label>
           {!settings.auto && (
-            <p className="login-error" style={{ marginTop: 0 }}>
+            <p className="error-message" style={{ marginTop: 0 }}>
               Automatic backups are OFF. Use “Back up now” regularly, or turn them back on.
             </p>
           )}

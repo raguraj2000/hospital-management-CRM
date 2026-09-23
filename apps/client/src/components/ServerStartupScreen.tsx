@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ensureServerRunning } from '../api/tauri-bridge.js';
 import { getServerRoot, setServerRoot } from '../state/server-lifecycle.js';
 import { getServerBaseUrl } from '../api/client.js';
+import { ErrorMessage } from './ErrorMessage.js';
 
 type Phase = 'starting' | 'waiting' | 'error';
 
@@ -88,7 +89,7 @@ export function ServerStartupScreen({ onReady }: { onReady: () => void }) {
       {phase === 'error' && (
         <>
           <h2>Couldn't start the server</h2>
-          <p className="login-error" style={{ whiteSpace: 'pre-wrap' }}>{error}</p>
+          <ErrorMessage error={error} style={{ whiteSpace: 'pre-wrap' }} />
           <div className="field">
             <label htmlFor="server-root">Server folder</label>
             <input id="server-root" value={root} onChange={(e) => setRoot(e.target.value)} />

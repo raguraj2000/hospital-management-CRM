@@ -10,6 +10,7 @@ export interface SessionUser {
 const TOKEN_KEY = 'clinic.sessionToken';
 const PERMISSIONS_KEY = 'clinic.sessionPermissions';
 const USER_KEY = 'clinic.sessionUser';
+const MUST_CHANGE_PASSWORD_KEY = 'clinic.mustChangePassword';
 
 export function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -39,6 +40,17 @@ export function clearSession(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
   localStorage.removeItem(PERMISSIONS_KEY);
+  localStorage.removeItem(MUST_CHANGE_PASSWORD_KEY);
+}
+
+/** True while the signed-in user still has the default password; the app keeps them on Preferences until they change it. */
+export function getMustChangePassword(): boolean {
+  return localStorage.getItem(MUST_CHANGE_PASSWORD_KEY) === '1';
+}
+
+export function setMustChangePassword(value: boolean): void {
+  if (value) localStorage.setItem(MUST_CHANGE_PASSWORD_KEY, '1');
+  else localStorage.removeItem(MUST_CHANGE_PASSWORD_KEY);
 }
 
 /** Patches the locally stored user (e.g. after a self-service name change) without a fresh login. */

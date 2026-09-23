@@ -11,7 +11,7 @@ QUICK INSTALL - MAIN COMPUTER (ONE CLICK)
 -----------------------------------------
 
 1. Plug in the pendrive.
-2. Double-click  INSTALL AADHI HOSPITAL.bat  (on the pendrive).
+2. Double-click  1 - MAIN COMPUTER (install or update).bat  (on the pendrive).
 3. Windows asks for permission: click Yes.
 4. Wait about 1-3 minutes until the window says  DONE  in green, then
    press Enter.
@@ -158,12 +158,14 @@ in the background permanently, including after Windows restarts.
 PART 2 - Install the desktop app (EVERY computer)
 =====================================================================
 
-1. On the pendrive, double-click
-       Installers\Aadhi Hospital_0.1.0_x64-setup.exe
-2. If Windows shows a blue "Windows protected your PC" screen, click
-   "More info", then "Run anyway". This is normal for a new app.
-3. Click through the installer, then open "Aadhi Hospital" from the desktop
-   shortcut or the Start menu.
+ON THE MAIN COMPUTER the app is already installed by
+"1 - MAIN COMPUTER (install or update).bat".
+
+ON EVERY OTHER COMPUTER:
+1. Plug in the pendrive and double-click
+       2 - OTHER COMPUTER (install app).bat
+2. If Windows asks for permission, click Yes (only needed the first time).
+3. Wait for DONE, then open "Aadhi Hospital" from the desktop shortcut.
 
 If the app installer shows an error about "WebView2", or the app window does
 not open or stays blank (this can happen on Windows 10), double-click
@@ -330,15 +332,16 @@ INSTALLING AN UPDATE LATER
 
 The developer brings a new pendrive. On the MAIN computer:
 1. Close the app on every computer.
-2. Double-click  INSTALL AADHI HOSPITAL.bat  on the new pendrive, click Yes.
+2. Double-click  1 - MAIN COMPUTER (install or update).bat  on the new
+   pendrive, click Yes.
 3. It shows "UPDATE: old version -> new version", saves a safety copy of
    all data (C:\Aadhi Hospital\update-backups\before-update-...) and of the
    current program, then installs the update.
 4. Wait for DONE. If anything goes wrong, it automatically puts the
    previous version and data back, so the clinic can keep working.
-5. On the OTHER computers (if any), run the new
-   Installers\Aadhi Hospital_..._x64-setup.exe . It installs over the old
-   version, so there's no need to uninstall first.
+5. On the OTHER computers (if any), double-click
+   2 - OTHER COMPUTER (install app).bat  on the new pendrive. It installs
+   over the old version, so there's no need to uninstall first.
 
 (Developer notes are in DEVELOPER.md in the source code. None of the
 developer scripts should ever be run on the clinic computers.)

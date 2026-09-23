@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { describeError } from '../api/client.js';
+import { ErrorMessage } from './ErrorMessage.js';
 
 const CONFIRM_WORD = 'Delete';
 
@@ -105,11 +106,7 @@ export function ConfirmDelete({
       <button type="button" className="btn-text" onClick={close} disabled={busy}>
         Cancel
       </button>
-      {error && (
-        <span className="login-error" style={{ margin: 0, width: '100%' }}>
-          {error}
-        </span>
-      )}
+      <ErrorMessage error={error} style={{ margin: 0, width: '100%' }} />
     </span>
   );
 }

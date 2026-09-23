@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getServerBaseUrl } from '../api/client.js';
-import { setSession } from '../state/auth-store.js';
+import { setSession, setMustChangePassword } from '../state/auth-store.js';
 import { ServerSettings } from '../components/ServerSettings.js';
 import { ServerStartupScreen } from '../components/ServerStartupScreen.js';
 import { VitalLine } from '../components/VitalLine.js';
 import { isTauriRuntime } from '../api/tauri-bridge.js';
 import { isConfiguredForLocalServer } from '../state/server-lifecycle.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 type ServerPhase = 'checking' | 'ready' | 'needs-startup' | 'unreachable';
 
@@ -53,13 +54,20 @@ export function Login() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
+      if (res.status === 429) {
+        // Locked after too many wrong passwords; the server says for how long.
+        const body = await res.json().catch(() => null);
+        setError(body?.error ?? 'Too many wrong passwords. Try again in a few minutes.');
+        return;
+      }
       if (!res.ok) {
         setError('Invalid username or password.');
         return;
       }
       const data = await res.json();
       setSession(data.token, data.user, data.permissions);
-      navigate('/home');
+      setMustChangePassword(Boolean(data.mustChangePassword));
+      navigate(data.mustChangePassword ? '/preferences' : '/home');
     } catch {
       setError('Could not reach the main computer. Check "Server settings" below and the network connection.');
     }
@@ -82,7 +90,7 @@ export function Login() {
         {(serverPhase === 'ready' || serverPhase === 'unreachable') && (
           <>
             <h2>Sign in</h2>
-            {expired && <p className="login-error">Your session expired. Please sign in again.</p>}
+            {expired && <p className="error-message">Your session expired. Please sign in again.</p>}
             {serverPhase === 'unreachable' && <ServerSettings />}
             <form onSubmit={handleSubmit}>
               <div className="field">
@@ -98,7 +106,7 @@ export function Login() {
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
-              {error && <p className="login-error">{error}</p>}
+              <ErrorMessage error={error} />
               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>
                 Sign in
               </button>

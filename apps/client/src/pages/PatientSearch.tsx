@@ -4,6 +4,7 @@ import { get, describeError } from '../api/client.js';
 import { useHasPermission } from '../state/permissions.js';
 import { Pagination } from '../components/Pagination.js';
 import { formatIndianPhone } from '../lib/phone.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 const PAGE_SIZE = 20;
 
@@ -138,7 +139,7 @@ export function PatientSearch() {
         )}
       </div>
 
-      {error && <p className="login-error">{error}</p>}
+      <ErrorMessage error={error} />
 
       {!loading && results.length === 0 && !error && (
         <p style={{ color: 'var(--color-ink-soft)' }}>

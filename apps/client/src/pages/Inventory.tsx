@@ -4,6 +4,7 @@ import { useHasPermission } from '../state/permissions.js';
 import { MedicineCombobox } from '../components/MedicineCombobox.js';
 import { Pagination } from '../components/Pagination.js';
 import { ConfirmDelete } from '../components/ConfirmDelete.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 interface MedicineRow {
   id: number;
@@ -390,7 +391,7 @@ export function Inventory() {
                   </button>
                 </div>
               )}
-              {categoryStatus && <p className="login-error" style={{ marginTop: 6, marginBottom: 0 }}>{categoryStatus}</p>}
+              <ErrorMessage error={categoryStatus} style={{ marginTop: 6, marginBottom: 0 }} />
             </div>
             <div className="field">
               <label>Unit</label>
@@ -471,7 +472,7 @@ export function Inventory() {
               </>
             )}
           </div>
-          {formStatus && <p className="login-error">{formStatus}</p>}
+          <ErrorMessage error={formStatus} />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button type="submit" className="btn btn-primary">
               {editingId ? 'Save changes' : 'Save medicine'}
@@ -520,7 +521,7 @@ export function Inventory() {
               />
             </div>
           </div>
-          {receiveStatus && <p className="login-error">{receiveStatus}</p>}
+          <ErrorMessage error={receiveStatus} />
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="submit" className="btn btn-primary">
               Add to stock
@@ -552,8 +553,8 @@ export function Inventory() {
         )}
       </div>
 
-      {error && <p className="login-error">{error}</p>}
-      {rowStatus && <p className="login-error">{rowStatus}</p>}
+      <ErrorMessage error={error} />
+      <ErrorMessage error={rowStatus} />
 
       <table className="data-table">
         <thead>

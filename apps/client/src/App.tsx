@@ -14,7 +14,7 @@ import { Invoice } from './pages/Invoice.js';
 import { Pharmacy } from './pages/Pharmacy.js';
 import { SaleReceipt } from './pages/SaleReceipt.js';
 import { Preferences } from './pages/Preferences.js';
-import { getSessionUser, clearSession } from './state/auth-store.js';
+import { getSessionUser, clearSession, getMustChangePassword } from './state/auth-store.js';
 import { useHasPermission } from './state/permissions.js';
 import { startConnectionMonitor } from './state/connection-monitor.js';
 import { startThemeAutoUpdate, useThemePreference } from './state/theme.js';
@@ -22,7 +22,11 @@ import { get, mutate } from './api/client.js';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const user = getSessionUser();
+  const location = useLocation();
   if (!user) return <Navigate to="/login" replace />;
+  // Still on the default password: nothing else opens until it's changed.
+  // TODO(shortcut): enforced in the app only; the server just refuses the default as a *new* password.
+  if (getMustChangePassword() && location.pathname !== '/preferences') return <Navigate to="/preferences" replace />;
   return <>{children}</>;
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "clinic-system"
-version = "0.4.1"
+version = "0.4.2"
 description = "Clinic/Pharmacy management desktop client"
 edition = "2021"
 

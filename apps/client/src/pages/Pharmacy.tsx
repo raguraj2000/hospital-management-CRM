@@ -4,6 +4,7 @@ import { get, mutate, describeError } from '../api/client.js';
 import { useHasPermission } from '../state/permissions.js';
 import { Pagination } from '../components/Pagination.js';
 import { formatRupees, rupeesToCents } from '../lib/money.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 interface Medicine {
   id: number;
@@ -422,7 +423,7 @@ function NewSale({ onSold }: { onSold: () => void }) {
           Print receipt after sale
         </label>
 
-        {error && <p className="login-error">{error}</p>}
+        <ErrorMessage error={error} />
 
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" style={{ flex: 1 }} onClick={completeSale} disabled={saving || cart.length === 0}>
@@ -539,7 +540,7 @@ function SalesHistory() {
         </button>
       </div>
 
-      {error && <p className="login-error">{error}</p>}
+      <ErrorMessage error={error} />
       {data && (
         <p style={{ fontSize: 13, color: 'var(--color-ink-soft)' }}>
           {data.total} sale{data.total === 1 ? '' : 's'} · total <strong>{formatRupees(data.totalCents)}</strong>
@@ -667,7 +668,7 @@ function ExpiringStock() {
       <p style={{ fontSize: 13, color: 'var(--color-ink-soft)' }}>
         Expired stock is never sold or dispensed automatically — remove it from the shelf and write it off in Inventory.
       </p>
-      {error && <p className="login-error">{error}</p>}
+      <ErrorMessage error={error} />
       <table className="data-table">
         <thead>
           <tr>

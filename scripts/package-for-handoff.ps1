@@ -4,7 +4,8 @@
   computers with NO internet. Run on the developer PC (which has internet).
 
   Output: handoff\PENDRIVE\
-      INSTALL AADHI HOSPITAL.bat     <- ONE-CLICK install (main computer)
+      1 - MAIN COMPUTER (install or update).bat  <- ONE-CLICK install/update (main computer)
+      2 - OTHER COMPUTER (install app).bat       <- app only, for every other computer
       SETUP GUIDE.txt                <- installation guide
       Aadhi Hospital\                <- copy this folder to C:\ on the main computer
           Install Main Computer.bat
@@ -102,9 +103,64 @@ try {
     # setup-main-computer.ps1 recreates them on the client.
     Robo (Join-Path $repoRoot "node_modules") (Join-Path $pkgDir "node_modules") @("/XD", ".cache", ".vite")
 
+    # Trim what the clinic never uses (node_modules was ~181 MB). The clinic
+    # PC only builds the server (tsc), runs migrations/seed (tsx) and runs it.
+    Write-Host "Trimming node_modules..." -ForegroundColor Cyan
+    $pkgModules = Join-Path $pkgDir "node_modules"
+    # Desktop-app and test-only packages: nothing on the clinic PC loads these.
+    foreach ($name in @("@tauri-apps", "vite", "@vitejs", "react", "react-dom", "react-router", "react-router-dom",
+                        "@remix-run", "vitest", "@vitest", "rollup", "@rollup", "@babel", "caniuse-lite")) {
+        $p = Join-Path $pkgModules $name
+        if (Test-Path $p) { Remove-Item $p -Recurse -Force }
+    }
+    # better-sqlite3 only loads build\Release\better_sqlite3.node; the rest is
+    # SQLite source code and compiler leftovers (~63 MB).
+    $sqliteDir = Join-Path $pkgModules "better-sqlite3"
+    $sqliteNode = Join-Path $sqliteDir "build\Release\better_sqlite3.node"
+    if (-not (Test-Path $sqliteNode)) { throw "better_sqlite3.node not found at $sqliteNode" }
+    $keepNode = Join-Path $env:TEMP "better_sqlite3.node.keep"
+    Copy-Item $sqliteNode $keepNode -Force
+    foreach ($sub in @("build", "deps", "src")) {
+        $p = Join-Path $sqliteDir $sub
+        if (Test-Path $p) { Remove-Item $p -Recurse -Force }
+    }
+    New-Item -ItemType Directory -Path (Split-Path $sqliteNode) -Force | Out-Null
+    Move-Item $keepNode $sqliteNode -Force
+
+    # Prove the trimmed package still does everything setup-main-computer.ps1
+    # does on the clinic PC (build, migrate, seed) -- a missing module there
+    # can't be fixed without internet, so it must fail HERE instead.
+    Write-Host "Checking the trimmed package builds and sets up a database..." -ForegroundColor Cyan
+    $scope = Join-Path $pkgModules "@clinic"
+    $testDb = Join-Path $env:TEMP "clinic-package-check-$PID.db"
+    $oldDbPath = $env:CLINIC_DB_PATH
+    Push-Location $pkgDir
+    try {
+        New-Item -ItemType Directory -Path $scope -Force | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $scope "shared") -Target (Join-Path $pkgDir "packages\shared") | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $scope "server") -Target (Join-Path $pkgDir "apps\server") | Out-Null
+        $env:CLINIC_DB_PATH = $testDb
+        foreach ($step in @("build:server", "migrate", "seed")) {
+            $out = & npm.cmd run $step 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { Write-Host $out -ForegroundColor DarkGray; throw "Trimmed package failed 'npm run $step' -- a needed module was removed. Take it off the trim list." }
+        }
+        $check = & node -e "require('argon2');const D=require('better-sqlite3');const d=new D(process.env.CLINIC_DB_PATH);console.log(d.prepare('select count(*) c from user').get().c===1?'package-ok':'no-admin');d.close()" 2>&1 | Out-String
+        if ($check -notmatch "package-ok") { Write-Host $check -ForegroundColor DarkGray; throw "Trimmed package check failed: $check" }
+    } finally {
+        $env:CLINIC_DB_PATH = $oldDbPath
+        # Remove the junctions only (they'd point at this PC); setup recreates them.
+        foreach ($name in @("shared", "server")) {
+            $link = Join-Path $scope $name
+            if (Test-Path $link) { [System.IO.Directory]::Delete($link) }
+        }
+        foreach ($suffix in @("", "-wal", "-shm")) { Remove-Item "$testDb$suffix" -Force -ErrorAction SilentlyContinue }
+        Pop-Location
+    }
+    Write-Host "Trimmed package OK." -ForegroundColor Green
+
     Copy-Item "scripts\setup-main-computer.ps1", "scripts\verify-install.ps1", "scripts\one-click-install.ps1",
         "scripts\clinic-common.ps1", "scripts\db-tool.cjs", "scripts\backup-to-pendrive.ps1", "scripts\restore-backup.ps1",
-        "scripts\reset-admin-password.ps1", "scripts\collect-support-info.ps1" (Join-Path $pkgDir "scripts")
+        "scripts\reset-admin-password.ps1", "scripts\collect-support-info.ps1", "scripts\install-app-only.ps1" (Join-Path $pkgDir "scripts")
     # Shown by the installer ("UPDATE: old -> new") and in Collect Support Info.
     $appVersion = (Get-Content "apps\client\src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json).version
     Set-Content -Path (Join-Path $pkgDir "version.txt") -Value "$appVersion (built $(Get-Date -Format 'yyyy-MM-dd HH:mm'))" -Encoding ASCII

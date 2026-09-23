@@ -7,6 +7,7 @@ import { PhoneInput } from '../components/PhoneInput.js';
 import { ConfirmDelete } from '../components/ConfirmDelete.js';
 import { EditableList } from '../components/EditableList.js';
 import { formatIndianPhone, toIndianDigits, toIndianPhoneValue } from '../lib/phone.js';
+import { ErrorMessage } from '../components/ErrorMessage.js';
 
 interface PrescriptionLine {
   id: number;
@@ -61,7 +62,7 @@ function VisitNotes({ visit, canEdit, onSaved }: { visit: VisitRow; canEdit: boo
             Cancel
           </button>
         </div>
-        {error && <p className="login-error" style={{ marginBottom: 0 }}>{error}</p>}
+        <ErrorMessage error={error} style={{ marginBottom: 0 }} />
       </div>
     );
   }
@@ -213,7 +214,7 @@ function EditablePrescriptionRow({
               Cancel
             </button>
           </div>
-          {status && <p className="login-error" style={{ marginTop: 4, marginBottom: 0 }}>{status}</p>}
+          <ErrorMessage error={status} style={{ marginTop: 4, marginBottom: 0 }} />
         </td>
       </tr>
     );
@@ -244,7 +245,7 @@ function EditablePrescriptionRow({
       {status && (
         <tr>
           <td colSpan={4} style={{ padding: '0 0 8px' }}>
-            <p className="login-error" style={{ margin: 0 }}>{status}</p>
+            <ErrorMessage error={status} style={{ margin: 0 }} />
           </td>
         </tr>
       )}
@@ -386,7 +387,7 @@ function EditPatientForm({
           <input id="edit-ec-phone" {...field('emergencyContactPhone')} />
         </div>
       </div>
-      {error && <p className="login-error">{error}</p>}
+      <ErrorMessage error={error} />
       <div style={{ display: 'flex', gap: 8 }}>
         <button type="submit" className="btn btn-primary" disabled={saving}>
           {saving ? 'Saving…' : 'Save changes'}
@@ -534,7 +535,7 @@ export function PatientDetail() {
     load();
   }
 
-  if (error) return <p className="login-error">{error}</p>;
+  if (error) return <ErrorMessage error={error} />;
   if (!data) return <p>Loading…</p>;
 
   const { patient, allergies, conditions } = data;

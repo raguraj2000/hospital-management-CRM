@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   ONE-CLICK install of the MAIN computer, run from the pendrive (no internet).
-  Started by "INSTALL AADHI HOSPITAL.bat" at the pendrive root.
+  Started by "1 - MAIN COMPUTER (install or update).bat" at the pendrive root.
 
   1. Node.js     -- installs the pendrive's version silently if missing
   2. Copy        -- pendrive "Aadhi Hospital" -> C:\Aadhi Hospital
@@ -35,7 +35,7 @@ function Finish([int]$Code) {
 function Fail([string]$Message) {
     Write-Host ""
     Write-Host "INSTALL STOPPED: $Message" -ForegroundColor Red
-    Write-Host "Fix the problem above, then double-click INSTALL AADHI HOSPITAL.bat again. Running it again is safe." -ForegroundColor Yellow
+    Write-Host "Fix the problem above, then double-click '1 - MAIN COMPUTER (install or update).bat' again. Running it again is safe." -ForegroundColor Yellow
     # Defensive: if this failure came after Stop-Server ran (e.g. the update
     # was aborted partway through), make sure the clinic isn't left offline.
     # Harmless if the server was never stopped, or isn't installed yet.
@@ -74,7 +74,7 @@ Write-Host "== Aadhi Hospital: one-click install (main computer) ==" -Foreground
 Write-Host "Installing from: $pendrive"
 
 if ($pkgSource.TrimEnd('\') -eq $Target) {
-    Fail "Run INSTALL AADHI HOSPITAL.bat from the PENDRIVE, not from C:\Aadhi Hospital."
+    Fail "Run '1 - MAIN COMPUTER (install or update).bat' from the PENDRIVE, not from C:\Aadhi Hospital."
 }
 foreach ($f in @("package.json", "node_modules", "apps\server\migrations", "scripts\setup-main-computer.ps1", "tools\nssm.exe", "node-version.txt")) {
     if (-not (Test-Path (Join-Path $pkgSource $f))) { Fail "The pendrive is incomplete: '$f' is missing from '$pkgSource'." }
