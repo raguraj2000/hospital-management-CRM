@@ -5,6 +5,7 @@ import { useHasPermission } from '../state/permissions.js';
 import { Pagination } from '../components/Pagination.js';
 import { formatRupees, rupeesToCents } from '../lib/money.js';
 import { ErrorMessage } from '../components/ErrorMessage.js';
+import { PrescriptionsToGive } from '../components/PrescriptionsToGive.js';
 
 interface Medicine {
   id: number;
@@ -38,7 +39,7 @@ const PAYMENT_MODES = [
 
 const PRINT_AFTER_KEY = 'clinic.pharmacy.printAfterSale';
 
-type Tab = 'sale' | 'history' | 'expiring';
+type Tab = 'prescriptions' | 'sale' | 'history' | 'expiring';
 
 function isoDate(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -51,7 +52,7 @@ function daysFromToday(date: string): number {
 export function Pharmacy() {
   const [searchParams, setSearchParams] = useSearchParams();
   const canSell = useHasPermission('dispense.create');
-  const tab: Tab = (searchParams.get('tab') as Tab) || (canSell ? 'sale' : 'expiring');
+  const tab: Tab = (searchParams.get('tab') as Tab) || (canSell ? 'prescriptions' : 'expiring');
   const [summary, setSummary] = useState<Summary | null>(null);
 
   function loadSummary() {
@@ -72,7 +73,7 @@ export function Pharmacy() {
       <div className="page-header">
         <div>
           <h1>Pharmacy</h1>
-          <p>Counter sales, receipts and expiring stock.</p>
+          <p>Doctors' prescriptions to give, counter sales, receipts and expiring stock.</p>
         </div>
       </div>
 
@@ -109,6 +110,11 @@ export function Pharmacy() {
 
       <div className="tabs">
         {canSell && (
+          <button className={tab === 'prescriptions' ? 'tab active' : 'tab'} onClick={() => setTab('prescriptions')}>
+            Prescriptions to give
+          </button>
+        )}
+        {canSell && (
           <button className={tab === 'sale' ? 'tab active' : 'tab'} onClick={() => setTab('sale')}>
             New sale
           </button>
@@ -126,6 +132,7 @@ export function Pharmacy() {
         </button>
       </div>
 
+      {tab === 'prescriptions' && canSell && <PrescriptionsToGive />}
       {tab === 'sale' && canSell && <NewSale onSold={loadSummary} />}
       {tab === 'history' && canSell && <SalesHistory />}
       {tab === 'expiring' && <ExpiringStock />}

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getServerBaseUrl } from '../api/client.js';
+import { getServerBaseUrl, isWebsite } from '../api/client.js';
 import { setSession, setMustChangePassword } from '../state/auth-store.js';
 import { ServerSettings } from '../components/ServerSettings.js';
 import { ServerStartupScreen } from '../components/ServerStartupScreen.js';
@@ -91,7 +91,11 @@ export function Login() {
           <>
             <h2>Sign in</h2>
             {expired && <p className="error-message">Your session expired. Please sign in again.</p>}
-            {serverPhase === 'unreachable' && <ServerSettings />}
+            {/* A website always talks to the computer it came from: nothing to set. */}
+            {serverPhase === 'unreachable' && !isWebsite() && <ServerSettings />}
+            {serverPhase === 'unreachable' && isWebsite() && (
+              <p className="error-message">The main computer is not answering. Check that it is switched on.</p>
+            )}
             <form onSubmit={handleSubmit}>
               <div className="field">
                 <label htmlFor="username">Username</label>

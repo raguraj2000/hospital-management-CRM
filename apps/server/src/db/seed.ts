@@ -6,7 +6,7 @@ import { openDatabase, defaultDbPath } from './connection.js';
 import { runMigrations } from './migrate.js';
 import { generateBatchCode } from '../services/stock-service.js';
 
-const ROLES = ['admin', 'manager', 'doctor', 'pharmacist', 'front_desk'] as const;
+const ROLES = ['admin', 'manager', 'doctor', 'pharmacist', 'front_desk', 'lab_technician'] as const;
 
 export async function seed(db: Database.Database) {
   runMigrations(db);

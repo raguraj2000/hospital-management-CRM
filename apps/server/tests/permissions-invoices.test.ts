@@ -28,7 +28,7 @@ describe('role permissions (admin locked, others editable)', () => {
 
   it('starts with exactly the permissions each role had before (seeded by migration)', () => {
     expect(getPermissionsFor(db, 'front_desk').sort()).toEqual(
-      ['patient.view', 'patient.create', 'patient.edit', 'inventory.view', 'invoice.view', 'invoice.manage'].sort(),
+      ['patient.view', 'patient.create', 'patient.edit', 'inventory.view', 'invoice.view', 'invoice.manage', 'payment.receive'].sort(),
     );
     expect(hasPermission(db, 'doctor', 'patient.editMedicalInstructions')).toBe(true);
     expect(hasPermission(db, 'doctor', 'medicine.manage')).toBe(false);
@@ -91,7 +91,8 @@ describe('invoices', () => {
     const visits = getVisitsForBilling(db, fixtures.patientId);
     const visit = visits.find((v) => v.id === fixtures.visitEventId)!;
     expect(visit.lines).toEqual([
-      { description: 'Test Med', quantity: 3, unitPriceCents: 250, lineTotalCents: 750 },
+      // An older dispense with no prescription line: still billed, just not linked to one.
+      { description: 'Test Med', quantity: 3, unitPriceCents: 250, lineTotalCents: 750, sourceType: null, sourceId: null },
     ]);
     expect(visit.invoiced_on).toBeNull();
   });
@@ -118,7 +119,7 @@ describe('invoices', () => {
     // 750 items + 35000 fees - 2500 discount
     expect(loaded.totals).toEqual({ itemsCents: 750, feesCents: 35000, totalCents: 33250 });
     expect(loaded.invoice.patient_name).toBe('Test Patient');
-    expect(loaded.clinic.name).toBe('Aathi Hospital');
+    expect(loaded.clinic.name).toBe('Aadhi Hospital');
     expect(loaded.clinic.doctorName).toBe('Dr. Suthakar');
     expect(loaded.clinic.phone).toBe('9655125145');
     expect(loaded.visitIds).toEqual([fixtures.visitEventId]);

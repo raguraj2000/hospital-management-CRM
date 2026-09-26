@@ -308,7 +308,7 @@ export function Inventory() {
       <div className="page-header">
         <div>
           <h1>Medicine inventory</h1>
-          <p>Stock is pulled first from whichever batch expires soonest.</p>
+          <p>Expired and soon-to-expire stock is listed first. Stock is pulled first from whichever batch expires soonest.</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {canAdjustStock && (
@@ -584,7 +584,19 @@ export function Inventory() {
                 <td>{m.base_unit}</td>
                 <td className="num">{m.reorder_point}</td>
                 <td className="num">{m.minimum_stock}</td>
-                <td style={expiryStyle(m.nearest_expiry)}>{m.nearest_expiry ?? '—'}</td>
+                <td style={expiryStyle(m.nearest_expiry)}>
+                  {m.nearest_expiry ?? '—'}
+                  {m.nearest_expiry && m.nearest_expiry < todayIso() && (
+                    <span className="badge badge-critical" style={{ marginLeft: 6 }}>
+                      EXPIRED
+                    </span>
+                  )}
+                  {m.nearest_expiry && m.nearest_expiry >= todayIso() && m.nearest_expiry <= expiryWarnIso() && (
+                    <span className="badge badge-warning" style={{ marginLeft: 6 }}>
+                      Expires soon
+                    </span>
+                  )}
+                </td>
                 {canManageMedicine && (
                   <td>
                     <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' }}>

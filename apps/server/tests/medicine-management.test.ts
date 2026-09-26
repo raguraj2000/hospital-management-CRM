@@ -133,4 +133,31 @@ describe('medicine management (batch code, category, delete)', () => {
     const secondDelete = await medicines.request(`/${id}/delete`, { method: 'POST', headers: auth() });
     expect(secondDelete.status).toBe(404);
   });
+
+  it('inventory list shows expired stock first, then soon-expiring, then the rest A-Z', async () => {
+    const day = (offset: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + offset);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const add = (name: string, expiry: string | null) => {
+      const id = Number(
+        db.prepare(`INSERT INTO medicine (name, base_unit, price_cents, minimum_stock, reorder_point) VALUES (?, 'tablet', 100, 0, 0)`)
+          .run(name).lastInsertRowid,
+      );
+      if (expiry)
+        db.prepare(
+          `INSERT INTO medicine_batch (medicine_id, lot_number, expiry_date, quantity_received, quantity_remaining) VALUES (?, 'L', ?, 10, 10)`,
+        ).run(id, expiry);
+    };
+    add('Aspirin', day(400));
+    add('Zinc', day(-5)); // expired
+    add('Bcomplex', null); // no stock
+    add('Cetirizine', day(10)); // expires soon
+    add('Amoxicillin', day(3)); // expires sooner
+
+    const res = await medicines.request('/?page=1&pageSize=20', { headers: auth() });
+    const names = (await res.json()).medicines.map((m: any) => m.name);
+    expect(names).toEqual(['Zinc', 'Amoxicillin', 'Cetirizine', 'Aspirin', 'Bcomplex']);
+  });
 });

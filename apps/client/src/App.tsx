@@ -14,7 +14,15 @@ import { Invoice } from './pages/Invoice.js';
 import { Pharmacy } from './pages/Pharmacy.js';
 import { SaleReceipt } from './pages/SaleReceipt.js';
 import { Preferences } from './pages/Preferences.js';
-import { getSessionUser, clearSession, getMustChangePassword } from './state/auth-store.js';
+import { Lab, LabNewOrder } from './pages/Lab.js';
+import { LabOrder } from './pages/LabOrder.js';
+import { LabReport } from './pages/LabReport.js';
+import { RolesPermissions } from './pages/RolesPermissions.js';
+import { Vendors } from './pages/Vendors.js';
+import { PurchaseNew } from './pages/PurchaseNew.js';
+import { PurchaseBill } from './pages/PurchaseBill.js';
+import { Billing } from './pages/Billing.js';
+import { getSessionUser, clearSession, getMustChangePassword, getAuthToken, refreshSessionPermissions } from './state/auth-store.js';
 import { useHasPermission } from './state/permissions.js';
 import { startConnectionMonitor } from './state/connection-monitor.js';
 import { startThemeAutoUpdate, useThemePreference } from './state/theme.js';
@@ -43,13 +51,23 @@ function SessionExpiryHandler() {
   return null;
 }
 
-function NavLink({ to, children, badge }: { to: string; children: React.ReactNode; badge?: number }) {
+function NavLink({
+  to,
+  children,
+  badge,
+  badgeTitle = 'Batches expired or expiring within 30 days',
+}: {
+  to: string;
+  children: React.ReactNode;
+  badge?: number;
+  badgeTitle?: string;
+}) {
   const location = useLocation();
   const active = location.pathname === to || (to !== '/home' && location.pathname.startsWith(to));
   return (
     <Link to={to} className={`sidebar-link${active ? ' active' : ''}`}>
       {children}
-      {badge ? <span className="count-badge" title="Batches expired or expiring within 30 days">{badge}</span> : null}
+      {badge ? <span className="count-badge" title={badgeTitle}>{badge}</span> : null}
     </Link>
   );
 }
@@ -61,8 +79,33 @@ function Sidebar() {
   const canManageUsers = useHasPermission('user.manage');
   const canConfigureBackup = useHasPermission('backup.configure');
   const canSeeInventory = useHasPermission('inventory.view');
+  const canSeeLab = useHasPermission('lab.view');
+  const canSeeVendors = useHasPermission('inventory.adjust') || useHasPermission('supplier.manage');
+  const canTakePayments = useHasPermission('payment.receive');
+
+  const canManageLabTests = useHasPermission('lab.manageTests');
   const location = useLocation();
   const [expiryCount, setExpiryCount] = useState(0);
+  const [labWaiting, setLabWaiting] = useState(0);
+  const [toCollect, setToCollect] = useState(0);
+
+  // Number next to Billing: patients with money still to collect.
+  useEffect(() => {
+    if (!user || !canTakePayments) return;
+    get<{ patients: unknown[] }>('/billing/pending')
+      .then((d) => setToCollect(d.patients.length))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, canTakePayments]);
+
+  // Number next to Lab: orders still waiting for results.
+  useEffect(() => {
+    if (!user || !canSeeLab) return;
+    get<{ pendingOrders: number }>('/lab/summary')
+      .then((d) => setLabWaiting(d.pendingOrders))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, canSeeLab]);
 
   // The red number next to Pharmacy: batches already expired or expiring
   // within 30 days. Refreshed on every page change so it clears as stock is
@@ -93,7 +136,19 @@ function Sidebar() {
             Pharmacy
           </NavLink>
         )}
-        {(canViewAudit || canManageUsers || canConfigureBackup) && <NavLink to="/settings">Settings</NavLink>}
+        {canTakePayments && (
+          <NavLink to="/billing" badge={toCollect} badgeTitle="Patients with money to collect">
+            Billing
+          </NavLink>
+        )}
+        {canSeeVendors && <NavLink to="/vendors">Vendors</NavLink>}
+        {canSeeLab && (
+          <NavLink to="/lab" badge={labWaiting} badgeTitle="Lab orders waiting for results">
+            Lab
+          </NavLink>
+        )}
+        {canManageUsers && <NavLink to="/roles">Roles &amp; permissions</NavLink>}
+        {(canViewAudit || canManageUsers || canConfigureBackup || canManageLabTests) && <NavLink to="/settings">Settings</NavLink>}
       </nav>
     </aside>
   );
@@ -192,6 +247,24 @@ function AppLayout({ children }: { children: React.ReactNode }) {
 export function App() {
   useEffect(() => startConnectionMonitor(), []);
   useEffect(() => startThemeAutoUpdate(), []);
+
+  // Keep the menu in step with what the server allows: re-read permissions on
+  // start and whenever the window is focused again (an update or a change in
+  // Roles & permissions then shows without signing out and in).
+  const [, setPermissionsVersion] = useState(0);
+  useEffect(() => {
+    function refresh() {
+      if (!getAuthToken()) return;
+      get<{ permissions: Parameters<typeof refreshSessionPermissions>[0] }>('/auth/me')
+        .then((d) => {
+          if (refreshSessionPermissions(d.permissions)) setPermissionsVersion((v) => v + 1);
+        })
+        .catch(() => {});
+    }
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
 
   return (
     <BrowserRouter>
@@ -309,6 +382,78 @@ export function App() {
             element={
               <RequireAuth>
                 <Preferences />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/lab"
+            element={
+              <RequireAuth>
+                <Lab />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/lab/new"
+            element={
+              <RequireAuth>
+                <LabNewOrder />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/lab/orders/:orderId"
+            element={
+              <RequireAuth>
+                <LabOrder />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/lab/orders/:orderId/report"
+            element={
+              <RequireAuth>
+                <LabReport />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/roles"
+            element={
+              <RequireAuth>
+                <RolesPermissions />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/billing"
+            element={
+              <RequireAuth>
+                <Billing />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/vendors"
+            element={
+              <RequireAuth>
+                <Vendors />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/vendors/purchases/new"
+            element={
+              <RequireAuth>
+                <PurchaseNew />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/vendors/purchases/:billId"
+            element={
+              <RequireAuth>
+                <PurchaseBill />
               </RequireAuth>
             }
           />
