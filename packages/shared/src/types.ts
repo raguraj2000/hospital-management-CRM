@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'manager' | 'doctor' | 'pharmacist' | 'front_desk';
+export type Role = 'admin' | 'manager' | 'doctor' | 'pharmacist' | 'front_desk' | 'lab_technician';
 
 export type PatientStatus = 'active' | 'inactive' | 'deceased' | 'merged';
 

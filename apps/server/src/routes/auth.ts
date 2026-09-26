@@ -39,6 +39,14 @@ export function createAuthRoutes(db: Database.Database): Hono {
     return c.json({ ok: true });
   });
 
+  // The signed-in user and what they may do RIGHT NOW. The app re-reads this
+  // on start and when the window regains focus, so permissions added by an
+  // update (or changed in Roles & permissions) show without signing out.
+  app.get('/me', requireAuth(db), (c) => {
+    const user = c.get('user');
+    return c.json({ user, permissions: c.get('permissions') });
+  });
+
   // Self-service: any signed-in user can change their own display name or
   // password -- no user.manage permission needed since it's their own
   // record. Distinct from PATCH /admin/users/:id, which lets an admin edit

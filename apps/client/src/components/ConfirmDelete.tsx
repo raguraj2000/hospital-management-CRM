@@ -35,7 +35,8 @@ export function ConfirmDelete({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const matches = typed.trim() === CONFIRM_WORD;
+  // Any capitalisation counts: "delete", "Delete" and "DELETE" all confirm.
+  const matches = typed.trim().toLowerCase() === CONFIRM_WORD.toLowerCase();
 
   function close() {
     setOpen(false);

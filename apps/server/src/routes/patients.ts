@@ -36,6 +36,31 @@ function nextCustomerCode(db: Database.Database): string {
   return `PT-${String(row.c + 1).padStart(6, '0')}`;
 }
 
+/**
+ * Saves a blood pressure reading to the patient's history and keeps
+ * patient.blood_pressure as the latest one. Blank values and a repeat of
+ * the current reading are ignored.
+ */
+function recordBloodPressure(db: Database.Database, patientId: number, value: unknown, userId: number): boolean {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  const reading = value.trim();
+  const current = db.prepare('SELECT blood_pressure FROM patient WHERE id = ?').get(patientId) as
+    | { blood_pressure: string | null }
+    | undefined;
+  const hasHistory = db.prepare('SELECT 1 FROM patient_bp_reading WHERE patient_id = ? LIMIT 1').get(patientId);
+  if (hasHistory && current?.blood_pressure?.trim() === reading) return false;
+  db.prepare('INSERT INTO patient_bp_reading (patient_id, blood_pressure, recorded_by_user_id) VALUES (?, ?, ?)').run(
+    patientId,
+    reading,
+    userId,
+  );
+  db.prepare(`UPDATE patient SET blood_pressure = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(
+    reading,
+    patientId,
+  );
+  return true;
+}
+
 export function createPatientRoutes(db: Database.Database): Hono {
   const app = new Hono();
   app.use('*', requireAuth(db));
@@ -146,6 +171,7 @@ export function createPatientRoutes(db: Database.Database): Hono {
       );
 
     const patientId = Number(info.lastInsertRowid);
+    recordBloodPressure(db, patientId, body.bloodPressure, user.userId);
     insertAuditLog(db, {
       entityType: 'patient',
       entityId: patientId,
@@ -222,7 +248,6 @@ export function createPatientRoutes(db: Database.Database): Hono {
         weightKg: 'weight_kg',
         gender: 'gender',
         bloodGroup: 'blood_group',
-        bloodPressure: 'blood_pressure',
         address: 'address',
         phoneNumber: 'phone_number',
         aadharNumber: 'aadhar_number',
@@ -241,6 +266,7 @@ export function createPatientRoutes(db: Database.Database): Hono {
           ...values,
         );
       }
+      if ('bloodPressure' in body) recordBloodPressure(db, id, body.bloodPressure, user.userId);
 
       insertAuditLog(db, {
         entityType: 'patient',
@@ -331,6 +357,54 @@ export function createPatientRoutes(db: Database.Database): Hono {
     const user = c.get('user');
     insertAuditLog(db, { entityType, entityId, action, performedByUserId: user.userId, performedByRole: user.role, detail });
   }
+
+  // --- Blood pressure history --------------------------------------------
+  app.get('/:id/bp', requirePermission('patient.view'), (c) => {
+    const readings = db
+      .prepare(
+        `SELECT r.id, r.blood_pressure, r.recorded_at, u.full_name AS recorded_by_name
+         FROM patient_bp_reading r LEFT JOIN user u ON u.id = r.recorded_by_user_id
+         WHERE r.patient_id = ? ORDER BY r.recorded_at DESC, r.id DESC LIMIT 100`,
+      )
+      .all(Number(c.req.param('id')));
+    return c.json({ readings });
+  });
+
+  // Front desk (patient.edit) and doctors (patient.editMedicalInstructions) both take BP.
+  app.post('/:id/bp', async (c) => {
+    const granted = c.get('permissions');
+    if (!granted.includes('patient.edit') && !granted.includes('patient.editMedicalInstructions')) {
+      return c.json({ error: 'Your account cannot record blood pressure' }, 403);
+    }
+    const parsed = z
+      .object({ bloodPressure: z.string().trim().regex(/^\d{2,3}\s*\/\s*\d{2,3}$/, 'Write it like 120/80') })
+      .safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'Write blood pressure like 120/80' }, 400);
+    const id = Number(c.req.param('id'));
+    const user = c.get('user');
+    if (!db.prepare('SELECT id FROM patient WHERE id = ? AND deleted_at IS NULL').get(id)) {
+      return c.json({ error: 'Patient not found' }, 404);
+    }
+    const value = parsed.data.bloodPressure.replace(/\s+/g, '');
+    db.transaction(() => {
+      // Always a new reading here (same value re-measured later is still a reading).
+      db.prepare('INSERT INTO patient_bp_reading (patient_id, blood_pressure, recorded_by_user_id) VALUES (?, ?, ?)').run(
+        id,
+        value,
+        user.userId,
+      );
+      db.prepare(`UPDATE patient SET blood_pressure = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(value, id);
+      insertAuditLog(db, {
+        entityType: 'patient',
+        entityId: id,
+        action: 'bp_recorded',
+        performedByUserId: user.userId,
+        performedByRole: user.role,
+        detail: { bloodPressure: value },
+      });
+    })();
+    return c.json({ ok: true }, 201);
+  });
 
   app.post('/:id/allergies', requirePermission('patient.editMedicalInstructions'), async (c) => {
     const id = Number(c.req.param('id'));

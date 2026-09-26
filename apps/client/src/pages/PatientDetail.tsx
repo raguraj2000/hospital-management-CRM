@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { get, mutate, describeError, getServerBaseUrl } from '../api/client.js';
 import { getAuthToken } from '../state/auth-store.js';
 import { useHasPermission } from '../state/permissions.js';
@@ -8,11 +8,23 @@ import { ConfirmDelete } from '../components/ConfirmDelete.js';
 import { EditableList } from '../components/EditableList.js';
 import { formatIndianPhone, toIndianDigits, toIndianPhoneValue } from '../lib/phone.js';
 import { ErrorMessage } from '../components/ErrorMessage.js';
+import { BloodPressure } from '../components/BloodPressure.js';
+import { PatientLabResults } from '../components/PatientLabResults.js';
+import { PaymentBadge } from '../components/PaymentBadge.js';
+import { formatRupees } from '../lib/money.js';
+import { LoadMore, FIRST_SHOWN, LOAD_STEP } from '../components/LoadMore.js';
+import { TakePaymentButton } from '../components/TakePaymentButton.js';
 
 interface PrescriptionLine {
   id: number;
   medicine_name: string;
   quantity_prescribed: number;
+  /** 1 once the pharmacy has given it (after the bill is paid). */
+  given: number;
+  /** 1 for prescriptions written before the pharmacy step existed (no badge). */
+  before_pharmacy_tracking: number;
+  /** 1 once paid for or given: the doctor can't change it any more (write a new prescription). */
+  locked: number;
   dosage_instructions: string | null;
   duration_days: number | null;
 }
@@ -95,6 +107,9 @@ interface InvoiceRow {
   invoice_number: string;
   invoice_date: string;
   total_cents: number;
+  balance_cents: number;
+  payment_status: 'paid' | 'part_paid' | 'not_paid';
+  visit_ids: number[];
 }
 
 interface LabReportRow {
@@ -223,12 +238,26 @@ function EditablePrescriptionRow({
   return (
     <>
       <tr>
-        <td>{line.medicine_name}</td>
+        <td>
+          {line.medicine_name}{' '}
+          {line.before_pharmacy_tracking ? null : line.given ? (
+            <span className="badge badge-positive">Given</span>
+          ) : line.locked ? (
+            <span className="badge badge-positive">Paid · at pharmacy</span>
+          ) : (
+            <span className="badge badge-warning">Not paid yet</span>
+          )}
+        </td>
         <td className="num">{line.quantity_prescribed}</td>
         <td>{line.dosage_instructions ?? '—'}</td>
         <td className="num" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, alignItems: 'center' }}>
           {line.duration_days ? `${line.duration_days}d` : '—'}
-          {canEdit && (
+          {canEdit && line.locked ? (
+            <span style={{ fontSize: 12, color: 'var(--color-ink-soft)' }} title="Paid for or given. Write a new prescription to change it.">
+              Locked (paid)
+            </span>
+          ) : null}
+          {canEdit && !line.locked && (
             <>
               <button className="btn-text" onClick={() => setEditing(true)}>
                 Edit
@@ -258,7 +287,6 @@ interface EditableFields {
   dob: string;
   gender: string;
   bloodGroup: string;
-  bloodPressure: string;
   address: string;
   weightKg: string;
   phoneNumber: string;
@@ -282,7 +310,6 @@ function EditPatientForm({
     dob: patient.dob ?? '',
     gender: patient.gender ?? '',
     bloodGroup: patient.blood_group ?? '',
-    bloodPressure: patient.blood_pressure ?? '',
     address: patient.address ?? '',
     weightKg: patient.weight_kg != null ? String(patient.weight_kg) : '',
     phoneNumber: patient.phone_number ? toIndianDigits(patient.phone_number) : '',
@@ -314,7 +341,6 @@ function EditPatientForm({
         dob: form.dob || null,
         gender: form.gender || null,
         bloodGroup: form.bloodGroup || null,
-        bloodPressure: form.bloodPressure || null,
         address: form.address || null,
         weightKg: form.weightKg ? Number(form.weightKg) : null,
         phoneNumber: toIndianPhoneValue(form.phoneNumber),
@@ -369,10 +395,6 @@ function EditPatientForm({
           <label htmlFor="edit-weight">Weight (kg)</label>
           <input id="edit-weight" type="number" step="0.1" min="0" {...field('weightKg')} />
         </div>
-        <div className="field">
-          <label htmlFor="edit-bp">Blood pressure</label>
-          <input id="edit-bp" placeholder="e.g. 120/80" {...field('bloodPressure')} />
-        </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label htmlFor="edit-address">Address</label>
           <input id="edit-address" {...field('address')} />
@@ -411,6 +433,95 @@ function DeletePatientButton({ patientId }: { patientId: string }) {
       onDelete={() => mutate(`/patients/${patientId}/delete`, 'POST').then(() => undefined)}
       onDeleted={() => navigate('/patients')}
     />
+  );
+}
+
+/**
+ * A visit's bill: paid -> print it; billed but not paid -> open it to take
+ * payment; not billed -> make one. Never a second bill for the same visit.
+ */
+function VisitBillLink({
+  patientId,
+  visitId,
+  bill,
+  canView,
+  canManage,
+}: {
+  patientId: string;
+  visitId: number;
+  bill: InvoiceRow | null;
+  canView: boolean;
+  canManage: boolean;
+}) {
+  if (bill) {
+    if (!canView) return null;
+    return (
+      <Link to={`/invoices/${bill.id}`} className="btn-text" style={{ textDecoration: 'none' }}>
+        {bill.payment_status === 'paid' ? 'Print bill' : 'Open bill'}
+      </Link>
+    );
+  }
+  if (!canManage) return null;
+  return (
+    <Link to={`/patients/${patientId}/invoice?visitId=${visitId}`} className="btn-text" style={{ textDecoration: 'none' }}>
+      Bill
+    </Link>
+  );
+}
+
+/** Invoices tab: every bill for this patient, newest first, with what's still owed. */
+function PatientInvoices({ invoices }: { invoices: InvoiceRow[] | null }) {
+  if (invoices === null) return <p>Loading…</p>;
+  if (invoices.length === 0) return <p style={{ color: 'var(--color-ink-soft)' }}>No invoices for this patient yet.</p>;
+  const total = invoices.reduce((s, i) => s + i.total_cents, 0);
+  const balance = invoices.reduce((s, i) => s + i.balance_cents, 0);
+  return (
+    <>
+      <div className="meta-row" style={{ marginBottom: 16 }}>
+        <div className="meta-item">
+          <span className="meta-label">Total billed</span>
+          <span className="meta-value">{formatRupees(total)}</span>
+        </div>
+        <div className="meta-item">
+          <span className="meta-label">Paid</span>
+          <span className="meta-value">{formatRupees(total - balance)}</span>
+        </div>
+        <div className="meta-item">
+          <span className="meta-label">Balance due</span>
+          <span className="meta-value" style={balance > 0 ? { color: 'var(--color-critical)', fontWeight: 700 } : undefined}>
+            {formatRupees(balance)}
+          </span>
+        </div>
+      </div>
+      <table className="data-table" style={{ marginBottom: 24 }}>
+        <thead>
+          <tr>
+            <th>Number</th>
+            <th>Date</th>
+            <th style={{ textAlign: 'right' }}>Total</th>
+            <th>Payment</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {invoices.map((inv) => (
+            <tr key={inv.id}>
+              <td style={{ fontFamily: 'var(--font-mono)' }}>{inv.invoice_number}</td>
+              <td>{inv.invoice_date}</td>
+              <td className="num">{formatRupees(inv.total_cents)}</td>
+              <td>
+                <PaymentBadge status={inv.payment_status} balanceCents={inv.balance_cents} />
+              </td>
+              <td style={{ textAlign: 'right' }}>
+                <Link to={`/invoices/${inv.id}`} className="btn-text" style={{ textDecoration: 'none' }}>
+                  {inv.payment_status === 'paid' ? 'Print' : 'Open'}
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   );
 }
 
@@ -509,8 +620,15 @@ export function PatientDetail() {
   const canEditPatient = useHasPermission('patient.edit');
   const canManageInvoices = useHasPermission('invoice.manage');
   const canViewInvoices = useHasPermission('invoice.view');
+  const canOrderLab = useHasPermission('lab.order');
+  const canSeeLab = useHasPermission('lab.view');
   const [invoices, setInvoices] = useState<InvoiceRow[] | null>(null);
+  // Newest first; only the latest few show until "Load more".
+  const [reportsShown, setReportsShown] = useState(FIRST_SHOWN);
+  const [visitsShown, setVisitsShown] = useState(FIRST_SHOWN);
   const [editing, setEditing] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: 'overview' | 'invoices' = canViewInvoices && searchParams.get('tab') === 'invoices' ? 'invoices' : 'overview';
 
   function load() {
     get(`/patients/${id}`)
@@ -560,11 +678,17 @@ export function PatientDetail() {
               Edit details
             </button>
           )}
+          {canOrderLab && (
+            <Link to={`/lab/new?patientId=${id}`} className="btn">
+              Order lab test
+            </Link>
+          )}
           {canPrescribe && (
             <Link to={`/patients/${id}/lab-reports/new`} className="btn">
               Add lab report
             </Link>
           )}
+          <TakePaymentButton patientId={Number(id)} />
           {canManageInvoices && (
             <Link to={`/patients/${id}/invoice`} className="btn">
               Create invoice
@@ -591,192 +715,191 @@ export function PatientDetail() {
         />
       )}
 
-      <div className="meta-row" style={{ marginBottom: 24 }}>
-        <div className="meta-item">
-          <span className="meta-label">Date of birth</span>
-          <span className="meta-value">{patient.dob ?? '—'}</span>
+      {canViewInvoices && (
+        <div className="tabs">
+          <button className={tab === 'overview' ? 'tab active' : 'tab'} onClick={() => setSearchParams({}, { replace: true })}>
+            Overview
+          </button>
+          <button className={tab === 'invoices' ? 'tab active' : 'tab'} onClick={() => setSearchParams({ tab: 'invoices' }, { replace: true })}>
+            Invoices{invoices && invoices.length > 0 ? ` (${invoices.length})` : ''}
+          </button>
         </div>
-        <div className="meta-item">
-          <span className="meta-label">Blood group</span>
-          <span className="meta-value">{patient.blood_group ?? '—'}</span>
-        </div>
-        <div className="meta-item">
-          <span className="meta-label">Phone</span>
-          <span className="meta-value">{formatIndianPhone(patient.phone_number)}</span>
-        </div>
-        <div className="meta-item">
-          <span className="meta-label">Blood pressure</span>
-          <span className="meta-value">{patient.blood_pressure ?? '—'}</span>
-        </div>
-        <div className="meta-item">
-          <span className="meta-label">Address</span>
-          <span className="meta-value">{patient.address ?? '—'}</span>
-        </div>
-        <div className="meta-item">
-          <span className="meta-label">Emergency contact</span>
-          <span className="meta-value">
-            {patient.emergency_contact_name ? `${patient.emergency_contact_name} · ` : ''}
-            {patient.emergency_contact_phone ?? '—'}
-          </span>
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-        <EditableList
-          title="Allergies"
-          noun="allergy"
-          canEdit={canPrescribe}
-          items={allergies.map((a: any) => ({ id: a.id, primary: a.allergen, secondary: a.severity }))}
-          primaryPlaceholder="e.g. Penicillin"
-          secondaryPlaceholder="Severity (optional)"
-          onAdd={async (allergen, severity) => {
-            await mutate(`/patients/${id}/allergies`, 'POST', { allergen, severity });
-            load();
-          }}
-          onUpdate={async (allergyId, allergen, severity) => {
-            await mutate(`/patients/${id}/allergies/${allergyId}`, 'PATCH', { allergen, severity });
-            load();
-          }}
-          onDelete={async (allergyId) => {
-            await mutate(`/patients/${id}/allergies/${allergyId}/delete`, 'POST');
-            load();
-          }}
-        />
-        <EditableList
-          title="Chronic conditions"
-          noun="condition"
-          canEdit={canPrescribe}
-          items={conditions.map((c: any) => ({ id: c.id, primary: c.condition_name }))}
-          primaryPlaceholder="e.g. Diabetes"
-          onAdd={async (conditionName) => {
-            await mutate(`/patients/${id}/conditions`, 'POST', { conditionName });
-            load();
-          }}
-          onUpdate={async (conditionId, conditionName) => {
-            await mutate(`/patients/${id}/conditions/${conditionId}`, 'PATCH', { conditionName });
-            load();
-          }}
-          onDelete={async (conditionId) => {
-            await mutate(`/patients/${id}/conditions/${conditionId}/delete`, 'POST');
-            load();
-          }}
-        />
-      </div>
-
-      <h2>Lab reports</h2>
-      {labReports === null && <p>Loading…</p>}
-      {labReports !== null && labReports.length === 0 && (
-        <p style={{ color: 'var(--color-ink-soft)', marginBottom: 24 }}>No lab reports recorded yet.</p>
-      )}
-      {labReports !== null && labReports.length > 0 && (
-        <table className="data-table" style={{ marginBottom: 24 }}>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Title</th>
-              <th>Notes</th>
-              <th>Uploaded by</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {labReports.map((r) => (
-              <tr key={r.id}>
-                <td style={{ fontFamily: 'var(--font-mono)' }}>{r.report_datetime}</td>
-                <td>{r.title}</td>
-                <td>{r.notes ?? '—'}</td>
-                <td>{r.uploaded_by_name}</td>
-                <td style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
-                  <LabReportFileCell report={r} />
-                  {canPrescribe && (
-                    <Link to={`/patients/${id}/lab-reports/${r.id}/edit`} className="btn-text" style={{ textDecoration: 'none' }}>
-                      Edit
-                    </Link>
-                  )}
-                  {canPrescribe && <ConfirmDelete what="lab report" onDelete={() => deleteLabReport(r.id)} align="right" />}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       )}
 
-      {canViewInvoices && invoices !== null && invoices.length > 0 && (
+      {tab === 'overview' && (
         <>
-          <h2>Invoices</h2>
+        <div className="meta-row" style={{ marginBottom: 24 }}>
+          <div className="meta-item">
+            <span className="meta-label">Date of birth</span>
+            <span className="meta-value">{patient.dob ?? '—'}</span>
+          </div>
+          <div className="meta-item">
+            <span className="meta-label">Blood group</span>
+            <span className="meta-value">{patient.blood_group ?? '—'}</span>
+          </div>
+          <div className="meta-item">
+            <span className="meta-label">Phone</span>
+            <span className="meta-value">{formatIndianPhone(patient.phone_number)}</span>
+          </div>
+          <BloodPressure patientId={id!} />
+          <div className="meta-item">
+            <span className="meta-label">Address</span>
+            <span className="meta-value">{patient.address ?? '—'}</span>
+          </div>
+          <div className="meta-item">
+            <span className="meta-label">Emergency contact</span>
+            <span className="meta-value">
+              {patient.emergency_contact_name ? `${patient.emergency_contact_name} · ` : ''}
+              {patient.emergency_contact_phone ?? '—'}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+          <EditableList
+            title="Allergies"
+            noun="allergy"
+            canEdit={canPrescribe}
+            items={allergies.map((a: any) => ({ id: a.id, primary: a.allergen, secondary: a.severity }))}
+            primaryPlaceholder="e.g. Penicillin"
+            secondaryPlaceholder="Severity (optional)"
+            onAdd={async (allergen, severity) => {
+              await mutate(`/patients/${id}/allergies`, 'POST', { allergen, severity });
+              load();
+            }}
+            onUpdate={async (allergyId, allergen, severity) => {
+              await mutate(`/patients/${id}/allergies/${allergyId}`, 'PATCH', { allergen, severity });
+              load();
+            }}
+            onDelete={async (allergyId) => {
+              await mutate(`/patients/${id}/allergies/${allergyId}/delete`, 'POST');
+              load();
+            }}
+          />
+          <EditableList
+            title="Chronic conditions"
+            noun="condition"
+            canEdit={canPrescribe}
+            items={conditions.map((c: any) => ({ id: c.id, primary: c.condition_name }))}
+            primaryPlaceholder="e.g. Diabetes"
+            onAdd={async (conditionName) => {
+              await mutate(`/patients/${id}/conditions`, 'POST', { conditionName });
+              load();
+            }}
+            onUpdate={async (conditionId, conditionName) => {
+              await mutate(`/patients/${id}/conditions/${conditionId}`, 'PATCH', { conditionName });
+              load();
+            }}
+            onDelete={async (conditionId) => {
+              await mutate(`/patients/${id}/conditions/${conditionId}/delete`, 'POST');
+              load();
+            }}
+          />
+        </div>
+
+        {canSeeLab && (
+          <>
+            <h2>Lab tests</h2>
+            <PatientLabResults patientId={id!} />
+          </>
+        )}
+
+        <h2>Uploaded lab reports</h2>
+        {labReports === null && <p>Loading…</p>}
+        {labReports !== null && labReports.length === 0 && (
+          <p style={{ color: 'var(--color-ink-soft)', marginBottom: 24 }}>No lab reports recorded yet.</p>
+        )}
+        {labReports !== null && labReports.length > 0 && (
           <table className="data-table" style={{ marginBottom: 24 }}>
             <thead>
               <tr>
-                <th>Number</th>
                 <th>Date</th>
-                <th style={{ textAlign: 'right' }}>Total</th>
+                <th>Title</th>
+                <th>Notes</th>
+                <th>Uploaded by</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {invoices.map((inv) => (
-                <tr key={inv.id}>
-                  <td style={{ fontFamily: 'var(--font-mono)' }}>{inv.invoice_number}</td>
-                  <td>{inv.invoice_date}</td>
-                  <td className="num">₹{(inv.total_cents / 100).toFixed(2)}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Link to={`/invoices/${inv.id}`} className="btn-text" style={{ textDecoration: 'none' }}>
-                      Open / print
-                    </Link>
+              {labReports.slice(0, reportsShown).map((r) => (
+                <tr key={r.id}>
+                  <td style={{ fontFamily: 'var(--font-mono)' }}>{r.report_datetime}</td>
+                  <td>{r.title}</td>
+                  <td>{r.notes ?? '—'}</td>
+                  <td>{r.uploaded_by_name}</td>
+                  <td style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
+                    <LabReportFileCell report={r} />
+                    {canPrescribe && (
+                      <Link to={`/patients/${id}/lab-reports/${r.id}/edit`} className="btn-text" style={{ textDecoration: 'none' }}>
+                        Edit
+                      </Link>
+                    )}
+                    {canPrescribe && <ConfirmDelete what="lab report" onDelete={() => deleteLabReport(r.id)} align="right" />}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+        {labReports !== null && (
+          <LoadMore shown={reportsShown} total={labReports.length} onMore={() => setReportsShown((n) => n + LOAD_STEP)} />
+        )}
+
+        <h2>Follow-ups &amp; prescriptions</h2>
+        {visits === null && <p>Loading…</p>}
+        {visits !== null && visits.length === 0 && (
+          <p style={{ color: 'var(--color-ink-soft)' }}>No prescriptions recorded yet.</p>
+        )}
+        {visits !== null &&
+          visits.slice(0, visitsShown).map((v) => (
+            <div key={v.id} className="card" style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                <strong>{v.visit_date}</strong>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span style={{ color: 'var(--color-ink-soft)', fontSize: 13 }}>
+                    {v.follow_up_id ? 'Follow-up visit' : 'Walk-in visit'}
+                    {v.attending_doctor_name ? ` · ${v.attending_doctor_name}` : ''}
+                    {v.follow_up_planned_end_date ? ` · through ${v.follow_up_planned_end_date}` : ''}
+                  </span>
+                  <VisitBillLink
+                    patientId={id!}
+                    visitId={v.id}
+                    bill={invoices?.find((inv) => inv.visit_ids.includes(v.id)) ?? null}
+                    canView={canViewInvoices}
+                    canManage={canManageInvoices}
+                  />
+                  {canPrescribe && !v.prescriptionLines.some((l) => l.locked) && <DeleteVisitButton visitId={v.id} onDeleted={load} />}
+                </span>
+              </div>
+              <VisitNotes visit={v} canEdit={canPrescribe} onSaved={load} />
+              {v.prescriptionLines.length === 0 ? (
+                <p style={{ color: 'var(--color-ink-soft)', margin: 0, fontSize: 13 }}>No medicines recorded for this visit.</p>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Medicine</th>
+                      <th style={{ textAlign: 'right' }}>Quantity</th>
+                      <th>Dosage</th>
+                      <th style={{ textAlign: 'right' }}>Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {v.prescriptionLines.map((line) => (
+                      <EditablePrescriptionRow key={line.id} visitId={v.id} line={line} canEdit={canPrescribe} onSaved={load} />
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
+        {visits !== null && (
+          <LoadMore shown={visitsShown} total={visits.length} onMore={() => setVisitsShown((n) => n + LOAD_STEP)} />
+        )}
         </>
       )}
 
-      <h2>Follow-ups &amp; prescriptions</h2>
-      {visits === null && <p>Loading…</p>}
-      {visits !== null && visits.length === 0 && (
-        <p style={{ color: 'var(--color-ink-soft)' }}>No prescriptions recorded yet.</p>
-      )}
-      {visits !== null &&
-        visits.map((v) => (
-          <div key={v.id} className="card" style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <strong>{v.visit_date}</strong>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <span style={{ color: 'var(--color-ink-soft)', fontSize: 13 }}>
-                  {v.follow_up_id ? 'Follow-up visit' : 'Walk-in visit'}
-                  {v.attending_doctor_name ? ` · ${v.attending_doctor_name}` : ''}
-                  {v.follow_up_planned_end_date ? ` · through ${v.follow_up_planned_end_date}` : ''}
-                </span>
-                {canManageInvoices && (
-                  <Link to={`/patients/${id}/invoice?visitId=${v.id}`} className="btn-text" style={{ textDecoration: 'none' }}>
-                    Bill
-                  </Link>
-                )}
-                {canPrescribe && <DeleteVisitButton visitId={v.id} onDeleted={load} />}
-              </span>
-            </div>
-            <VisitNotes visit={v} canEdit={canPrescribe} onSaved={load} />
-            {v.prescriptionLines.length === 0 ? (
-              <p style={{ color: 'var(--color-ink-soft)', margin: 0, fontSize: 13 }}>No medicines recorded for this visit.</p>
-            ) : (
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Medicine</th>
-                    <th style={{ textAlign: 'right' }}>Quantity</th>
-                    <th>Dosage</th>
-                    <th style={{ textAlign: 'right' }}>Duration</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {v.prescriptionLines.map((line) => (
-                    <EditablePrescriptionRow key={line.id} visitId={v.id} line={line} canEdit={canPrescribe} onSaved={load} />
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        ))}
+      {tab === 'invoices' && <PatientInvoices invoices={invoices} />}
     </div>
   );
 }

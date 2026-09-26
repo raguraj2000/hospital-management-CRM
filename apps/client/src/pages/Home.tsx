@@ -38,30 +38,45 @@ export function Home() {
   const user = getSessionUser();
   const canAddPatient = useHasPermission('patient.create');
   const canViewSettings =
-    useHasPermission('auditLog.view') || useHasPermission('user.manage') || useHasPermission('backup.configure');
+    useHasPermission('auditLog.view') ||
+    useHasPermission('user.manage') ||
+    useHasPermission('backup.configure') ||
+    useHasPermission('lab.manageTests');
 
   const [summary, setSummary] = useState<Summary>({ lowStockCount: null, dispensesToday: null, activePatients: null });
   const [criticalMedicines, setCriticalMedicines] = useState<LowStockMedicine[] | null>(null);
   const [availableDoctors, setAvailableDoctors] = useState<StaffRow[] | null>(null);
   const canSeeInventory = useHasPermission('inventory.view');
+  const canManageVendors = useHasPermission('supplier.manage');
+  const [vendorOverdue, setVendorOverdue] = useState<{ overdueBills: number; overdueCents: number } | null>(null);
   const [expiring, setExpiring] = useState<ExpiringBatch[] | null>(null);
 
   useEffect(() => {
-    get<{ lowStock: LowStockMedicine[] }>('/medicines/low-stock')
-      .then((d) => {
-        setSummary((s) => ({ ...s, lowStockCount: d.lowStock.length }));
-        setCriticalMedicines(d.lowStock);
-      })
-      .catch(() => setCriticalMedicines([]));
-    get<{ count: number }>('/dispense/today-summary')
-      .then((d) => setSummary((s) => ({ ...s, dispensesToday: d.count })))
-      .catch(() => {});
+    // Stock numbers only for staff who can see inventory (not e.g. the lab technician).
+    if (canSeeInventory) {
+      get<{ lowStock: LowStockMedicine[] }>('/medicines/low-stock')
+        .then((d) => {
+          setSummary((s) => ({ ...s, lowStockCount: d.lowStock.length }));
+          setCriticalMedicines(d.lowStock);
+        })
+        .catch(() => setCriticalMedicines([]));
+      get<{ count: number }>('/dispense/today-summary')
+        .then((d) => setSummary((s) => ({ ...s, dispensesToday: d.count })))
+        .catch(() => {});
+    } else {
+      setCriticalMedicines([]);
+    }
     get<{ activeCount: number }>('/patients/summary')
       .then((d) => setSummary((s) => ({ ...s, activePatients: d.activeCount })))
       .catch(() => {});
     get<{ staff: StaffRow[] }>('/staff')
       .then((d) => setAvailableDoctors(d.staff.filter((s) => s.role_name === 'doctor')))
       .catch(() => setAvailableDoctors([]));
+    if (canManageVendors) {
+      get<{ overdueBills: number; overdueCents: number }>('/vendors/summary')
+        .then(setVendorOverdue)
+        .catch(() => {});
+    }
     if (canSeeInventory) {
       get<{ batches: ExpiringBatch[] }>('/pharmacy/expiring?days=30')
         .then((d) => setExpiring(d.batches))
@@ -83,6 +98,13 @@ export function Home() {
           <p>Here's what's happening at Aadhi Hospital right now.</p>
         </div>
       </div>
+
+      {vendorOverdue && vendorOverdue.overdueBills > 0 && (
+        <div className="alert alert-critical">
+          <strong>Vendor payments overdue:</strong> {vendorOverdue.overdueBills} bill{vendorOverdue.overdueBills === 1 ? '' : 's'},{' '}
+          ₹{(vendorOverdue.overdueCents / 100).toFixed(2)}. <Link to="/vendors?tab=bills">See them</Link>
+        </div>
+      )}
 
       <div className="stat-grid">
         <div className={`stat-tile ${summary.lowStockCount !== null && summary.lowStockCount > 0 ? 'warning' : 'positive'}`}>
