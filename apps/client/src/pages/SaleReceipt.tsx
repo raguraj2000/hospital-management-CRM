@@ -5,6 +5,7 @@ import { useHasPermission } from '../state/permissions.js';
 import { ConfirmDelete } from '../components/ConfirmDelete.js';
 import { formatRupees } from '../lib/money.js';
 import { ErrorMessage } from '../components/ErrorMessage.js';
+import { PrintHeader, type PrintHeaderData } from '../components/PrintHeader.js';
 
 interface SaleData {
   sale: {
@@ -23,7 +24,7 @@ interface SaleData {
     void_reason: string | null;
   };
   lines: { medicine_id: number; medicine_name: string; unit_price_cents: number; quantity: number; line_total_cents: number; expiry_date: string | null }[];
-  clinic: { name: string; addressLine: string; doctorName: string; doctorTitle: string; phone: string };
+  clinic: { name: string; addressLine: string; doctorName: string; doctorTitle: string; phone: string; print: PrintHeaderData };
 }
 
 /**
@@ -68,6 +69,9 @@ export function SaleReceipt() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn" onClick={() => navigate(-1)}>
+            ← Back
+          </button>
           <Link to="/pharmacy?tab=sale" className="btn">
             New sale
           </Link>
@@ -94,15 +98,9 @@ export function SaleReceipt() {
         </div>
       )}
 
-      <div className="receipt-sheet card">
+      <div className="receipt-sheet card print-doc">
         <div className="receipt-center">
-          <div className="receipt-title">{clinic.name}</div>
-          <div>{clinic.addressLine}</div>
-          <div>
-            {clinic.doctorName}
-            {clinic.doctorTitle ? `, ${clinic.doctorTitle}` : ''}
-          </div>
-          <div>Ph: {clinic.phone}</div>
+          <PrintHeader header={clinic.print} compact />
           <div className="receipt-rule" />
           <div style={{ fontWeight: 700 }}>PHARMACY BILL{sale.voided_at ? ' — CANCELLED' : ''}</div>
         </div>
@@ -167,11 +165,6 @@ export function SaleReceipt() {
           {sale.sold_by_name ? `Served by ${sale.sold_by_name}. ` : ''}Thank you! Get well soon.
         </div>
       </div>
-      <p className="no-print" style={{ fontSize: 13, color: 'var(--color-ink-soft)' }}>
-        <button className="btn-text" onClick={() => navigate(-1)}>
-          ← Back
-        </button>
-      </p>
     </div>
   );
 }

@@ -138,4 +138,13 @@ describe('account security', () => {
     const again = await call(auth, '/me', 'admin-token', 'PATCH', { currentPassword: 'changeme123', newPassword: 'changeme123' });
     expect(again.status).toBe(400);
   });
+
+  it('GET /me returns the permissions the user has right now (so the app can refresh its menu)', async () => {
+    const before = await (await call(auth, '/me', 'doc-token', 'GET')).json();
+    expect(before.user.username).toBe('doc');
+    expect(before.permissions).not.toContain('payment.receive');
+    setPermissionsFor(db, 'doctor', [...getPermissionsFor(db, 'doctor'), 'payment.receive']);
+    const after = await (await call(auth, '/me', 'doc-token', 'GET')).json();
+    expect(after.permissions).toContain('payment.receive');
+  });
 });

@@ -5,6 +5,8 @@ import { useHasPermission } from '../state/permissions.js';
 import { ConfirmDelete } from '../components/ConfirmDelete.js';
 import { centsToRupees, formatRupees, rupeesToCents } from '../lib/money.js';
 import { ErrorMessage } from '../components/ErrorMessage.js';
+import { PrintHeader, type PrintHeaderData } from '../components/PrintHeader.js';
+import { PaymentsPanel, type BillStatus, type PaymentRow } from '../components/PaymentsPanel.js';
 
 interface Clinic {
   name: string;
@@ -12,6 +14,7 @@ interface Clinic {
   doctorName: string;
   doctorTitle: string;
   phone: string;
+  print: PrintHeaderData;
 }
 
 interface DraftVisit {
@@ -20,13 +23,53 @@ interface DraftVisit {
   notes: string | null;
   attending_doctor_name: string | null;
   invoiced_on: string | null;
-  lines: { description: string; quantity: number; unitPriceCents: number; lineTotalCents: number }[];
+  lines: DraftLine[];
+}
+
+type SourceType = 'prescription_line' | 'lab_order_item';
+
+interface DraftLine {
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  sourceType: SourceType | null;
+  sourceId: number | null;
+}
+
+interface DraftLabItem extends DraftLine {
+  id: number;
+  orderNumber: string;
+}
+
+/** An unpaid bill (no payment yet) that a new bill can take over. */
+interface MergeableBill {
+  id: number;
+  invoiceNumber: string;
+  invoiceDate: string;
+  totalCents: number;
+  doctorFeeCents: number;
+  consultantFeeCents: number;
+  otherFeeCents: number;
+  discountCents: number;
+  visitIds: number[];
+  lines: DraftLine[];
+}
+
+interface PartPaidBill {
+  id: number;
+  invoiceNumber: string;
+  invoiceDate: string;
+  balanceCents: number;
 }
 
 interface EditableLine {
   description: string;
   quantity: string;
   unitPriceRupees: string;
+  /** What this line pays for (a prescribed medicine or lab test), so paying the bill unlocks it. */
+  sourceType?: SourceType | null;
+  sourceId?: number | null;
 }
 
 function todayIso(): string {
@@ -64,6 +107,16 @@ export function Invoice() {
 
   const [visits, setVisits] = useState<DraftVisit[]>([]);
   const [selectedVisitIds, setSelectedVisitIds] = useState<number[]>([]);
+  const [labItems, setLabItems] = useState<DraftLabItem[]>([]);
+  const [selectedLabIds, setSelectedLabIds] = useState<number[]>([]);
+  const [mergeBills, setMergeBills] = useState<MergeableBill[]>([]);
+  const [selectedMergeIds, setSelectedMergeIds] = useState<number[]>([]);
+  const [partPaidBills, setPartPaidBills] = useState<PartPaidBill[]>([]);
+  /** The saved bill as last loaded, to tell whether the screen has unsaved changes. */
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [bill, setBill] = useState<BillStatus | null>(null);
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [invoiceDate, setInvoiceDate] = useState(todayIso());
   const [lines, setLines] = useState<EditableLine[]>([]);
@@ -102,35 +155,63 @@ export function Invoice() {
           setDiscount(centsToRupees(d.invoice.discount_cents));
           setNotes(d.invoice.notes ?? '');
           setSelectedVisitIds(d.visitIds);
+          setBill(d.bill);
+          setPayments(d.payments);
           setLines(
             d.lines.map((l: any) => ({
               description: l.description,
               quantity: String(l.quantity),
               unitPriceRupees: centsToRupees(l.unit_price_cents),
+              sourceType: l.source_type,
+              sourceId: l.source_id,
             })),
           );
         } else {
           const [draft, patient] = await Promise.all([
-            get<{ clinic: Clinic; defaults: any; visits: DraftVisit[] }>(`/invoices/draft?patientId=${patientIdParam}`),
+            get<{
+              clinic: Clinic;
+              defaults: any;
+              visits: DraftVisit[];
+              billedVisits: { visitId: number; invoiceId: number }[];
+              labItems: DraftLabItem[];
+              unpaidBills: { mergeable: MergeableBill[]; partPaid: PartPaidBill[] };
+            }>(`/invoices/draft?patientId=${patientIdParam}`),
             get<{ patient: any }>(`/patients/${patientIdParam}`),
           ]);
           if (cancelled) return;
+          // This prescription is already on a bill: open that bill instead of making another.
+          const existingBill = visitIdParam ? draft.billedVisits.find((b) => b.visitId === Number(visitIdParam)) : undefined;
+          if (existingBill) {
+            navigate(`/invoices/${existingBill.invoiceId}`, { replace: true });
+            return;
+          }
           setClinic(draft.clinic);
           setPatientName(patient.patient.current_name);
           setPatientCode(patient.patient.customer_code);
           setPatientPhone(patient.patient.phone_number ?? null);
           setVisits(draft.visits);
-          setDoctorFee(centsToRupees(draft.defaults.doctorFeeCents));
-          setConsultantFee(centsToRupees(draft.defaults.consultantFeeCents));
           setOtherFeeLabel(draft.defaults.otherFeeLabel || 'Other charges');
 
-          // One prescription -> just that visit. Otherwise pre-tick every
-          // visit that hasn't been billed yet.
-          const preselected = visitIdParam
-            ? draft.visits.filter((v) => v.id === Number(visitIdParam))
-            : draft.visits.filter((v) => !v.invoiced_on);
+          // One prescription -> just that visit. Otherwise everything not
+          // billed yet, plus the unpaid bills (no payment yet), all on one bill.
+          const preselected = visitIdParam ? draft.visits.filter((v) => v.id === Number(visitIdParam)) : draft.visits;
+          const merging = visitIdParam ? [] : draft.unpaidBills.mergeable;
           setSelectedVisitIds(preselected.map((v) => v.id));
-          setLines(linesForVisits(preselected));
+          setMergeBills(merging);
+          setSelectedMergeIds(merging.map((b) => b.id));
+          setPartPaidBills(visitIdParam ? [] : draft.unpaidBills.partPaid);
+          // Fees: what the combined bills already charged, plus today's
+          // default fees when there is something new on this bill.
+          const sum = (pick: (b: MergeableBill) => number) => merging.reduce((t, b) => t + pick(b), 0);
+          const hasNew = merging.length === 0 || preselected.some((v) => !v.invoiced_on);
+          setDoctorFee(centsToRupees(sum((b) => b.doctorFeeCents) + (hasNew ? draft.defaults.doctorFeeCents : 0)));
+          setConsultantFee(centsToRupees(sum((b) => b.consultantFeeCents) + (hasNew ? draft.defaults.consultantFeeCents : 0)));
+          setOtherFee(centsToRupees(sum((b) => b.otherFeeCents)));
+          setDiscount(centsToRupees(sum((b) => b.discountCents)));
+          // One bill per visit: lab tests not billed yet go on it too.
+          setLabItems(draft.labItems);
+          setSelectedLabIds(draft.labItems.map((l) => l.id));
+          setLines(billLines(preselected, draft.labItems, merging));
         }
         setError(null);
       } catch (err) {
@@ -144,16 +225,24 @@ export function Invoice() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoiceId, patientIdParam, visitIdParam]);
+  }, [invoiceId, patientIdParam, visitIdParam, reloadKey]);
 
-  function linesForVisits(chosen: DraftVisit[]): EditableLine[] {
-    return chosen.flatMap((v) =>
-      v.lines.map((l) => ({
-        description: l.description,
-        quantity: String(l.quantity),
-        unitPriceRupees: centsToRupees(l.unitPriceCents),
-      })),
-    );
+  function toEditable(l: DraftLine): EditableLine {
+    return {
+      description: l.description,
+      quantity: String(l.quantity),
+      unitPriceRupees: centsToRupees(l.unitPriceCents),
+      sourceType: l.sourceType,
+      sourceId: l.sourceId,
+    };
+  }
+
+  function billLines(chosenVisits: DraftVisit[], chosenLab: DraftLabItem[], chosenBills: MergeableBill[]): EditableLine[] {
+    return [
+      ...chosenBills.flatMap((b) => b.lines.map(toEditable)),
+      ...chosenVisits.flatMap((v) => v.lines.map(toEditable)),
+      ...chosenLab.map(toEditable),
+    ];
   }
 
   function toggleVisit(visitId: number) {
@@ -161,22 +250,52 @@ export function Invoice() {
       ? selectedVisitIds.filter((v) => v !== visitId)
       : [...selectedVisitIds, visitId];
     setSelectedVisitIds(next);
-    setLines(linesForVisits(visits.filter((v) => next.includes(v.id))));
+    setLines(
+      billLines(
+        visits.filter((v) => next.includes(v.id)),
+        labItems.filter((l) => selectedLabIds.includes(l.id)),
+        mergeBills.filter((b) => selectedMergeIds.includes(b.id)),
+      ),
+    );
+  }
+
+  function toggleLab(labId: number) {
+    const next = selectedLabIds.includes(labId) ? selectedLabIds.filter((v) => v !== labId) : [...selectedLabIds, labId];
+    setSelectedLabIds(next);
+    setLines(
+      billLines(
+        visits.filter((v) => selectedVisitIds.includes(v.id)),
+        labItems.filter((l) => next.includes(l.id)),
+        mergeBills.filter((b) => selectedMergeIds.includes(b.id)),
+      ),
+    );
+  }
+
+  /** Combine an unpaid bill into this one (or leave it out): its lines and fees come along. */
+  function toggleMergeBill(billId: number) {
+    const on = !selectedMergeIds.includes(billId);
+    const next = on ? [...selectedMergeIds, billId] : selectedMergeIds.filter((b) => b !== billId);
+    setSelectedMergeIds(next);
+    const b = mergeBills.find((m) => m.id === billId)!;
+    const shift = (value: string, cents: number) => centsToRupees(Math.max(0, rupeesToCents(value) + (on ? cents : -cents)));
+    setDoctorFee((v) => shift(v, b.doctorFeeCents));
+    setConsultantFee((v) => shift(v, b.consultantFeeCents));
+    setOtherFee((v) => shift(v, b.otherFeeCents));
+    setDiscount((v) => shift(v, b.discountCents));
+    setLines(
+      billLines(
+        visits.filter((v) => selectedVisitIds.includes(v.id)),
+        labItems.filter((l) => selectedLabIds.includes(l.id)),
+        mergeBills.filter((m) => next.includes(m.id)),
+      ),
+    );
   }
 
   // --- totals ----------------------------------------------------------
-  const itemsCents = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0) * rupeesToCents(l.unitPriceRupees), 0);
-  const feesCents = rupeesToCents(doctorFee) + rupeesToCents(consultantFee) + rupeesToCents(otherFee);
-  const totalCents = Math.max(0, itemsCents + feesCents - rupeesToCents(discount));
-
-  async function save(e?: FormEvent) {
-    e?.preventDefault();
-    setSaving(true);
-    setError(null);
-    setSavedMessage(null);
-    const payload = {
-      patientId,
-      visitEventIds: selectedVisitIds,
+  // Exactly what gets saved, so the total on screen matches the server's.
+  const payload = {
+    patientId,
+    visitEventIds: selectedVisitIds,
       invoiceDate,
       doctorFeeCents: rupeesToCents(doctorFee),
       consultantFeeCents: rupeesToCents(consultantFee),
@@ -190,14 +309,57 @@ export function Invoice() {
           description: l.description.trim(),
           quantity: Number(l.quantity) || 1,
           unitPriceCents: rupeesToCents(l.unitPriceRupees),
+          sourceType: l.sourceType ?? null,
+          sourceId: l.sourceId ?? null,
         })),
-    };
+  };
+  const itemsCents = payload.lines.reduce((sum, l) => sum + l.quantity * l.unitPriceCents, 0);
+  const feesCents = payload.doctorFeeCents + payload.consultantFeeCents + payload.otherFeeCents;
+  const totalCents = Math.max(0, itemsCents + feesCents - payload.discountCents);
+  const payloadJson = JSON.stringify(payload);
+
+  // Remember the bill as loaded; anything different on screen is unsaved.
+  useEffect(() => {
+    if (!loading && isExisting) setSavedSnapshot(payloadJson);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+  const unsaved = isExisting && savedSnapshot !== null && payloadJson !== savedSnapshot;
+
+  // A fully paid bill is final: print only. (Cancel a payment to change it.)
+  const isPaid = isExisting && bill?.status === 'paid';
+  const editable = canManage && !isPaid;
+
+  // Paid / balance follow the total on screen, not just the last save.
+  const liveBill: BillStatus | null =
+    bill && !bill.paidBeforeTracking
+      ? (() => {
+          const balanceCents = Math.max(0, totalCents - bill.paidCents);
+          const status: BillStatus['status'] = balanceCents === 0 ? 'paid' : bill.paidCents > 0 ? 'part_paid' : 'not_paid';
+          return { ...bill, totalCents, balanceCents, status };
+        })()
+      : bill;
+
+  /** Saves changes to this bill; throws if it can't. */
+  async function saveChanges() {
+    await mutate(`/invoices/${invoiceId}`, 'PATCH', payload);
+    setSavedSnapshot(payloadJson);
+  }
+
+  async function save(e?: FormEvent) {
+    e?.preventDefault();
+    setSaving(true);
+    setError(null);
+    setSavedMessage(null);
     try {
       if (isExisting) {
-        await mutate(`/invoices/${invoiceId}`, 'PATCH', payload);
+        await saveChanges();
         setSavedMessage('Saved.');
+        setReloadKey((k) => k + 1); // totals changed: refresh the payment status
       } else {
-        const created = await mutate<{ id: number; invoiceNumber: string }>('/invoices', 'POST', payload);
+        const created = await mutate<{ id: number; invoiceNumber: string }>('/invoices', 'POST', {
+          ...payload,
+          mergeInvoiceIds: selectedMergeIds,
+        });
         navigate(`/invoices/${created.id}`, { replace: true });
       }
     } catch (err) {
@@ -222,12 +384,15 @@ export function Invoice() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn" onClick={() => navigate(-1)}>
+            ← Back
+          </button>
           {isExisting && (
             <button className="btn" onClick={() => window.print()}>
               Print
             </button>
           )}
-          {canManage && (
+          {editable && (
             <button className="btn btn-primary" onClick={() => save()} disabled={saving}>
               {saving ? 'Saving…' : isExisting ? 'Save changes' : 'Save invoice'}
             </button>
@@ -246,6 +411,35 @@ export function Invoice() {
 
       <ErrorMessage error={error} className="no-print" />
       {savedMessage && <p className="no-print" style={{ color: 'var(--color-positive)' }}>{savedMessage}</p>}
+
+      {/* Unpaid bills: combined into this new bill. */}
+      {!isExisting && mergeBills.length > 0 && (
+        <div className="card no-print" style={{ marginBottom: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Unpaid bills — combined into this one bill</h3>
+          {mergeBills.map((b) => (
+            <label key={b.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, fontSize: 14 }}>
+              <input type="checkbox" checked={selectedMergeIds.includes(b.id)} onChange={() => toggleMergeBill(b.id)} style={{ width: 'auto' }} />
+              <span>
+                {b.invoiceNumber} · {b.invoiceDate} · {formatRupees(b.totalCents)}
+              </span>
+            </label>
+          ))}
+          <p style={{ fontSize: 13, color: 'var(--color-ink-soft)', marginBottom: 0 }}>
+            When you save, the ticked bills are replaced by this one.
+          </p>
+        </div>
+      )}
+      {!isExisting && partPaidBills.length > 0 && (
+        <div className="card no-print" style={{ marginBottom: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Part paid — collect the rest on its own bill</h3>
+          {partPaidBills.map((b) => (
+            <div key={b.id} style={{ fontSize: 14, marginBottom: 4 }}>
+              {b.invoiceNumber} · {b.invoiceDate} · balance <strong>{formatRupees(b.balanceCents)}</strong> ·{' '}
+              <Link to={`/invoices/${b.id}`}>Open</Link>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Visit picker: only for a brand-new combined bill. */}
       {!isExisting && !visitIdParam && visits.length > 0 && (
@@ -271,23 +465,42 @@ export function Invoice() {
         </div>
       )}
 
+      {!isExisting && labItems.length > 0 && (
+        <div className="card no-print" style={{ marginBottom: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Lab tests not billed yet</h3>
+          {labItems.map((l) => (
+            <label key={l.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, fontSize: 14 }}>
+              <input type="checkbox" checked={selectedLabIds.includes(l.id)} onChange={() => toggleLab(l.id)} style={{ width: 'auto' }} />
+              <span>
+                {l.description} · {formatRupees(l.unitPriceCents)}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {isExisting && liveBill && invoiceId && (
+        <PaymentsPanel
+          invoiceId={Number(invoiceId)}
+          bill={liveBill}
+          payments={payments}
+          onChanged={() => setReloadKey((k) => k + 1)}
+          beforeReceive={unsaved && editable ? saveChanges : undefined}
+        />
+      )}
+
       {/* The bill itself -- this is what prints. */}
-      <div className="card invoice-sheet">
+      <div className="card invoice-sheet print-doc">
+        {clinic && <PrintHeader header={clinic.print} />}
         <div className="invoice-head">
           <div>
             <h2 style={{ margin: 0 }}>{clinic?.name}</h2>
-            <div style={{ fontSize: 13, color: 'var(--color-ink-soft)' }}>{clinic?.addressLine}</div>
-            <div style={{ fontSize: 13 }}>
-              {clinic?.doctorName}
-              {clinic?.doctorTitle ? `, ${clinic.doctorTitle}` : ''}
-            </div>
-            <div style={{ fontSize: 13 }}>Phone: {clinic?.phone}</div>
           </div>
           <div style={{ textAlign: 'right', fontSize: 13 }}>
             <div style={{ fontWeight: 700, fontSize: 15 }}>INVOICE</div>
             {invoiceNumber && <div style={{ fontFamily: 'var(--font-mono)' }}>{invoiceNumber}</div>}
             <div className="no-print" style={{ marginTop: 6 }}>
-              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} disabled={!editable} />
             </div>
             <div className="print-only">Date: {invoiceDate}</div>
           </div>
@@ -308,7 +521,7 @@ export function Invoice() {
               <th style={{ textAlign: 'right', width: 90 }}>Qty</th>
               <th style={{ textAlign: 'right', width: 120 }}>Rate</th>
               <th style={{ textAlign: 'right', width: 120 }}>Amount</th>
-              {canManage && <th className="no-print" style={{ width: 90 }}></th>}
+              {editable && <th className="no-print" style={{ width: 90 }}></th>}
             </tr>
           </thead>
           <tbody>
@@ -325,7 +538,7 @@ export function Invoice() {
                         setLines((ls) => ls.map((l, j) => (j === i ? { ...l, description: e.target.value } : l)))
                       }
                       style={{ width: '100%' }}
-                      disabled={!canManage}
+                      disabled={!editable}
                     />
                   </td>
                   <td className="num">
@@ -339,7 +552,7 @@ export function Invoice() {
                         setLines((ls) => ls.map((l, j) => (j === i ? { ...l, quantity: e.target.value } : l)))
                       }
                       style={{ width: 70, textAlign: 'right' }}
-                      disabled={!canManage}
+                      disabled={!editable}
                     />
                   </td>
                   <td className="num">
@@ -351,11 +564,11 @@ export function Invoice() {
                         setLines((ls) => ls.map((l, j) => (j === i ? { ...l, unitPriceRupees: e.target.value } : l)))
                       }
                       style={{ width: 100, textAlign: 'right' }}
-                      disabled={!canManage}
+                      disabled={!editable}
                     />
                   </td>
                   <td className="num">{formatRupees(amount)}</td>
-                  {canManage && (
+                  {editable && (
                     <td className="no-print">
                       <button className="btn-text" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>
                         Remove
@@ -367,7 +580,7 @@ export function Invoice() {
             })}
             {lines.length === 0 && (
               <tr>
-                <td colSpan={canManage ? 5 : 4} style={{ color: 'var(--color-ink-soft)', textAlign: 'center' }}>
+                <td colSpan={editable ? 5 : 4} style={{ color: 'var(--color-ink-soft)', textAlign: 'center' }}>
                   No items on this bill yet.
                 </td>
               </tr>
@@ -375,37 +588,49 @@ export function Invoice() {
           </tbody>
         </table>
 
-        {canManage && (
+        {editable && (
           <button className="btn no-print" onClick={() => setLines((ls) => [...ls, blankLine()])} style={{ marginBottom: 16 }}>
             Add a line
           </button>
         )}
 
         <div className="invoice-totals">
-          <FeeRow label="Doctor fees" value={doctorFee} onChange={setDoctorFee} editable={canManage} />
-          <FeeRow label="Consultant fees" value={consultantFee} onChange={setConsultantFee} editable={canManage} />
+          <FeeRow label="Doctor fees" value={doctorFee} onChange={setDoctorFee} editable={editable} />
+          <FeeRow label="Consultant fees" value={consultantFee} onChange={setConsultantFee} editable={editable} />
           <FeeRow
             label={otherFeeLabel || 'Other charges'}
             value={otherFee}
             onChange={setOtherFee}
-            editable={canManage}
+            editable={editable}
             labelEditable={{ value: otherFeeLabel, onChange: setOtherFeeLabel }}
           />
           <div className="invoice-total-row">
             <span>Medicines &amp; items</span>
             <span>{formatRupees(itemsCents)}</span>
           </div>
-          <FeeRow label="Discount" value={discount} onChange={setDiscount} editable={canManage} negative />
+          <FeeRow label="Discount" value={discount} onChange={setDiscount} editable={editable} negative />
           <div className="invoice-total-row invoice-grand-total">
             <span>Total</span>
             <span>{formatRupees(totalCents)}</span>
           </div>
+          {liveBill && !liveBill.paidBeforeTracking && (
+            <>
+              <div className="invoice-total-row">
+                <span>Paid</span>
+                <span>{formatRupees(liveBill.paidCents)}</span>
+              </div>
+              <div className="invoice-total-row" style={{ fontWeight: 700 }}>
+                <span>{liveBill.balanceCents === 0 ? 'Fully paid' : 'Balance due'}</span>
+                <span>{liveBill.balanceCents === 0 ? '' : formatRupees(liveBill.balanceCents)}</span>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="invoice-notes">
           <div className="no-print">
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-ink-soft)' }}>Notes on the bill</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} style={{ width: '100%' }} disabled={!canManage} />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} style={{ width: '100%' }} disabled={!editable} />
           </div>
           {notes && <div className="print-only">{notes}</div>}
         </div>

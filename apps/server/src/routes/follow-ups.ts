@@ -57,14 +57,39 @@ function voidActiveDispensesForLine(
   }
 }
 
+// A prescribed medicine is locked once it is paid for (any payment on its
+// bill, or a bill from before payment tracking) or already given by the
+// pharmacy. After that the doctor can't change or delete it -- they write a
+// new prescription instead -- so bills, stock and what the patient took
+// always agree.
+const LOCKED_SQL = `(
+  EXISTS (SELECT 1 FROM dispense_log d WHERE d.prescription_line_id = pl.id AND d.voided_at IS NULL)
+  OR EXISTS (SELECT 1 FROM invoice_line l JOIN invoice i ON i.id = l.invoice_id AND i.deleted_at IS NULL
+              WHERE l.source_type = 'prescription_line' AND l.source_id = pl.id
+                AND (i.paid_before_tracking = 1
+                     OR EXISTS (SELECT 1 FROM invoice_payment p WHERE p.invoice_id = i.id AND p.cancelled_at IS NULL)))
+)`;
+
+const LOCKED_MESSAGE = 'This medicine is already paid for or given, so it can no longer be changed. Write a new prescription instead.';
+
+function isLineLocked(db: Database.Database, lineId: number): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM prescription_line pl WHERE pl.id = ? AND ${LOCKED_SQL}`).get(lineId));
+}
+
+function visitHasLockedLine(db: Database.Database, visitId: number): boolean {
+  return Boolean(
+    db.prepare(`SELECT 1 FROM prescription_line pl WHERE pl.visit_event_id = ? AND pl.deleted_at IS NULL AND ${LOCKED_SQL}`).get(visitId),
+  );
+}
+
 export function createFollowUpRoutes(db: Database.Database): Hono {
   const app = new Hono();
   app.use('*', requireAuth(db));
 
   // Read-back for a patient's follow-ups/visits/prescriptions (resolved
-  // across merged identities), most recent first. Adding a medicine to a
-  // follow-up (below) dispenses it immediately via FEFO -- prescribing and
-  // dispensing are the same action here, not two separate steps.
+  // across merged identities), most recent first. Each medicine says whether
+  // the pharmacy has given it yet (prescribing and giving are two steps: the
+  // pharmacist gives it once the bill is paid).
   app.get('/', requirePermission('patient.view'), (c) => {
     const patientId = Number(c.req.query('patientId'));
     if (!patientId) return c.json({ error: 'patientId is required' }, 400);
@@ -86,7 +111,10 @@ export function createFollowUpRoutes(db: Database.Database): Hono {
       .all(...allIds) as Record<string, unknown>[];
 
     const lineStmt = db.prepare(
-      `SELECT pl.id, pl.medicine_id, m.name as medicine_name, pl.quantity_prescribed, pl.dosage_instructions, pl.duration_days
+      `SELECT pl.id, pl.medicine_id, m.name as medicine_name, pl.quantity_prescribed, pl.dosage_instructions, pl.duration_days,
+              EXISTS (SELECT 1 FROM dispense_log d WHERE d.prescription_line_id = pl.id AND d.voided_at IS NULL) AS given,
+              pl.before_pharmacy_tracking,
+              ${LOCKED_SQL} AS locked
        FROM prescription_line pl JOIN medicine m ON m.id = pl.medicine_id
        WHERE pl.visit_event_id = ? AND pl.deleted_at IS NULL`,
     );
@@ -153,15 +181,11 @@ export function createFollowUpRoutes(db: Database.Database): Hono {
     return c.json({ ok: true });
   });
 
-  // Adding a medicine to a follow-up both records the instruction AND
-  // dispenses it via FEFO in the same atomic step (see plan discussion:
-  // this clinic wants prescribing to immediately deduct stock, not a
-  // separate pharmacist step). Gated by patient.editMedicalInstructions
-  // (Doctor/Admin), not dispense.create -- the permission for "add a
-  // prescription" now covers the stock effect that comes with it. If stock
-  // is insufficient, NEITHER the prescription line nor any dispense is
-  // created (the whole request rolls back), so there's never an
-  // instruction on record that silently wasn't actually given.
+  // Adding a medicine to a visit records the doctor's instruction only.
+  // Since payments (v0.6), the pharmacist gives it -- and stock is taken --
+  // once the visit's bill is paid (POST /pharmacy/visits/:visitId/give), or
+  // an Admin/Doctor overrides with a reason. Gated by
+  // patient.editMedicalInstructions (Doctor/Admin).
   app.post('/visits/:visitId/prescription-lines', requirePermission('patient.editMedicalInstructions'), async (c) => {
     const visitId = Number(c.req.param('visitId'));
     const parsed = createPrescriptionLineSchema.safeParse(await c.req.json());
@@ -174,34 +198,25 @@ export function createFollowUpRoutes(db: Database.Database): Hono {
       | undefined;
     if (!visit) return c.json({ error: `Visit ${visitId} not found` }, 404);
 
-    const createAndDispense = db.transaction(() => {
-      const info = db
-        .prepare(
-          `INSERT INTO prescription_line (visit_event_id, medicine_id, quantity_prescribed, dosage_instructions, duration_days)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(visitId, body.medicineId, body.quantityPrescribed, body.dosageInstructions ?? null, body.durationDays ?? null);
-      const prescriptionLineId = Number(info.lastInsertRowid);
-
-      const allocations = performDispense(db, {
-        patientId: visit.patient_id,
-        medicineId: body.medicineId,
-        quantity: body.quantityPrescribed,
-        visitEventId: visitId,
-        prescriptionLineId,
-        staffUserId: user.userId,
-        staffRole: user.role,
-      });
-
-      return { prescriptionLineId, allocations };
+    // Saved only: stock is taken when the pharmacist gives the medicine,
+    // after the bill is paid (see POST /pharmacy/visits/:visitId/give).
+    const medicine = db.prepare('SELECT id FROM medicine WHERE id = ? AND deleted_at IS NULL').get(body.medicineId);
+    if (!medicine) return c.json({ error: 'Medicine not found' }, 404);
+    const info = db
+      .prepare(
+        `INSERT INTO prescription_line (visit_event_id, medicine_id, quantity_prescribed, dosage_instructions, duration_days)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(visitId, body.medicineId, body.quantityPrescribed, body.dosageInstructions ?? null, body.durationDays ?? null);
+    insertAuditLog(db, {
+      entityType: 'prescription_line',
+      entityId: Number(info.lastInsertRowid),
+      action: 'create',
+      performedByUserId: user.userId,
+      performedByRole: user.role,
+      detail: { visitId, medicineId: body.medicineId, quantity: body.quantityPrescribed },
     });
-
-    try {
-      const result = createAndDispense.immediate();
-      return c.json({ id: result.prescriptionLineId, allocations: result.allocations }, 201);
-    } catch (err: any) {
-      return c.json({ error: err.message }, err.status ?? 400);
-    }
+    return c.json({ id: Number(info.lastInsertRowid) }, 201);
   });
 
   app.patch(
@@ -209,6 +224,7 @@ export function createFollowUpRoutes(db: Database.Database): Hono {
     requirePermission('patient.editMedicalInstructions'),
     async (c) => {
       const lineId = Number(c.req.param('lineId'));
+      if (isLineLocked(db, lineId)) return c.json({ error: LOCKED_MESSAGE }, 409);
       const parsed = updatePrescriptionLineSchema.safeParse(await c.req.json());
       if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
       const body = parsed.data;
@@ -250,6 +266,7 @@ export function createFollowUpRoutes(db: Database.Database): Hono {
     requirePermission('patient.editMedicalInstructions'),
     async (c) => {
       const lineId = Number(c.req.param('lineId'));
+      if (isLineLocked(db, lineId)) return c.json({ error: LOCKED_MESSAGE }, 409);
       const parsed = updateQuantitySchema.safeParse(await c.req.json());
       if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
       const user = c.get('user');
@@ -262,6 +279,14 @@ export function createFollowUpRoutes(db: Database.Database): Hono {
         )
         .get(lineId) as { id: number; visit_event_id: number; medicine_id: number; patient_id: number } | undefined;
       if (!line) return c.json({ error: 'Prescription line not found' }, 404);
+
+      const given = db
+        .prepare('SELECT 1 FROM dispense_log WHERE prescription_line_id = ? AND voided_at IS NULL LIMIT 1')
+        .get(lineId);
+      if (!given) {
+        db.prepare(`UPDATE prescription_line SET quantity_prescribed = ? WHERE id = ?`).run(parsed.data.quantity, lineId);
+        return c.json({ ok: true, allocations: [] });
+      }
 
       const changeQuantity = db.transaction(() => {
         voidActiveDispensesForLine(db, lineId, 'Quantity corrected', user.userId, user.role);
@@ -295,6 +320,7 @@ export function createFollowUpRoutes(db: Database.Database): Hono {
     requirePermission('patient.editMedicalInstructions'),
     async (c) => {
       const lineId = Number(c.req.param('lineId'));
+      if (isLineLocked(db, lineId)) return c.json({ error: LOCKED_MESSAGE }, 409);
       const user = c.get('user');
 
       const line = db.prepare('SELECT id FROM prescription_line WHERE id = ? AND deleted_at IS NULL').get(lineId) as
@@ -329,6 +355,9 @@ export function createFollowUpRoutes(db: Database.Database): Hono {
   // entry entirely, not just one medicine within it.
   app.post('/visits/:visitId/delete', requirePermission('patient.editMedicalInstructions'), async (c) => {
     const visitId = Number(c.req.param('visitId'));
+    if (visitHasLockedLine(db, visitId)) {
+      return c.json({ error: 'Medicines on this visit are already paid for or given, so the visit can no longer be deleted.' }, 409);
+    }
     const user = c.get('user');
 
     const visit = db.prepare('SELECT id FROM visit_event WHERE id = ? AND deleted_at IS NULL').get(visitId) as

@@ -13,6 +13,7 @@ import {
   todaySummary,
   voidSale,
 } from '../services/pharmacy-service.js';
+import { giveVisitMedicines, listWaitingPrescriptions } from '../services/give-medicines-service.js';
 
 const createSaleSchema = z.object({
   items: z.array(z.object({ medicineId: z.number().int(), quantity: z.number().int().positive() })).min(1),
@@ -93,6 +94,29 @@ export function createPharmacyRoutes(db: Database.Database): Hono {
     try {
       voidSale(db, Number(c.req.param('id')), body.reason?.trim() || 'Cancelled at counter', user.userId, user.role);
       return c.json({ ok: true });
+    } catch (err: any) {
+      return c.json({ error: err.message }, err.status ?? 400);
+    }
+  });
+
+  // --- Doctor's prescriptions waiting to be given ------------------------
+  app.get('/prescriptions', requirePermission('dispense.create'), (c) => c.json({ visits: listWaitingPrescriptions(db) }));
+
+  // Gives the medicines once the bill is fully paid. With { overrideReason },
+  // an Admin/Doctor (payment.override) can give them before payment.
+  app.post('/visits/:visitId/give', requirePermission('dispense.create'), async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { overrideReason?: unknown };
+    const reason = typeof body.overrideReason === 'string' ? body.overrideReason.trim() : '';
+    if (body.overrideReason !== undefined) {
+      if (!c.get('permissions').includes('payment.override')) {
+        return c.json({ error: 'Only an Admin or Doctor can give medicines before payment' }, 403);
+      }
+      if (reason.length < 3) return c.json({ error: 'Write why the medicines are given before payment' }, 400);
+    }
+    const user = c.get('user');
+    try {
+      const result = giveVisitMedicines(db, Number(c.req.param('visitId')), { userId: user.userId, role: user.role }, reason || undefined);
+      return c.json({ ok: true, ...result });
     } catch (err: any) {
       return c.json({ error: err.message }, err.status ?? 400);
     }

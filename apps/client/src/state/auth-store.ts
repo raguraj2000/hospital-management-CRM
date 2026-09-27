@@ -53,6 +53,16 @@ export function setMustChangePassword(value: boolean): void {
   else localStorage.removeItem(MUST_CHANGE_PASSWORD_KEY);
 }
 
+/** Replaces the stored permission list (e.g. after an update added new ones). Returns true if it changed. */
+export function refreshSessionPermissions(permissions: Permission[]): boolean {
+  const next = JSON.stringify([...permissions].sort());
+  const current = localStorage.getItem(PERMISSIONS_KEY);
+  const currentSorted = current ? JSON.stringify([...(JSON.parse(current) as Permission[])].sort()) : null;
+  if (next === currentSorted) return false;
+  localStorage.setItem(PERMISSIONS_KEY, JSON.stringify(permissions));
+  return true;
+}
+
 /** Patches the locally stored user (e.g. after a self-service name change) without a fresh login. */
 export function patchSessionUser(patch: Partial<SessionUser>): void {
   const current = getSessionUser();

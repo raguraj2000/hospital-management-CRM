@@ -87,7 +87,15 @@ export function createMedicineRoutes(db: Database.Database): Hono {
       .prepare(
         `SELECT ${selectCols}
          FROM medicine m ${joins}
-         WHERE ${whereSql} GROUP BY m.id ORDER BY m.name LIMIT ? OFFSET ?`,
+         WHERE ${whereSql} GROUP BY m.id
+         -- Inventory page: expired stock first, then stock expiring within
+         -- 30 days (soonest first), then everything else A-Z.
+         ORDER BY CASE WHEN nearest_expiry < date('now', 'localtime') THEN 0
+                       WHEN nearest_expiry <= date('now', 'localtime', '+30 days') THEN 1
+                       ELSE 2 END,
+                  CASE WHEN nearest_expiry <= date('now', 'localtime', '+30 days') THEN nearest_expiry END,
+                  m.name
+         LIMIT ? OFFSET ?`,
       )
       .all(...whereParams, pageSize, (page - 1) * pageSize);
     return c.json({ medicines: rows, total, page, pageSize });

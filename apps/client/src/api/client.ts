@@ -1,5 +1,6 @@
 import { getAuthToken, clearSession } from '../state/auth-store.js';
 import { reportRequestOutcome } from '../state/connection-monitor.js';
+import { isTauriRuntime } from './tauri-bridge.js';
 
 /**
  * A 401 on any authenticated call means the session is gone (expired,
@@ -14,7 +15,18 @@ function handleUnauthorized() {
   window.dispatchEvent(new CustomEvent('clinic:session-expired'));
 }
 
-let serverBaseUrl = localStorage.getItem('clinic.serverBaseUrl') ?? 'http://localhost:3001';
+/**
+ * Opened as a website (http://<main-computer>:3001 in a browser), the app
+ * talks to the server it was loaded from -- nothing to set up. The desktop
+ * app and development use the saved address, defaulting to this computer.
+ */
+export function isWebsite(): boolean {
+  return !isTauriRuntime() && !import.meta.env.DEV;
+}
+
+let serverBaseUrl = isWebsite()
+  ? window.location.origin
+  : (localStorage.getItem('clinic.serverBaseUrl') ?? 'http://localhost:3001');
 
 export function setServerBaseUrl(url: string) {
   serverBaseUrl = url;

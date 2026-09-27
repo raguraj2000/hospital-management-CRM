@@ -8,6 +8,7 @@ import { ADMIN_ROLE, EDITABLE_ROLES, type Permission } from '@clinic/shared';
 import { getPermissionMatrix, setPermissionsFor } from '../services/permission-service.js';
 import { insertAuditLog } from '../services/audit-service.js';
 import { revokeUserSessions } from '../services/auth-service.js';
+import { getClinicHeader, PRINT_HEADER_KEYS } from '../services/invoice-service.js';
 import {
   runBackupNow,
   getBackupSettings,
@@ -17,7 +18,7 @@ import {
   ALLOWED_KEEP_DAILY_DAYS,
 } from '../services/backup-service.js';
 
-const roleEnum = z.enum(['admin', 'manager', 'doctor', 'pharmacist', 'front_desk']);
+const roleEnum = z.enum(['admin', 'manager', 'doctor', 'pharmacist', 'front_desk', 'lab_technician']);
 
 const createUserSchema = z.object({
   fullName: z.string().min(1),
@@ -45,6 +46,17 @@ const updateUserSchema = z.object({
 });
 
 const resetPasswordSchema = z.object({ newPassword: z.string().min(8) });
+
+// Letterhead text: every key optional, blank allowed (e.g. no phone).
+const printHeaderSchema = z.object(
+  Object.fromEntries(PRINT_HEADER_KEYS.map((k) => [k, z.string().trim().max(120)])) as Record<
+    (typeof PRINT_HEADER_KEYS)[number],
+    z.ZodString
+  >,
+).partial();
+
+// The English name used on app screens' bills ("Aadhi Hospital").
+const clinicNameSchema = z.string().trim().min(1).max(80).optional();
 
 export function createAdminRoutes(db: Database.Database): Hono {
   const app = new Hono();
@@ -251,6 +263,42 @@ export function createAdminRoutes(db: Database.Database): Hono {
       detail: { roleName, permissions },
     });
     return c.json({ matrix: getPermissionMatrix(db) });
+  });
+
+  // --- Print letterhead (Settings > Print header) -------------------------
+  app.get('/print-header', requirePermission('backup.configure'), (c) => {
+    const values = Object.fromEntries(
+      PRINT_HEADER_KEYS.map((k) => {
+        const row = db.prepare('SELECT value FROM app_setting WHERE key = ?').get(k) as { value: string } | undefined;
+        return [k, row?.value ?? ''];
+      }),
+    );
+    return c.json({ values, clinicName: getClinicHeader(db).name });
+  });
+
+  app.post('/print-header', requirePermission('backup.configure'), async (c) => {
+    const body = (await c.req.json()) as { values?: unknown; clinicName?: unknown };
+    const values = printHeaderSchema.safeParse(body.values ?? {});
+    const clinicName = clinicNameSchema.safeParse(body.clinicName ?? undefined);
+    if (!values.success || !clinicName.success) return c.json({ error: 'Check the header fields (max 120 characters each)' }, 400);
+    const user = c.get('user');
+    const upsert = db.prepare(
+      `INSERT INTO app_setting (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now', 'localtime')`,
+    );
+    db.transaction(() => {
+      for (const [k, v] of Object.entries(values.data)) upsert.run(k, v ?? '');
+      if (clinicName.data) upsert.run('clinic.name', clinicName.data);
+      insertAuditLog(db, {
+        entityType: 'app_setting',
+        entityId: 0,
+        action: 'print_header_update',
+        performedByUserId: user.userId,
+        performedByRole: user.role,
+        detail: { ...values.data, clinicName: clinicName.data },
+      });
+    })();
+    return c.json({ ok: true });
   });
 
   app.get('/backup-settings', requirePermission('backup.configure'), (c) =>

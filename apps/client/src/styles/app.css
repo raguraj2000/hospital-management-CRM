@@ -299,6 +299,8 @@ a {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
+  /* Wide enough for full medicine names even in a narrow table column. */
+  min-width: 340px;
   z-index: 20;
   max-height: 240px;
   overflow-y: auto;
@@ -569,6 +571,17 @@ table.data-table {
 .badge-neutral {
   background: var(--color-paper);
   color: var(--color-ink-soft);
+}
+
+/* A date that should stand out (e.g. when a lab test was ordered). */
+.date-chip {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-brand);
+  color: var(--color-brand);
 }
 
 /* ---------- Login ---------- */

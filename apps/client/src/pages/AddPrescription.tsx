@@ -128,12 +128,12 @@ export function AddPrescription() {
             durationDays: line.durationDays ? Number(line.durationDays) : undefined,
           });
         } catch (err) {
-          // Stop here -- earlier lines in this loop already succeeded (each
-          // is its own atomic dispense) and stay recorded; only report what
+          // Stop here -- earlier lines in this loop already succeeded and stay
+          // recorded; only report what
           // failed and which medicine, rather than a generic message that
           // loses which line the problem was actually in.
           const medicineName = medicines.find((m) => String(m.id) === line.medicineId)?.name ?? `medicine #${line.medicineId}`;
-          setError(`${medicineName}: ${describeError(err, 'dispense this medicine')}`);
+          setError(`${medicineName}: ${describeError(err, 'save this medicine')}`);
           setSaving(false);
           return;
         }
@@ -155,8 +155,8 @@ export function AddPrescription() {
           <p>
             {patientName ? (
               <>
-                For <Link to={`/patients/${patientId}`}>{patientName}</Link> — each medicine below is dispensed from
-                stock immediately, using the nearest-expiry batch.
+                For <Link to={`/patients/${patientId}`}>{patientName}</Link> — the pharmacy gives these medicines once the
+                bill is paid.
               </>
             ) : (
               '…'
@@ -258,7 +258,7 @@ export function AddPrescription() {
         <ErrorMessage error={error} />
 
         <button type="submit" className="btn btn-primary" disabled={saving}>
-          {saving ? 'Dispensing…' : 'Save & dispense'}
+          {saving ? 'Saving…' : 'Save prescription'}
         </button>
       </form>
     </div>

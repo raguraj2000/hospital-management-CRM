@@ -1,0 +1,315 @@
+/* Printed documents (lab report, bill, pharmacy receipt), from the hospital's
+   own lab report design (aadhi-lab-report.html). Always paper colours, even
+   in dark mode, because this is what comes out of the printer. */
+
+@font-face {
+  font-family: 'PlexEmb';
+  src: url('../assets/print/plex.woff2') format('woff2');
+  font-weight: 400 800;
+}
+@font-face {
+  font-family: 'TamilEmb';
+  src: url('../assets/print/tamil.woff2') format('woff2');
+  font-weight: 400 800;
+}
+
+.print-doc {
+  --pd-green: #1f6b4f;
+  --pd-ink: #111;
+  --pd-muted: #3f4a45;
+  --pd-flag: #b3261e;
+  font-family: 'PlexEmb', 'TamilEmb', 'Nirmala UI', 'Segoe UI', Arial, sans-serif;
+  /* The app pins body text to weight 400 (app.css, for Bahnschrift); that
+     setting inherits and would flatten these fonts' bold. Release it here. */
+  font-variation-settings: normal;
+  color: var(--pd-ink);
+  background: #fff;
+}
+.print-doc .ta {
+  font-family: 'TamilEmb', 'Nirmala UI', 'Latha', sans-serif;
+}
+
+/* ---------- letterhead ---------- */
+.pd-hosp {
+  display: grid;
+  grid-template-columns: 21mm minmax(0, 1fr) auto max-content;
+  align-items: center;
+  gap: 12px;
+}
+.pd-hosp img {
+  width: 100%;
+  height: auto;
+}
+.pd-hname {
+  min-width: 0;
+}
+.pd-hname .pd-name {
+  display: block;
+  white-space: nowrap;
+  font-size: 31px;
+  font-weight: 800;
+  color: var(--pd-green);
+  line-height: 1.15;
+}
+.pd-hname .pd-addr {
+  display: block;
+  font-size: 14px;
+  margin-top: 2px;
+}
+.pd-vrule {
+  width: 1.5px;
+  align-self: stretch;
+  background: var(--pd-ink);
+}
+.pd-doc {
+  white-space: nowrap;
+  color: var(--pd-green);
+}
+.pd-doc .dn {
+  font-size: 15.5px;
+  font-weight: 700;
+}
+.pd-doc .dd {
+  font-size: 9.5px;
+  font-weight: 600;
+  margin-left: 4px;
+}
+.pd-doc .dr {
+  font-size: 12px;
+  font-weight: 500;
+}
+.pd-docs hr {
+  border: 0;
+  border-top: 1.5px solid var(--pd-ink);
+  margin: 6px 0;
+}
+.pd-rule {
+  height: 2px;
+  background: var(--pd-green);
+  margin: 8px 0 10px;
+}
+
+/* Compact letterhead for the 80 mm pharmacy receipt. */
+.pd-hosp-compact {
+  text-align: center;
+}
+.pd-hosp-compact img {
+  width: 14mm;
+  height: auto;
+}
+.pd-hosp-compact .pd-name {
+  display: block;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--pd-green);
+}
+.pd-hosp-compact .pd-addr {
+  display: block;
+  font-size: 11px;
+}
+
+/* ---------- lab report sheet ---------- */
+.lab-sheet {
+  width: 210mm;
+  max-width: 100%;
+  min-height: 297mm;
+  margin: 0 auto 40px;
+  padding: 9mm 11mm;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  font-size: 13px;
+}
+.lab-sheet .wrap {
+  width: 100%;
+  border-collapse: collapse;
+}
+.lab-sheet .wrap > thead > tr > td,
+.lab-sheet .wrap > tbody > tr > td {
+  padding: 0;
+}
+.pd-title {
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+  margin: 0 0 8px;
+  color: var(--pd-green);
+}
+.pd-pbox {
+  border: 1px solid var(--pd-ink);
+  border-radius: 6px;
+  padding: 7px 12px;
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  column-gap: 24px;
+  row-gap: 3px;
+  margin-bottom: 10px;
+}
+.pd-kv {
+  display: grid;
+  grid-template-columns: 30mm 1fr;
+  gap: 4px;
+}
+.pd-kv b {
+  font-weight: 600;
+}
+.pd-rt {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.pd-rt col.c-name {
+  width: 34%;
+}
+.pd-rt col.c-meth {
+  width: 27%;
+}
+.pd-rt col.c-res {
+  width: 21%;
+}
+.pd-rt col.c-rng {
+  width: 18%;
+}
+.pd-rt th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--pd-ink);
+}
+.pd-rt td {
+  padding: 3px 4px;
+  vertical-align: top;
+}
+.pd-rt tr.sec td {
+  text-align: center;
+  font-weight: 700;
+  padding-top: 12px;
+  padding-bottom: 4px;
+}
+.pd-rt tr.grp td {
+  font-weight: 700;
+  padding-top: 9px;
+}
+/* "New page" tick box beside each test (screen only). */
+.pd-np {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--pd-muted);
+  cursor: pointer;
+}
+/* On screen, show where a new page will start. */
+.pd-rt tr.pb td {
+  border-top: 2px dashed #b7c3bd;
+}
+.pd-res.hi .val,
+.pd-res.hi .unit {
+  font-weight: 700;
+}
+.pd-res.hi .val {
+  color: var(--pd-flag);
+}
+.pd-flag {
+  font-weight: 700;
+  color: var(--pd-flag);
+  margin-left: 4px;
+  font-size: 11px;
+}
+.pd-end {
+  text-align: center;
+  margin: 18px 0 0;
+  letter-spacing: 0.5px;
+}
+.pd-signs {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 26px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.pd-sig {
+  width: 62mm;
+}
+.pd-sig.right {
+  text-align: right;
+}
+.pd-sig-img {
+  height: 22mm;
+  display: flex;
+  align-items: flex-end;
+}
+.pd-sig.right .pd-sig-img {
+  justify-content: flex-end;
+}
+.pd-sig-img img {
+  max-height: 22mm;
+  max-width: 100%;
+}
+.pd-sig .sl {
+  border-top: 1px solid var(--pd-ink);
+  margin: 4px 0 3px;
+}
+.pd-sig .sn {
+  font-weight: 600;
+}
+.pd-sig .sd {
+  font-size: 11.5px;
+  color: var(--pd-muted);
+}
+
+@media print {
+  .lab-sheet {
+    page: labreport;
+    width: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+  .print-doc {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .pd-res.hi .val {
+    color: #000;
+  }
+  .pd-rt tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .pd-rt tr.pb {
+    break-before: page;
+    page-break-before: always;
+  }
+  .pd-rt tr.pb td {
+    border-top: 0;
+  }
+  .pd-rt td {
+    padding: 1.5px 4px;
+  }
+  .pd-closing {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .pd-sig-img {
+    height: 15mm;
+  }
+  .pd-signs {
+    margin-top: 14px;
+  }
+  @page labreport {
+    size: A4;
+    margin: 8mm 10mm 12mm;
+    @bottom-center {
+      content: 'Page ' counter(page) ' of ' counter(pages);
+      font: 10px Arial, sans-serif;
+      color: #444;
+    }
+  }
+}
+
+/* The bill is shown as the paper it prints on (like the receipt), so the
+   letterhead and totals stay readable in dark mode too. */
+.invoice-sheet.print-doc {
+  background: #fff;
+  color: var(--pd-ink);
+}

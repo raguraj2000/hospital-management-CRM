@@ -17,7 +17,13 @@ export type Permission =
   | 'user.manage'
   | 'backup.configure'
   | 'invoice.view'
-  | 'invoice.manage';
+  | 'invoice.manage'
+  | 'lab.view'
+  | 'lab.order'
+  | 'lab.enterResults'
+  | 'lab.manageTests'
+  | 'payment.receive'
+  | 'payment.override';
 
 // Every permission, in the order the Settings > Roles & permissions grid
 // shows them.
@@ -36,6 +42,12 @@ export const ALL_PERMISSIONS: Permission[] = [
   'supplier.manage',
   'invoice.view',
   'invoice.manage',
+  'lab.view',
+  'lab.order',
+  'lab.enterResults',
+  'lab.manageTests',
+  'payment.receive',
+  'payment.override',
   'auditLog.view',
   'user.manage',
   'backup.configure',
@@ -55,9 +67,15 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'inventory.view': 'See medicine inventory',
   'inventory.adjust': 'Receive stock / adjust quantities',
   'medicine.manage': 'Add, edit and delete medicines',
-  'supplier.manage': 'Manage suppliers',
+  'supplier.manage': 'Manage vendors, pay vendor bills',
   'invoice.view': 'See invoices',
   'invoice.manage': 'Create, edit and delete invoices',
+  'lab.view': 'See lab tests and results',
+  'lab.order': 'Order lab tests',
+  'lab.enterResults': 'Enter lab results / cancel a wrong result',
+  'lab.manageTests': 'Edit the lab test list, prices and normal ranges',
+  'payment.receive': 'Take payments on bills',
+  'payment.override': 'Emergency: give medicines / release lab report before payment',
   'auditLog.view': 'See the audit log',
   'user.manage': 'Manage staff accounts',
   'backup.configure': 'Manage backups and server settings',
@@ -68,15 +86,15 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
 // locking itself out of its own system.
 export const ADMIN_ROLE: Role = 'admin';
 
-export const EDITABLE_ROLES: Role[] = ['manager', 'doctor', 'pharmacist', 'front_desk'];
+export const EDITABLE_ROLES: Role[] = ['manager', 'doctor', 'pharmacist', 'front_desk', 'lab_technician'];
 
 // The DEFAULTS each role starts with. These seeded the role_permission table
-// (migration 0013); from then on the live answer for non-admin roles comes
+// (migrations 0013, and 0016 for the lab ones); from then on the live answer for non-admin roles comes
 // from that table via the server's permission service, so Settings > Roles &
 // permissions can change them. This stays as the fallback used before a
 // session's permissions are known, and as the source of truth for admin.
 export const PERMISSION_MATRIX: Record<Role, Permission[]> = {
-  front_desk: ['patient.view', 'patient.create', 'patient.edit', 'inventory.view', 'invoice.view', 'invoice.manage'],
+  front_desk: ['patient.view', 'patient.create', 'patient.edit', 'inventory.view', 'invoice.view', 'invoice.manage', 'payment.receive'],
   pharmacist: [
     'patient.view',
     'dispense.create',
@@ -85,6 +103,7 @@ export const PERMISSION_MATRIX: Record<Role, Permission[]> = {
     'inventory.adjust',
     'invoice.view',
     'invoice.manage',
+    'payment.receive',
   ],
   doctor: [
     'patient.view',
@@ -92,6 +111,9 @@ export const PERMISSION_MATRIX: Record<Role, Permission[]> = {
     'patient.changeStatus',
     'inventory.view',
     'invoice.view',
+    'lab.view',
+    'lab.order',
+    'payment.override',
   ],
   manager: [
     'patient.view',
@@ -108,7 +130,12 @@ export const PERMISSION_MATRIX: Record<Role, Permission[]> = {
     'auditLog.view',
     'invoice.view',
     'invoice.manage',
+    'lab.view',
+    'lab.order',
+    'lab.manageTests',
+    'payment.receive',
   ],
+  lab_technician: ['patient.view', 'lab.view', 'lab.order', 'lab.enterResults', 'invoice.view', 'invoice.manage'],
   // Always everything, by construction -- a new permission added to
   // ALL_PERMISSIONS is automatically an admin permission and can never be
   // accidentally left off.

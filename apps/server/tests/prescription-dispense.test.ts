@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import { createFollowUpRoutes } from '../src/routes/follow-ups.js';
 import { createTempDbPath, setupTestDb, seedBasicFixtures, addBatch, cleanupDb } from './helpers.js';
 
-describe('adding a prescription line dispenses it atomically', () => {
+describe('saving a prescription (the doctor) does not take stock', () => {
   let db: Database.Database;
   let dbPath: string;
   let fixtures: ReturnType<typeof seedBasicFixtures>;
@@ -29,9 +29,8 @@ describe('adding a prescription line dispenses it atomically', () => {
     return token;
   }
 
-  it('creates the prescription line AND decrements stock in one step', async () => {
+  it('records the prescription line but leaves stock for the pharmacist to give after payment', async () => {
     addBatch(db, fixtures.medicineId, { lotNumber: 'B1', expiryDate: '2027-01-01', quantity: 10 });
-    // patient.editMedicalInstructions is Doctor/Admin only per the RBAC matrix.
     const token = fakeToken(fixtures.doctorId);
 
     const res = await app.request(`/visits/${fixtures.visitEventId}/prescription-lines`, {
@@ -42,39 +41,22 @@ describe('adding a prescription line dispenses it atomically', () => {
 
     expect(res.status).toBe(201);
     const body = (await res.json()) as any;
-    expect(body.allocations).toHaveLength(1);
-    expect(body.allocations[0].quantityTaken).toBe(4);
-
     const line = db.prepare('SELECT * FROM prescription_line WHERE id = ?').get(body.id) as any;
     expect(line.quantity_prescribed).toBe(4);
-
-    const dispenseCount = (
-      db.prepare('SELECT COUNT(*) as c FROM dispense_log WHERE prescription_line_id = ?').get(body.id) as any
-    ).c;
-    expect(dispenseCount).toBe(1);
-
+    expect((db.prepare('SELECT COUNT(*) as c FROM dispense_log').get() as any).c).toBe(0);
     const batchRow = db.prepare('SELECT quantity_remaining FROM medicine_batch WHERE medicine_id = ?').get(fixtures.medicineId) as any;
-    expect(batchRow.quantity_remaining).toBe(6);
+    expect(batchRow.quantity_remaining).toBe(10);
   });
 
-  it('creates NEITHER the prescription line NOR any dispense when stock is insufficient', async () => {
+  it('can prescribe more than is in stock (the pharmacy sees the shortage when giving)', async () => {
     addBatch(db, fixtures.medicineId, { lotNumber: 'B1', expiryDate: '2027-01-01', quantity: 2 });
     const token = fakeToken(fixtures.doctorId);
-
     const res = await app.request(`/visits/${fixtures.visitEventId}/prescription-lines`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ medicineId: fixtures.medicineId, quantityPrescribed: 5 }),
     });
-
-    expect(res.status).toBe(409);
-
-    const lineCount = (db.prepare('SELECT COUNT(*) as c FROM prescription_line').get() as any).c;
-    expect(lineCount).toBe(0);
-    const dispenseCount = (db.prepare('SELECT COUNT(*) as c FROM dispense_log').get() as any).c;
-    expect(dispenseCount).toBe(0);
-    const batchRow = db.prepare('SELECT quantity_remaining FROM medicine_batch WHERE medicine_id = ?').get(fixtures.medicineId) as any;
-    expect(batchRow.quantity_remaining).toBe(2); // untouched
+    expect(res.status).toBe(201);
   });
 
   it('lets dosage instructions and duration be edited after creation, without touching quantity or stock', async () => {
@@ -101,6 +83,6 @@ describe('adding a prescription line dispenses it atomically', () => {
     expect(line.quantity_prescribed).toBe(3); // unchanged
 
     const batchRow = db.prepare('SELECT quantity_remaining FROM medicine_batch WHERE medicine_id = ?').get(fixtures.medicineId) as any;
-    expect(batchRow.quantity_remaining).toBe(7); // unchanged by the edit
+    expect(batchRow.quantity_remaining).toBe(10); // nothing given yet
   });
 });
