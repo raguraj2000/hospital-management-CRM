@@ -1,17 +1,28 @@
 {
-  "name": "clinic-system",
+  "name": "platform",
   "private": true,
+  "type": "module",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
-    "dev:server": "npm run dev --workspace=apps/server",
-    "build:shared": "npm run build --workspace=packages/shared",
-    "build:server": "npm run build:shared && npm run build --workspace=apps/server",
-    "start:server": "npm run start --workspace=apps/server",
-    "migrate": "npm run migrate --workspace=apps/server",
-    "seed": "npm run seed --workspace=apps/server",
-    "test:server": "npm run test --workspace=apps/server"
+    "dev:api": "npm run dev -w @platform/api",
+    "dev:web": "npm run dev -w @platform/web",
+    "seed": "npm run seed -w @platform/api",
+    "test": "npm run test -w @platform/api",
+    "typecheck": "tsc -p apps/api && tsc -p apps/web",
+    "build": "npm run build -w @platform/web",
+    "e2e:screens": "node e2e/screens.mjs",
+    "e2e:op": "node e2e/op-flow.mjs",
+    "e2e:settings": "node e2e/settings-flow.mjs",
+    "e2e:workflow": "node e2e/op-workflow.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "playwright-core": "^1.63.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
   }
 }
