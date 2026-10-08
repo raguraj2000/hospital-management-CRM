@@ -45,10 +45,11 @@ log('OP number:', opNo);
 await page.screenshot({ path: `${out}/patient-visits.png` });
 
 // 3. OP list + complete
-await page.goto(`${base}/main/visits`);
+await page.goto(`${base}/main/visits?show=all`); // the Queue tab hides a visit once it is completed
 await page.getByText(opNo, { exact: true }).waitFor();
 await page.screenshot({ path: `${out}/op-list.png` });
-await page.getByRole('row', { name: new RegExp(opNo) }).getByRole('button', { name: 'Complete' }).click();
+await page.getByRole('row', { name: new RegExp(opNo) }).getByRole('button', { name: /More actions/ }).click();
+await page.getByRole('menuitem', { name: 'Mark completed' }).click();
 await page.getByRole('row', { name: new RegExp(opNo) }).getByText('Completed').waitFor();
 log('visit completed in OP list');
 

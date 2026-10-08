@@ -2,22 +2,26 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { z } from 'zod';
-import { ClipboardEdit, FlaskConical, ListPlus, Pencil, Plus, Printer, TestTube, Trash2 } from 'lucide-react';
+import { ClipboardEdit, FlaskConical, ListPlus, Pencil, Plus, Printer, TestTube, Trash2, X } from 'lucide-react';
 import { formatRupees, opToken, toPaise, type LabQueueEntry, type LabTest } from '@platform/shared';
-import { Avatar, Badge, Button, buttonVariants, Card, ConfirmDelete, Dialog, EmptyState, Field, Input, PageHeader, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+import { Avatar, Badge, Button, buttonVariants, Card, ConfirmDelete, ConfirmDialog, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { PrintHeaderForm } from '@/components/PrintHeaderForm';
 import { useBranch, useCan } from '@/state/auth';
+import { PrintLink } from '@/components/print';
 
 export function Lab() {
   const current = useBranch();
   const canManageTests = useCan('settings.manage');
+  // The tab lives in the URL (?tab=done), so the results page can send the lab straight to Completed.
+  const [params, setParams] = useSearchParams();
+  const tab = ['done', 'tests', 'header'].includes(params.get('tab') ?? '') ? params.get('tab')! : 'queue';
   return (
     <div>
       <PageHeader title="Lab" description={`Tests ordered by doctors at ${current?.name}. Enter results, then print the report.`} />
-      <Tabs defaultValue="queue">
+      <Tabs value={tab} onValueChange={(v) => setParams(v === 'queue' ? {} : { tab: v }, { replace: true })}>
         <TabsList className="mb-4">
           <TabsTrigger value="queue">Queue</TabsTrigger>
           <TabsTrigger value="done">Completed</TabsTrigger>
@@ -53,6 +57,16 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
     queryFn: () => api.get<{ orders: LabQueueEntry[] }>(`/b/${branch}/lab/orders${status ? `?status=${status}` : ''}`),
     refetchInterval: 20_000,
   });
+  const [cancelling, setCancelling] = useState<LabQueueEntry | null>(null);
+  const { rows, pager } = usePaged(data?.orders ?? [], status);
+  const cancel = useMutation({
+    mutationFn: (o: LabQueueEntry) => api.patch(`/b/${branch}/lab/orders/${o.id}`, { status: 'cancelled' }),
+    onSuccess: (_d, o) => {
+      for (const k of ['lab-queue', 'patient-lab', 'patient-bills', 'visit-lab', 'visit-bills', 'visits', 'visit', 'checkout-queue']) qc.invalidateQueries({ queryKey: [k, branch] });
+      toast.success(`${o.testName} cancelled for ${o.patientName}`);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
   const collect = useMutation({
     mutationFn: (o: LabQueueEntry) => api.patch(`/b/${branch}/lab/orders/${o.id}`, { status: 'sample_collected' }),
     onSuccess: (_d, o) => {
@@ -65,7 +79,7 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
 
   if (isLoading) return <Skeleton className="h-48" />;
   if (error) return <Card className="p-4 text-sm text-critical">{errorMessage(error)}</Card>;
-  const orders = data!.orders;
+  const orders = rows;
   return (
     <Card>
       {orders.length === 0 ? (
@@ -94,7 +108,15 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
                     </span>
                   </Link>
                 </TD>
-                <TD className="font-medium">{o.testName}</TD>
+                <TD className="font-medium">
+                  {o.testName}
+                  {o.labNote && (
+                    <span className="mt-0.5 block max-w-xs text-xs font-normal whitespace-pre-wrap text-muted">
+                      <span className="font-semibold text-ink">Doctor's note: </span>
+                      {o.labNote}
+                    </span>
+                  )}
+                </TD>
                 <TD className="hidden text-muted md:table-cell">
                   {opToken(o.opNo) != null && <span className="font-medium text-ink">Token {opToken(o.opNo)} · </span>}
                   <span className="font-mono text-xs">{o.opNo}</span>
@@ -107,15 +129,21 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
                 </TD>
                 <TD>
                   <div className="flex justify-end gap-1.5">
+                    {/* The patient is going elsewhere: allowed until results are entered (the server refuses after that). */}
+                    {o.status !== 'completed' && (
+                      <Button size="sm" variant="ghost" disabled={cancel.isPending} onClick={() => setCancelling(o)}>
+                        <X /> Cancel test
+                      </Button>
+                    )}
                     {canCollect && o.status === 'ordered' && (
                       <Button size="sm" variant="outline" disabled={collect.isPending} onClick={() => collect.mutate(o)}>
                         <TestTube /> Sample collected
                       </Button>
                     )}
                     {o.status === 'completed' ? (
-                      <a href={`/${branch}/lab/visits/${o.visitId}/print`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
+                      <PrintLink href={`/${branch}/lab/visits/${o.visitId}/print`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
                         <Printer /> Print report
-                      </a>
+                      </PrintLink>
                     ) : (
                       <Link to={`/${branch}/lab/visits/${o.visitId}`} className={buttonVariants({ size: 'sm' })}>
                         <ClipboardEdit /> Enter results
@@ -128,6 +156,16 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
           </TBody>
         </Table>
       )}
+      <Pager {...pager} />
+      <ConfirmDialog
+        open={!!cancelling}
+        onOpenChange={(open) => !open && setCancelling(null)}
+        title={`Cancel ${cancelling?.testName ?? 'test'}?`}
+        description={`For ${cancelling?.patientName ?? 'this patient'}. It is removed from the queue and from the bill.`}
+        confirmLabel="Yes, cancel the test"
+        cancelLabel="Keep it"
+        onConfirm={() => cancelling && cancel.mutate(cancelling)}
+      />
     </Card>
   );
 }
@@ -140,6 +178,7 @@ function LabTests({ canManage }: { canManage: boolean }) {
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<LabTest | null>(null);
   const [pricing, setPricing] = useState<LabTest | null>(null);
+  const [confirmLoad, setConfirmLoad] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ['lab-tests', branch], queryFn: () => api.get<{ tests: LabTest[] }>(`/b/${branch}/lab/tests`) });
   const loadStandard = useMutation({
     mutationFn: () => api.post<{ added: number; skipped: number }>(`/b/${branch}/lab/tests/load-standard`),
@@ -176,6 +215,15 @@ function LabTests({ canManage }: { canManage: boolean }) {
 
   return (
     <Card>
+      <ConfirmDialog
+        open={confirmLoad}
+        onOpenChange={setConfirmLoad}
+        title="Load the standard tests?"
+        description="Adds the standard list (CBC, LFT, urine, card tests …) to this branch. Tests already in the list are kept as they are, with their prices. New ones start at ₹0."
+        confirmLabel="Yes, load them"
+        pending={loadStandard.isPending}
+        onConfirm={() => loadStandard.mutate()}
+      />
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
           <div className="text-sm font-semibold">Tests & prices</div>
@@ -183,7 +231,7 @@ function LabTests({ canManage }: { canManage: boolean }) {
         </div>
         {canManage && (
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" disabled={loadStandard.isPending} onClick={() => loadStandard.mutate()}>
+            <Button size="sm" variant="outline" disabled={loadStandard.isPending} onClick={() => setConfirmLoad(true)}>
               <ListPlus /> Load standard tests
             </Button>
             <Button size="sm" onClick={() => setAdding(true)}>
@@ -199,7 +247,7 @@ function LabTests({ canManage }: { canManage: boolean }) {
           icon={TestTube}
           title="No tests yet"
           description={canManage ? 'Load the standard list (CBC, LFT, urine, card tests …) or add tests one by one.' : 'A branch admin adds the tests.'}
-          action={canManage && <Button size="sm" variant="outline" onClick={() => loadStandard.mutate()}><ListPlus /> Load standard tests</Button>}
+          action={canManage && <Button size="sm" variant="outline" onClick={() => setConfirmLoad(true)}><ListPlus /> Load standard tests</Button>}
         />
       ) : (
         <Table>

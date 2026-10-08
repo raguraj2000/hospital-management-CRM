@@ -34,7 +34,7 @@ describe('doctors of a branch', () => {
   it('the migration added the table and the column (applied on top of the existing ones)', async () => {
     const applied = await t.db.get<{ n: number }>(sql`select count(*) as n from __drizzle_migrations`);
     expect(applied!.n).toBe(journal.entries.length);
-    expect(journal.entries.at(-1)!.tag).toBe('0008_branch_doctors');
+    expect(journal.entries.map((e) => e.tag)).toContain('0008_branch_doctors');
     expect(await t.db.get(sql`select name from sqlite_master where type = 'table' and name = 'branch_doctor'`)).toBeTruthy();
     const cols = await t.db.all<{ name: string; notnull: number }>(sql`pragma table_info(clinic_setting)`);
     expect(cols.find((c) => c.name === 'default_doctor_user_id')).toMatchObject({ notnull: 0 });
@@ -48,7 +48,7 @@ describe('doctors of a branch', () => {
     const s = await settings(owner);
     expect(s.defaultDoctorUserId).toBeNull();
     const by = Object.fromEntries(s.people.map((p: any) => [p.name, p]));
-    expect(Object.keys(by).sort()).toEqual(['Owner', 'desk', 'doc', 'labtech', 'pharm']); // eastdesk works in east only
+    expect(Object.keys(by).sort()).toEqual(['Owner', 'desk', 'doc', 'labtech', 'nurse', 'pharm']); // eastdesk works in east only
     expect(by.doc).toMatchObject({ roleName: 'Doctor', isOwner: false, isDoctorRole: true, isDoctor: true, canPrescribe: true });
     expect(by.Owner).toMatchObject({ roleName: 'Owner', isOwner: true, isDoctorRole: false, isDoctor: false, canPrescribe: true });
     expect(by.desk).toMatchObject({ roleName: 'Front desk', isDoctorRole: false, isDoctor: false, canPrescribe: false });

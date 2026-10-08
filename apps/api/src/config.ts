@@ -7,7 +7,8 @@ export const config = {
   port: Number(process.env.PORT ?? 4100),
   /** SQLite file. Default: apps/api/data/app.db (gitignored). */
   dbUrl: process.env.DATABASE_URL ?? `file:${path.join(apiDir, 'data', 'app.db').replace(/\\/g, '/')}`,
-  migrationsFolder: path.join(apiDir, 'drizzle'),
+  /** Overridden on an installed PC, where the server is one bundled file. */
+  migrationsFolder: process.env.MIGRATIONS_DIR ?? path.join(apiDir, 'drizzle'),
   /** Built web app, served by this same server in production. */
   webDir: process.env.WEB_DIR ?? path.resolve(apiDir, '..', 'web', 'dist'),
 };

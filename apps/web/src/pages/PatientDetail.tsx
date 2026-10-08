@@ -32,17 +32,18 @@ import {
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
+import { ConditionBadges } from '@/components/Conditions';
 import { PatientForm } from '@/components/PatientForm';
 import { NewVisitForm, TokenBadge, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
 import { ageOf, formatPhone } from './Patients';
 import { PatientBillsTab, PatientLabTab, usePatientBills, usePatientLab } from './PatientTabs';
+import { fmtDate } from '@/components/format';
 
 /** Free WhatsApp click-to-chat: opens WhatsApp with the message ready; staff press send. */
 function whatsAppLink(phone: string, text: string) {
   return `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 }
 
-const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 
 export function PatientDetail() {
   const { branch, id } = useParams();
@@ -135,6 +136,7 @@ export function PatientDetail() {
               {p.bloodGroup && <Badge tone="critical">{p.bloodGroup}</Badge>}
               <span className="text-xs text-muted">Registered {fmtDate(p.createdAt)}</span>
             </div>
+            <ConditionBadges conditions={p.conditions} className="mt-2" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {canCreate && (
@@ -251,7 +253,7 @@ export function PatientDetail() {
                         {vitalsSummary(v) && <div className="truncate text-xs text-muted tabular-nums">{vitalsSummary(v)}</div>}
                         {v.notes && <div className="truncate text-xs text-muted italic">{v.notes}</div>}
                       </TD>
-                      <TD><VisitStatusBadge status={v.status} /></TD>
+                      <TD><VisitStatusBadge status={v.status} labReady={v.labReady} /></TD>
                       <TD><VisitActions branch={branch!} visit={v} label={p.name} /></TD>
                     </TR>
                   ))}

@@ -14,8 +14,12 @@ export function ReportHeader({ header }: { header: PrintHeader }) {
           <div className="truncate text-[28px] leading-tight font-extrabold text-[#1f6b4f]" style={{ fontFamily: "'Nirmala UI','Latha',var(--font-sans)" }}>
             {header.title || 'Hospital name'}
           </div>
-          {header.address && <div className="text-[14px]" style={{ fontFamily: "'Nirmala UI','Latha',var(--font-sans)" }}>{header.address}</div>}
-          {header.phone && <div className="text-[13px]">{header.phone}</div>}
+          {(header.address || header.phone) && (
+            <div className="text-[14px]" style={{ fontFamily: "'Nirmala UI','Latha',var(--font-sans)" }}>
+              {header.address}
+              {header.phone && <span className={header.address ? 'ml-2 whitespace-nowrap' : 'whitespace-nowrap'}>{header.phone}</span>}
+            </div>
+          )}
         </div>
         {doctors.length > 0 && <div className="w-[1.5px] self-stretch bg-[#111]" />}
         {doctors.length > 0 && (

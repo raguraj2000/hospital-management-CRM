@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { dispenseQuantitiesSchema } from './billing.js';
 
 // ---------------------------------------------------------------------------
 // Permissions. The platform core owns the CORE list; each product (clinic,
@@ -21,6 +22,7 @@ export const CLINIC_PERMISSIONS = [
   'inventory.view',
   'inventory.manage',
   'vendor.manage',
+  'treatment.give',
 ] as const;
 
 /** Only this role (and the owner) may ever hold these: managing staff and roles. */
@@ -34,7 +36,10 @@ export function isPermission(value: string): value is Permission {
   return (ALL_PERMISSIONS as readonly string[]).includes(value);
 }
 
-/** Starting roles for a new organization (editable later in Settings). */
+/**
+ * Starting roles for a new organization (editable later in Settings).
+ * Front desk and Pharmacist both hold billing.receive + pharmacy.sell: either one at the counter can take a visit's whole payment.
+ */
 export const DEFAULT_ROLES: { key: string; name: string; permissions: Permission[] }[] = [
   {
     key: 'branch_admin',
@@ -44,15 +49,17 @@ export const DEFAULT_ROLES: { key: string; name: string; permissions: Permission
   {
     key: 'doctor',
     name: 'Doctor',
-    permissions: ['dashboard.view', 'patient.view', 'patient.create', 'patient.edit', 'prescription.write', 'lab.order', 'lab.view', 'inventory.view'],
+    permissions: ['dashboard.view', 'patient.view', 'patient.create', 'patient.edit', 'prescription.write', 'lab.order', 'lab.view', 'inventory.view', 'treatment.give'],
   },
-  { key: 'front_desk', name: 'Front desk', permissions: ['dashboard.view', 'patient.view', 'patient.create', 'patient.edit', 'billing.receive'] },
+  { key: 'front_desk', name: 'Front desk', permissions: ['dashboard.view', 'patient.view', 'patient.create', 'patient.edit', 'billing.receive', 'pharmacy.sell'] },
   {
     key: 'pharmacist',
     name: 'Pharmacist',
-    permissions: ['dashboard.view', 'patient.view', 'pharmacy.sell', 'inventory.view', 'inventory.manage', 'vendor.manage'],
+    permissions: ['dashboard.view', 'patient.view', 'pharmacy.sell', 'billing.receive', 'inventory.view', 'inventory.manage', 'vendor.manage'],
   },
   { key: 'lab_technician', name: 'Lab technician', permissions: ['dashboard.view', 'patient.view', 'lab.view'] },
+  // Gives the medicines that are given in the hospital (injections, drips) and ticks each dose.
+  { key: 'nurse', name: 'Nurse', permissions: ['dashboard.view', 'patient.view', 'treatment.give'] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -181,6 +188,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'lab.order': 'Order lab tests',
   'billing.receive': 'Billing & payments',
   'lab.view': 'Lab queue',
+  'treatment.give': 'Give treatments (tick doses given in the hospital)',
   'pharmacy.sell': 'Pharmacy: dispense & sell',
   'inventory.view': 'View medicines & stock',
   'inventory.manage': 'Manage medicines & stock',
@@ -329,12 +337,20 @@ export const prescriptionItemSchema = z.object({
   days: z.number({ error: 'Enter days' }).int().min(1, 'At least 1 day').max(365),
   quantity: z.number().int().min(1, 'At least 1').max(10_000).nullable().optional(),
   instructions: z.string().trim().max(200).transform((v) => (v === '' ? null : v)).nullable().optional(),
+  /** Given in the hospital, dose by dose (an injection, a drip): the nurse ticks each dose on the Treatments page. */
+  givenHere: z.boolean().optional(),
 });
 export type PrescriptionItemInput = z.output<typeof prescriptionItemSchema>;
 export type PrescriptionItemFormValues = z.input<typeof prescriptionItemSchema>;
 
 export const PRESCRIPTION_STATUSES = ['pending', 'dispensed', 'declined'] as const;
 export type PrescriptionStatus = (typeof PRESCRIPTION_STATUSES)[number];
+
+/** Doses and instructions this branch has used most, offered as one-click choices when prescribing. */
+export interface PrescriptionSuggestions {
+  doses: string[];
+  instructions: string[];
+}
 
 export interface PrescriptionItem {
   id: number;
@@ -350,6 +366,74 @@ export interface PrescriptionItem {
   status: PrescriptionStatus;
   pricePaise: number;
   stock: number;
+  /** Given in the hospital: how many doses there are and how many were given so far. */
+  givenHere: boolean;
+  dosesTotal: number;
+  dosesGiven: number;
+}
+
+// ---------------------------------------------------------------------------
+// Clinic: treatments given in the hospital
+// ---------------------------------------------------------------------------
+
+/** Doses nobody ticked stay on the nurse's list this many days back. */
+export const TREATMENT_LOOKBACK_DAYS = 3;
+const TIMES_OF_DAY = ['Morning', 'Afternoon', 'Night'];
+
+/**
+ * The doses of one day from a dose pattern: "1-0-1" = Morning and Night; "1-1-1-1" = Dose 1..4;
+ * a typed dose ("SOS", "5 ml twice") = one dose a day.
+ */
+export function treatmentSlots(dose: string): { slotNo: number; slot: string; amount: string | null }[] {
+  const parts = dose.trim().split('-');
+  if (parts.length < 2 || parts.length > 4 || parts.some((x) => !/^\d+(\.5)?$/.test(x))) return [{ slotNo: 1, slot: 'Dose', amount: null }];
+  const names = parts.length === 3 ? TIMES_OF_DAY : parts.length === 2 ? ['Morning', 'Night'] : parts.map((_, i) => `Dose ${i + 1}`);
+  return parts.map((amount, i) => ({ slotNo: i + 1, slot: names[i]!, amount })).filter((s) => Number(s.amount) > 0);
+}
+
+export const treatmentGiveSchema = z.object({
+  note: z
+    .string()
+    .trim()
+    .max(200)
+    .transform((v) => (v === '' ? null : v))
+    .nullable()
+    .optional(),
+});
+
+export interface TreatmentDose {
+  id: number;
+  prescriptionItemId: number;
+  visitId: number;
+  opNo: string;
+  token: number | null;
+  patientId: number;
+  patientName: string;
+  patientUhid: string;
+  patientConditions: string | null;
+  medicineName: string;
+  strength: string | null;
+  form: MedicineForm;
+  dose: string;
+  days: number;
+  instructions: string | null;
+  /** pending = the pharmacy has not handed the medicine over yet. */
+  itemStatus: PrescriptionStatus;
+  dueDate: string;
+  slotNo: number;
+  slot: string;
+  amount: string | null;
+  givenAt: string | null;
+  givenByName: string | null;
+  note: string | null;
+}
+
+export interface TreatmentList {
+  date: string;
+  today: string;
+  doses: TreatmentDose[];
+  /** Only for today: doses of the last few days that were never given. */
+  missed: TreatmentDose[];
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +446,7 @@ export type PaymentMode = (typeof PAYMENT_MODES)[number];
 export const dispenseSchema = z.object({
   visitId: z.number().int().positive(),
   itemIds: z.array(z.number().int().positive()).min(1, 'Tick at least one medicine'),
+  quantities: dispenseQuantitiesSchema,
   paymentMode: z.enum(PAYMENT_MODES),
 });
 
@@ -393,6 +478,8 @@ export interface PharmacyQueueEntry {
   patientName: string;
   patientUhid: string;
   doctorName: string | null;
+  /** The doctor's note to the pharmacy for this visit. */
+  pharmacyNote: string | null;
   items: PrescriptionItem[];
 }
 
@@ -493,11 +580,13 @@ export interface LabReportTest {
 
 /** Everything the results screen and the printed report need for one visit. */
 export interface LabReport {
-  visit: { id: number; opNo: string; visitDate: string; doctorName: string | null };
+  visit: { id: number; opNo: string; visitDate: string; doctorName: string | null; labNote: string | null };
   patient: { id: number; name: string; uhid: string; gender: string | null; age: number | null; phone: string | null };
   tests: LabReportTest[];
   header: PrintHeader;
   billNo: string | null;
+  /** When the (first) bill of these tests was made, UTC ISO; null until billed. */
+  billedAt: string | null;
   /** Lab charges paid? Printing needs paid or an admin release. */
   payment?: { paid: boolean; released: boolean; releaseReason: string | null; duePaise: number; printAllowed: boolean };
 }
@@ -558,6 +647,8 @@ export interface LabQueueEntry extends LabOrder {
   patientName: string;
   patientUhid: string;
   doctorName: string | null;
+  /** The doctor's note to the lab for this visit. */
+  labNote: string | null;
 }
 
 /** One lab order on the patient's Lab tab (all visits, newest first). */
@@ -620,6 +711,8 @@ export const patientInputSchema = z.object({
   bloodGroup: optionalText(5),
   weightKg: z.number({ error: 'Enter the weight in kg' }).min(0.5, 'Check the weight').max(400, 'Check the weight').nullable().optional(),
   address: optionalText(500),
+  /** Long-term conditions, comma-separated (see splitConditions). */
+  conditions: optionalText(300),
   emergencyContactName: optionalText(120),
   emergencyContactPhone: mobile,
 });
@@ -627,6 +720,15 @@ export const patientInputSchema = z.object({
 export type PatientFormValues = z.input<typeof patientInputSchema>;
 /** What the API stores (after the transforms). */
 export type PatientInput = z.output<typeof patientInputSchema>;
+
+/** Long-term conditions offered as one-click choices; anything else is typed. */
+export const COMMON_CONDITIONS = ['Diabetes (Sugar)', 'Hypertension (BP)', 'Heart disease', 'Asthma', 'Thyroid', 'Kidney disease', 'Cancer', 'Epilepsy', 'TB'] as const;
+/** "Diabetes, Asthma" -> ['Diabetes', 'Asthma'] (how patient.conditions is stored). */
+export const splitConditions = (conditions: string | null | undefined): string[] =>
+  (conditions ?? '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
 
 export interface Patient {
   id: number;
@@ -641,6 +743,7 @@ export interface Patient {
   bloodGroup: string | null;
   weightKg: number | null;
   address: string | null;
+  conditions: string | null;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
   createdAt: string;
@@ -651,8 +754,14 @@ export interface Patient {
 // Clinic: OP (out-patient) visits
 // ---------------------------------------------------------------------------
 
-export const VISIT_STATUSES = ['waiting', 'completed', 'cancelled'] as const;
+/**
+ * Where the patient is: waiting -> with_doctor -> (at_lab -> back to with_doctor)* -> at_counter -> completed; or cancelled.
+ * with_doctor: inside now, at most one per doctor. at_lab: sent for tests. at_counter: at the pharmacy / billing counter.
+ */
+export const VISIT_STATUSES = ['waiting', 'with_doctor', 'at_lab', 'at_counter', 'completed', 'cancelled'] as const;
 export type VisitStatus = (typeof VISIT_STATUSES)[number];
+/** What editing a visit may set directly; the other steps go through "call next" and "send". */
+export const VISIT_EDIT_STATUSES = ['waiting', 'completed', 'cancelled'] as const;
 
 /** A vital sign: empty = not measured; otherwise a number within a sane range. */
 const vital = (min: number, max: number, label: string, int = true) =>
@@ -666,6 +775,9 @@ export const visitInputSchema = z.object({
   doctorUserId: z.number().int().positive().nullable().optional(),
   complaint: optionalText(500),
   notes: optionalText(2000),
+  /** Doctor's note to the pharmacy / to the lab for this visit. */
+  pharmacyNote: optionalText(500),
+  labNote: optionalText(500),
   bpSystolic: vital(50, 260, 'BP (upper)'),
   bpDiastolic: vital(30, 160, 'BP (lower)'),
   pulse: vital(20, 250, 'Pulse'),
@@ -673,7 +785,31 @@ export const visitInputSchema = z.object({
   spo2: vital(50, 100, 'SpO₂'),
   weightKg: vital(0.5, 400, 'Weight', false),
 });
-export const visitUpdateSchema = visitInputSchema.extend({ status: z.enum(VISIT_STATUSES).optional() });
+/** The doctor's fee for one visit; null = back to the branch's standard fee. */
+export const visitFeeSchema = z.object({ consultationFeePaise: z.number({ error: 'Enter the fee' }).int().min(0, 'Enter the fee').max(100_000_00, 'Check the fee').nullable() });
+/** GET /visits/:id: what this visit's consultation costs and whether it can still be changed. */
+export interface VisitFee {
+  /** What the patient is charged: the bill's fee once billed, else the visit's own fee, else the standard fee. */
+  consultationFeePaise: number;
+  /** The branch's standard fee (Settings). */
+  standardFeePaise: number;
+  /** A payment was taken on the bill that carries the fee: it can no longer be changed. */
+  locked: boolean;
+}
+
+export const visitUpdateSchema = visitInputSchema.extend({
+  status: z.enum(VISIT_EDIT_STATUSES, { error: 'Use "Call next" or the "What next?" buttons to move the patient' }).optional(),
+});
+
+/** Call the next patient in. No visitId = the server picks (back from the lab with results first, then the lowest token). */
+export const visitCallNextSchema = z.object({
+  /** Whose queue. Left out = the caller if they are a doctor here, else all doctors; null = all doctors. */
+  doctorUserId: z.number().int().positive().nullable().optional(),
+  visitId: z.number().int().positive().optional(),
+});
+/** The doctor's "what next?" for the patient inside; callNext also calls that doctor's next patient in. */
+export const visitSendSchema = z.object({ to: z.enum(['lab', 'counter', 'waiting'], { error: 'Choose where the patient goes' }), callNext: z.boolean().optional() });
+export type VisitSendTo = z.infer<typeof visitSendSchema>['to'];
 export type VisitInput = z.output<typeof visitInputSchema>;
 export type VisitFormValues = z.input<typeof visitInputSchema>;
 
@@ -696,6 +832,8 @@ export interface OpVisit {
   doctorName: string | null;
   complaint: string | null;
   notes: string | null;
+  pharmacyNote: string | null;
+  labNote: string | null;
   bpSystolic: number | null;
   bpDiastolic: number | null;
   pulse: number | null;
@@ -703,6 +841,18 @@ export interface OpVisit {
   spo2: number | null;
   weightKg: number | null;
   createdAt: string;
+  /** This visit's lab tests by status (cancelled ones are not counted). */
+  lab: VisitLabSummary;
+  /** Has lab tests and every one is completed: the patient goes back in before the next token. */
+  labReady: boolean;
+  /** Medicines on the prescription (removed ones are not counted). */
+  medicineCount: number;
+}
+
+export interface VisitLabSummary {
+  ordered: number;
+  sampleCollected: number;
+  completed: number;
 }
 
 export interface Doctor {
@@ -745,6 +895,33 @@ export interface DoctorSettings {
 export interface OpVisitRow extends OpVisit {
   patientName: string;
   patientUhid: string;
+  patientConditions: string | null;
+}
+
+/** Why a patient was called in: back from the lab with results, the next token, or picked by hand. */
+export type VisitCallReason = 'lab_ready' | 'next_token' | 'chosen';
+
+/** The doctor's queue right now (today only), for the banner on the OP visits page. Same rule as "call next". */
+export interface VisitQueue {
+  /** Whose queue this is; null = all doctors of the branch. */
+  doctorUserId: number | null;
+  withDoctor: OpVisitRow[];
+  next: { visit: OpVisitRow; reason: VisitCallReason } | null;
+  /** At the lab with every result ready, token order. */
+  labReady: OpVisitRow[];
+}
+
+/** POST /visits/call-next. previous = who was inside and went back to waiting (normally nobody). */
+export interface VisitCallNextResponse {
+  visit: OpVisitRow;
+  previous: OpVisitRow | null;
+  reason: VisitCallReason;
+}
+
+/** POST /visits/:id/send. next is there only with callNext, and null when nobody is waiting. */
+export interface VisitSendResponse {
+  visit: OpVisitRow;
+  next: { visit: OpVisitRow; reason: VisitCallReason } | null;
 }
 
 /** Every API error has this shape. */
@@ -754,6 +931,7 @@ export interface ApiErrorBody {
   fields?: Record<string, string[]>;
 }
 export * from './billing.js';
+export * from './purchase-import.js';
 
 // ---------------------------------------------------------------------------
 // Platform (you, hosting many customers): customers = organizations

@@ -64,12 +64,12 @@ export function TabsList({ children, className }: { children: ReactNode; classNa
   return <T.List className={cn('inline-flex h-9 items-center gap-1 rounded-lg bg-subtle p-1 text-muted', className)}>{children}</T.List>;
 }
 
-export function TabsTrigger({ value, children, disabled }: { value: string; children: ReactNode; disabled?: boolean }) {
+export function TabsTrigger({ value, children, disabled, className }: { value: string; children: ReactNode; disabled?: boolean; className?: string }) {
   return (
     <T.Trigger
       value={value}
       disabled={disabled}
-      className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-sm font-medium whitespace-nowrap transition-all disabled:opacity-50 data-[state=active]:bg-surface data-[state=active]:text-ink data-[state=active]:shadow-sm"
+      className={cn('inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-sm font-medium whitespace-nowrap transition-all disabled:opacity-50 data-[state=active]:bg-surface data-[state=active]:text-ink data-[state=active]:shadow-sm', className)}
     >
       {children}
     </T.Trigger>

@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Construction, Lock } from 'lucide-react';
 import type { Permission } from '@platform/shared';
 import { Card, EmptyState, ErrorBoundary, PageHeader, Toaster } from '@platform/ui';
-import { initTheme, useTheme } from './state/theme';
+import { initTheme, isDark, useTheme } from './state/theme';
 import './index.css';
 import { setUnauthenticatedHandler } from './api/client';
 import { ME_KEY, useCan, useMe } from './state/auth';
@@ -27,8 +27,12 @@ import { LabResults } from './pages/LabResults';
 import { LabReportPrint } from './pages/LabReportPrint';
 import { Billing } from './pages/Billing';
 import { BillPage, BillPrint } from './pages/BillPage';
+import { DayReportPrint, ReceiptPrint } from './pages/BillingPrints';
+import { Treatments } from './pages/Treatments';
+import { VisitBillPrint } from './pages/VisitBillPrint';
 import { Vendors } from './pages/Vendors';
-import { NewPurchaseBill, PurchaseBillPage } from './pages/PurchaseBill';
+import { PurchaseBillPage } from './pages/PurchaseBill';
+import { NewPurchaseBill } from './pages/NewPurchaseBill';
 import { Platform } from './pages/Platform';
 
 initTheme();
@@ -77,10 +81,10 @@ function Boot({ children }: { children: ReactNode }) {
 
 function ThemedToaster() {
   const theme = useTheme((s) => s.theme);
-  return <Toaster theme={theme} position="top-right" richColors closeButton />;
+  return <Toaster theme={isDark(theme) ? 'dark' : 'light'} position="top-right" richColors closeButton />;
 }
 
-const pages: Record<string, ReactNode> = { '': <Dashboard />, patients: <Patients />, visits: <OpVisits />, settings: <Settings />, pharmacy: <Pharmacy />, inventory: <Inventory />, lab: <Lab />, billing: <Billing />, vendors: <Vendors /> };
+const pages: Record<string, ReactNode> = { '': <Dashboard />, patients: <Patients />, visits: <OpVisits />, settings: <Settings />, pharmacy: <Pharmacy />, inventory: <Inventory />, lab: <Lab />, billing: <Billing />, treatments: <Treatments />, vendors: <Vendors /> };
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -88,7 +92,10 @@ const router = createBrowserRouter([
   // Print page: full screen, no menus.
   { path: '/:branch/lab/visits/:visitId/print', element: <LabReportPrint /> },
   { path: '/:branch/billing/:billId/print', element: <BillPrint /> },
+  { path: '/:branch/billing/:billId/receipts/:paymentId/print', element: <ReceiptPrint /> },
+  { path: '/:branch/billing/day-report/print', element: <DayReportPrint /> },
   { path: '/:branch/pharmacy/sales/:saleId/print', element: <PharmacyBillPrint /> },
+  { path: '/:branch/visits/:visitId/bill/print', element: <VisitBillPrint /> },
   {
     path: '/:branch',
     element: <AppShell />,

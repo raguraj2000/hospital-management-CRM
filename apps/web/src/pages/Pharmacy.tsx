@@ -2,14 +2,15 @@ import { useDeferredValue, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { AlertTriangle, PackageCheck, Pill, Printer, ReceiptText, Search, ShoppingCart, Trash2, X } from 'lucide-react';
-import { FORM_UNIT, formatRupees, PAYMENT_MODES, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
-import { Avatar, Badge, Button, Card, CardHeader, EmptyState, Field, Input, NativeSelect, PageHeader, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+import { FORM_UNIT, formatRupees, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
+import { Avatar, Badge, Button, Card, CardHeader, EmptyState, Field, Input, PageHeader, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, Pager, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { visitLabel } from '@/components/Visits';
+import { CheckoutList, useCheckoutQueue } from '@/components/Checkout';
+import { fmtDay, modeLabel } from '@/components/format';
+import { PaymentModeSelect } from '@/components/PaymentModeSelect';
 
-const modeLabel: Record<PaymentMode, string> = { cash: 'Cash', upi: 'UPI', card: 'Card' };
-const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 const printUrl = (branch: string, saleId: number) => `/${branch}/pharmacy/sales/${saleId}/print`;
 /** Same limit as the server (directSaleSchema). */
 const MAX_QTY = 10_000;
@@ -17,21 +18,29 @@ const MAX_QTY = 10_000;
 export function Pharmacy() {
   const { branch } = useParams();
   const current = useBranch();
+  // With billing.receive too, this counter takes the visit's whole payment (checkout); otherwise it only dispenses, as before.
+  const fullCheckout = useCan('billing.receive');
+  const checkout = useCheckoutQueue(branch, fullCheckout);
   const queue = useQuery({
     queryKey: ['pharmacy-queue', branch],
     queryFn: () => api.get<{ queue: PharmacyQueueEntry[] }>(`/b/${branch}/pharmacy/queue`),
     refetchInterval: 20_000, // new prescriptions appear without reloading
+    enabled: !fullCheckout,
   });
   const sales = useQuery({ queryKey: ['pharmacy-sales', branch], queryFn: () => api.get<{ sales: PharmacySale[]; totalPaise: number }>(`/b/${branch}/pharmacy/sales`) });
-  const waiting = queue.data?.queue.length ?? 0;
+  const { rows: saleRows, pager: salePager } = usePaged(sales.data?.sales ?? []);
+  const waiting = (fullCheckout ? checkout.data?.queue.length : queue.data?.queue.length) ?? 0;
 
   return (
     <div>
-      <PageHeader title="Pharmacy" description={`Prescriptions waiting at ${current?.name}. Tick what the patient buys, then dispense.`} />
+      <PageHeader
+        title="Pharmacy"
+        description={fullCheckout ? `Checkout at ${current?.name}: see the patient's total bill, collect it once, then give the medicines.` : `Prescriptions waiting at ${current?.name}. Tick what the patient buys, then dispense.`}
+      />
       <Tabs defaultValue="queue">
         <TabsList className="mb-4">
           <TabsTrigger value="queue">
-            Waiting {waiting > 0 && <Badge tone="warning">{waiting}</Badge>}
+            Checkout {waiting > 0 && <Badge tone="warning">{waiting}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="direct">Direct sale</TabsTrigger>
           <TabsTrigger value="sales">
@@ -40,7 +49,9 @@ export function Pharmacy() {
         </TabsList>
 
         <TabsContent value="queue" className="space-y-4">
-          {queue.isLoading ? (
+          {fullCheckout ? (
+            <CheckoutList branch={branch!} />
+          ) : queue.isLoading ? (
             <Skeleton className="h-48" />
           ) : queue.error ? (
             <Card className="p-4 text-sm text-critical">{errorMessage(queue.error)}</Card>
@@ -79,7 +90,7 @@ export function Pharmacy() {
                   </tr>
                 </THead>
                 <TBody>
-                  {sales.data.sales.map((s) => (
+                  {saleRows.map((s) => (
                     <TR key={s.id}>
                       <TD className="font-mono text-xs whitespace-nowrap">{s.saleNo}</TD>
                       <TD>
@@ -111,6 +122,7 @@ export function Pharmacy() {
                 </TBody>
               </Table>
             )}
+            <Pager {...salePager} />
           </Card>
         </TabsContent>
       </Tabs>
@@ -155,6 +167,12 @@ function QueueCard({ branch, entry }: { branch: string; entry: PharmacyQueueEntr
         }
         description={`${visitLabel(entry)} · ${entry.patientUhid}${entry.doctorName ? ` · ${entry.doctorName}` : ''}`}
       />
+      {entry.pharmacyNote && (
+        <p className="border-b border-border px-4 py-2.5 text-sm whitespace-pre-wrap">
+          <span className="font-semibold">Doctor's note: </span>
+          {entry.pharmacyNote}
+        </p>
+      )}
       <Table>
         <THead>
           <tr>
@@ -213,13 +231,7 @@ function QueueCard({ branch, entry }: { branch: string; entry: PharmacyQueueEntr
           <div className="text-2xl font-semibold tracking-tight tabular-nums">{formatRupees(total)}</div>
         </div>
         <div className="flex items-center gap-2">
-          <NativeSelect aria-label="Paid by" value={mode} onChange={(e) => setMode(e.target.value as PaymentMode)} className="w-28">
-            {PAYMENT_MODES.map((m) => (
-              <option key={m} value={m}>
-                {modeLabel[m]}
-              </option>
-            ))}
-          </NativeSelect>
+          <PaymentModeSelect aria-label="Paid by" value={mode} onChange={setMode} className="w-28" />
           <Button size="lg" disabled={!chosen.length || shortOnTicked || dispense.isPending} onClick={() => dispense.mutate()}>
             <PackageCheck /> {dispense.isPending ? 'Dispensing…' : `Dispense ${formatRupees(total)}`}
           </Button>
@@ -436,13 +448,7 @@ function DirectSale({ branch }: { branch: string }) {
             <div className="text-3xl font-semibold tracking-tight tabular-nums">{formatRupees(total)}</div>
           </div>
           <div className="flex items-center gap-2">
-            <NativeSelect aria-label="Paid by" value={mode} onChange={(e) => setMode(e.target.value as PaymentMode)} className="w-28">
-              {PAYMENT_MODES.map((m) => (
-                <option key={m} value={m}>
-                  {modeLabel[m]}
-                </option>
-              ))}
-            </NativeSelect>
+            <PaymentModeSelect aria-label="Paid by" value={mode} onChange={setMode} className="w-28" />
             <Button size="lg" disabled={!rows.length || invalid || sell.isPending} onClick={() => sell.mutate()}>
               <PackageCheck /> {sell.isPending ? 'Selling…' : `Sell ${formatRupees(total)}`}
             </Button>

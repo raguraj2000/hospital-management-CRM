@@ -1,0 +1,91 @@
+HMS - HOSPITAL MANAGEMENT SYSTEM - SETUP GUIDE
+==============================================
+
+NO INTERNET IS NEEDED. Everything comes from this pendrive.
+
+
+HOW IT WORKS
+------------
+One computer is the MAIN COMPUTER. It holds the database and runs the
+server. It must stay switched on while the hospital is working.
+
+Every other computer (doctor, front desk, pharmacy, lab) only opens a web
+page from the main computer in its browser (Chrome or Edge). Nothing is
+installed or stored on them. Phones and tablets on the same Wi-Fi work too.
+
+
+1. MAIN COMPUTER - INSTALL
+--------------------------
+1. Plug in the pendrive.
+2. Double-click   1 - MAIN COMPUTER (install or update).bat
+3. Windows asks for permission: click Yes.
+4. First time only: type the owner's mobile number and choose a password
+   (at least 8 characters). Write the password down.
+5. Wait until the window says DONE in green. It also shows the address
+   the other computers must open, for example  http://MAINPC:4100
+   Write that address down.
+6. Open "HMS" on the desktop and sign in with the owner's mobile number.
+
+It copies the program to C:\HMS, creates the database, installs the server
+as a Windows service (starts by itself when Windows starts), allows the
+other computers through the firewall and makes the desktop shortcut.
+
+
+2. OTHER COMPUTERS
+------------------
+Either open a browser and type the address from step 5 above,
+or double-click   2 - OTHER COMPUTER (add shortcut).bat   and type the main
+computer's name. It puts an "HMS" shortcut on the desktop.
+
+All computers must be on the same Wi-Fi / LAN as the main computer.
+
+
+3. FIRST THINGS TO DO IN THE APP (as the owner)
+-----------------------------------------------
+- Settings > Staff: add the doctor, front desk, pharmacist and lab staff.
+  Each signs in with their own mobile number.
+- Settings > Branch settings: check the consultation fee, tick the doctors
+  and choose the default doctor, check the print header.
+- Inventory: set the selling price of each medicine ("..." > Edit price).
+- Vendors: add your distributors, then enter a purchase bill to bring in
+  stock (batch number, expiry, quantity).
+- Lab > Tests & prices: check the price of each test.
+
+
+4. UPDATING LATER
+-----------------
+Put the new version on the pendrive and run
+1 - MAIN COMPUTER (install or update).bat  again on the main computer.
+It backs up the database first and never deletes patient data.
+The other computers need nothing: they get the new version by themselves.
+
+
+5. BACKUP - DO THIS EVERY DAY
+-----------------------------
+On the main computer open C:\HMS and double-click  Backup.bat
+With a pendrive plugged in, the copy goes to  <pendrive>\HMS-Backup
+Otherwise it goes to  C:\HMS\backups
+Keep the pendrive away from the computer when it is not in use.
+
+All the data is in ONE place: C:\HMS\data on the main computer. If that
+computer's disk fails and there is no backup, the data is lost.
+
+
+6. IF SOMETHING IS WRONG
+------------------------
+- C:\HMS\Check System.bat     shows what is running and what is not.
+- C:\HMS\Reset Password.bat   sets a new password for one account.
+- Another computer cannot open the page: check that the main computer is
+  on, that both are on the same Wi-Fi, and try the address with the IP
+  number instead of the name (Check System shows it).
+- Log files: C:\HMS\logs\server.log and C:\HMS\install-log.txt
+
+
+7. MOVING TO A NEW MAIN COMPUTER
+--------------------------------
+1. Old computer: run Backup.bat (to a pendrive).
+2. New computer: run  1 - MAIN COMPUTER (install or update).bat  and finish
+   the first-time setup.
+3. Stop the "HMS Server" service (Services), replace
+   C:\HMS\data\app.db  with the backup file (rename it to app.db, and
+   delete app.db-wal and app.db-shm if they exist), start the service.

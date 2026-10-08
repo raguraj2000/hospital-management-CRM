@@ -16,6 +16,7 @@ const columns = {
   bloodGroup: patient.bloodGroup,
   weightKg: patient.weightKg,
   address: patient.address,
+  conditions: patient.conditions,
   emergencyContactName: patient.emergencyContactName,
   emergencyContactPhone: patient.emergencyContactPhone,
   createdAt: patient.createdAt,

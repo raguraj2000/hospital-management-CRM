@@ -46,7 +46,7 @@ export function createLabRoutes(db: Db) {
 
   async function labReportOf(branchId: number, visitId: number): Promise<LabReport> {
     const [v] = await db
-      .select({ id: opVisit.id, opNo: opVisit.opNo, visitDate: opVisit.visitDate, doctorName: doctor.name, patientId: opVisit.patientId })
+      .select({ id: opVisit.id, opNo: opVisit.opNo, visitDate: opVisit.visitDate, doctorName: doctor.name, labNote: opVisit.labNote, patientId: opVisit.patientId })
       .from(opVisit)
       .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
       .where(eq(opVisit.id, visitId));
@@ -98,7 +98,7 @@ export function createLabRoutes(db: Db) {
     }));
     // The patient bill(s) these lab tests are on (not the pharmacy sale); usually one.
     const bills = await db
-      .selectDistinct({ id: opBill.id, billNo: opBill.billNo })
+      .selectDistinct({ id: opBill.id, billNo: opBill.billNo, createdAt: opBill.createdAt })
       .from(opBillLine)
       .innerJoin(labOrder, eq(labOrder.id, opBillLine.labOrderId))
       .innerJoin(opBill, eq(opBill.id, opBillLine.billId))
@@ -106,11 +106,12 @@ export function createLabRoutes(db: Db) {
       .orderBy(asc(opBill.id));
     const dobAge = p!.dob ? Math.floor((Date.now() - new Date(p!.dob).getTime()) / 31_557_600_000) : null;
     return {
-      visit: { id: v!.id, opNo: v!.opNo, visitDate: v!.visitDate, doctorName: v!.doctorName },
+      visit: { id: v!.id, opNo: v!.opNo, visitDate: v!.visitDate, doctorName: v!.doctorName, labNote: v!.labNote },
       patient: { id: p!.id, name: p!.name, uhid: p!.uhid, gender: p!.gender, age: dobAge ?? p!.ageYears, phone: p!.phone },
       tests,
       header: await printHeaderOf(db, branchId),
       billNo: bills.length ? bills.map((b) => b.billNo).join(', ') : null,
+      billedAt: bills[0]?.createdAt ?? null,
     };
   }
 
@@ -272,14 +273,16 @@ export function createLabRoutes(db: Db) {
     const status = c.req.query('status');
     const statuses = (LAB_ORDER_STATUSES as readonly string[]).includes(status ?? '') ? [status as LabOrder['status']] : (['ordered', 'sample_collected'] as const);
     const orders: LabQueueEntry[] = await db
-      .select({ ...orderColumns, opNo: opVisit.opNo, patientId: patient.id, patientName: patient.name, patientUhid: patient.uhid, doctorName: doctor.name })
+      .select({ ...orderColumns, opNo: opVisit.opNo, patientId: patient.id, patientName: patient.name, patientUhid: patient.uhid, doctorName: doctor.name, labNote: opVisit.labNote })
       .from(labOrder)
       .innerJoin(labTest, eq(labTest.id, labOrder.testId))
       .innerJoin(opVisit, eq(opVisit.id, labOrder.visitId))
       .innerJoin(patient, eq(patient.id, labOrder.patientId))
       .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
       .where(and(eq(labOrder.branchId, b.id), inArray(labOrder.status, [...statuses])))
-      .orderBy(asc(labOrder.id));
+      // The queue in the order the tests came in; finished ones newest first, and only the latest (the rest are on the patient's page).
+      .orderBy(status === 'completed' ? desc(labOrder.id) : asc(labOrder.id))
+      .limit(status === 'completed' ? 300 : 1000);
     return c.json({ orders });
   });
 
@@ -338,7 +341,7 @@ export function createLabRoutes(db: Db) {
     return c.json({ ok: true });
   });
 
-  /** Sample collected, or cancel an order that hasn't been collected yet. */
+  /** Sample collected, or cancel an order that has no results yet. */
   app.patch('/lab/orders/:id', requireAnyPermission('lab.view', 'lab.order'), async (c) => {
     const b = c.get('branch');
     const u = c.get('user');
@@ -351,7 +354,10 @@ export function createLabRoutes(db: Db) {
       if (o.status !== 'ordered') throw new AppError(409, 'bad_state', 'Only a new order can be marked as collected');
       await db.update(labOrder).set({ status: 'sample_collected', sampleCollectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).where(eq(labOrder.id, id));
     } else if (body.status === 'cancelled') {
-      if (o.status !== 'ordered') throw new AppError(409, 'bad_state', 'The sample is already collected; it can no longer be cancelled');
+      // The patient may change their mind even after the sample is taken; once results exist the test stays on record.
+      if (o.status === 'cancelled') throw new AppError(409, 'bad_state', 'This test is already cancelled');
+      const [entered] = await db.select({ id: labResult.id }).from(labResult).where(eq(labResult.orderId, id)).limit(1);
+      if (o.status === 'completed' || entered) throw new AppError(409, 'bad_state', 'Results are already entered for this test; it can no longer be cancelled');
       await db.transaction(async (tx) => {
         await onLabOrderCancel(tx, id); // off its bill (refused if that bill has payments)
         await tx.update(labOrder).set({ status: 'cancelled', updatedAt: new Date().toISOString() }).where(eq(labOrder.id, id));

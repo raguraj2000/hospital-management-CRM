@@ -146,6 +146,7 @@ describe("a patient's bills (Bills tab)", () => {
 
     // Money by role: OP bills as on the visit page (anyone with patient.view); pharmacy sales only with pharmacy.sell.
     expect(await json(owner(`/api/b/main/patients/${ravi.id}/bills`))).toEqual(got);
+    await setRole(owner, 'front_desk', ['dashboard.view', 'patient.view', 'patient.create', 'patient.edit', 'billing.receive']); // the default Front desk role also sells; here it must not
     for (const caller of [desk, lab, doc]) {
       const seen = await json(caller(`/api/b/main/patients/${ravi.id}/bills`));
       expect(seen.bills).toEqual(got.bills);

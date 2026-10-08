@@ -1,18 +1,45 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, MoreHorizontal, Pencil, Trash2, XCircle } from 'lucide-react';
-import { opToken, visitInputSchema, type Doctor, type DoctorsResponse, type OpVisit, type VisitFormValues, type VisitInput, type VisitStatus } from '@platform/shared';
+import { useNavigate } from 'react-router';
+import { CheckCircle2, DoorOpen, MoreHorizontal, Pencil, Trash2, XCircle } from 'lucide-react';
+import {
+  opToken,
+  toPaise,
+  visitInputSchema,
+  type Doctor,
+  type DoctorsResponse,
+  type OpVisit,
+  type VisitCallNextResponse,
+  type VisitFormValues,
+  type VisitInput,
+  type VisitStatus,
+} from '@platform/shared';
 import { Badge, Button, cn, ConfirmDelete, Dialog, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, NativeSelect, Skeleton, Textarea, toast, type Tone } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
-import { useCan } from '@/state/auth';
+import { useCan, useMe } from '@/state/auth';
 
-export const statusTone: Record<VisitStatus, Tone> = { waiting: 'warning', completed: 'positive', cancelled: 'neutral' };
-export const statusLabel: Record<VisitStatus, string> = { waiting: 'Waiting', completed: 'Completed', cancelled: 'Cancelled' };
+export const statusTone: Record<VisitStatus, Tone> = { waiting: 'warning', with_doctor: 'brand', at_lab: 'violet', at_counter: 'brand', completed: 'positive', cancelled: 'neutral' };
+export const statusLabel: Record<VisitStatus, string> = {
+  waiting: 'Waiting',
+  with_doctor: 'With doctor',
+  at_lab: 'At lab',
+  at_counter: 'At pharmacy & billing',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+/** Still in the hospital today: not completed, not cancelled. */
+export const isOpenVisit = (status: VisitStatus) => status !== 'completed' && status !== 'cancelled';
+
+/** "Token 6 — Ravi Kumar": how a patient is called out. */
+export function tokenName(v: { opNo: string; token?: number | null; patientName: string }): string {
+  const token = v.token ?? opToken(v.opNo);
+  return `${token != null ? `Token ${token}` : v.opNo} — ${v.patientName}`;
+}
 
 /** Everything that shows visits refreshes after a change. */
-function useVisitInvalidate(branch: string) {
+export function useVisitInvalidate(branch: string) {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: ['visits', branch] });
@@ -57,19 +84,51 @@ export function TokenBadge({ opNo, token = opToken(opNo), className }: { opNo: s
   );
 }
 
-export function VisitStatusBadge({ status }: { status: VisitStatus }) {
+/** Where the patient is. At the lab with every result in = "Lab result ready" (they go back in before the next token). */
+export function VisitStatusBadge({ status, labReady, className }: { status: VisitStatus; labReady?: boolean; className?: string }) {
+  const ready = status === 'at_lab' && labReady;
   return (
-    <Badge tone={statusTone[status]} dot>
-      {statusLabel[status]}
+    <Badge
+      tone={ready ? 'positive' : statusTone[status]}
+      dot
+      // The two that need someone to act now are solid, so they stand out in a long list.
+      className={cn('px-2.5 py-1 text-sm', status === 'with_doctor' && 'bg-brand text-brand-foreground', ready && 'bg-positive text-white', className)}
+    >
+      {ready ? 'Lab result ready' : statusLabel[status]}
     </Badge>
   );
 }
 
-/** Complete / edit / cancel / delete for one visit (each shown only if the role allows). */
-export function VisitActions({ branch, visit, label }: { branch: string; visit: OpVisit; label: string }) {
+/**
+ * Call a patient in: the next one (the server picks: back from the lab with results first, then the lowest
+ * token) or the one given. Whoever prescribes is taken to that visit, unless they are already on it (stay).
+ */
+export function useCallNext(branch: string, { stay = false }: { stay?: boolean } = {}) {
+  const invalidate = useVisitInvalidate(branch);
+  const navigate = useNavigate();
+  const canPrescribe = useCan('prescription.write');
+  return useMutation({
+    mutationFn: (body: { visitId?: number; doctorUserId?: number | null }) => api.post<VisitCallNextResponse>(`/b/${branch}/visits/call-next`, body),
+    onSuccess: ({ visit, previous, reason }) => {
+      invalidate();
+      const notes = [reason === 'lab_ready' ? 'Back from lab — result ready.' : null, previous ? `${tokenName(previous)} moved back to waiting.` : null].filter(Boolean);
+      // Stays up longer: it is read out to the waiting room.
+      toast.success(`${tokenName(visit)}, please go in`, { description: notes.length ? notes.join(' ') : undefined, duration: 10_000 });
+      if (canPrescribe && !stay) navigate(`/${branch}/visits/${visit.id}`);
+    },
+    onError: (e) => {
+      invalidate(); // the list on screen was out of date
+      toast.error(errorMessage(e));
+    },
+  });
+}
+
+/** Call in / edit / complete / cancel / delete for one visit (each shown only if the role allows). */
+export function VisitActions({ branch, visit, label, callIn = true }: { branch: string; visit: OpVisit; label: string; callIn?: boolean }) {
   const canEdit = useCan('patient.edit');
   const canDelete = useCan('patient.delete');
   const invalidate = useVisitInvalidate(branch);
+  const call = useCallNext(branch);
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -93,9 +152,9 @@ export function VisitActions({ branch, visit, label }: { branch: string; visit: 
   if (!canEdit && !canDelete) return null;
   return (
     <div className="flex items-center justify-end gap-1">
-      {canEdit && visit.status === 'waiting' && (
-        <Button size="sm" variant="outline" disabled={setStatus.isPending} onClick={() => setStatus.mutate('completed')}>
-          <CheckCircle2 className="text-positive" /> Complete
+      {canEdit && callIn && (visit.status === 'waiting' || visit.status === 'at_lab') && (
+        <Button variant="outline" disabled={call.isPending} onClick={() => call.mutate({ visitId: visit.id })}>
+          <DoorOpen className="text-brand" /> Call in
         </Button>
       )}
       <Menu>
@@ -110,8 +169,13 @@ export function VisitActions({ branch, visit, label }: { branch: string; visit: 
               <Pencil /> Edit visit & vitals
             </MenuItem>
           )}
+          {canEdit && isOpenVisit(visit.status) && (
+            <MenuItem onSelect={() => setStatus.mutate('completed')}>
+              <CheckCircle2 /> Mark completed
+            </MenuItem>
+          )}
           {canEdit && visit.status !== 'waiting' && <MenuItem onSelect={() => setStatus.mutate('waiting')}>Move back to waiting</MenuItem>}
-          {canEdit && visit.status === 'waiting' && (
+          {canEdit && isOpenVisit(visit.status) && (
             <MenuItem onSelect={() => setStatus.mutate('cancelled')}>
               <XCircle /> Cancel visit
             </MenuItem>
@@ -151,21 +215,51 @@ export function VisitActions({ branch, visit, label }: { branch: string; visit: 
   );
 }
 
-/** "New OP visit": the server sets today's date, the next OP number and with it the token. */
-export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: string; patientId: number; onDone: (v: OpVisit) => void; onCancel: () => void }) {
+/**
+ * "New OP visit": the server sets today's date, the next OP number and with it the token.
+ * "See now" also sends the patient straight in to the doctor (no waiting step), for when nobody is waiting.
+ * `onDone(visit, seenNow)`.
+ */
+export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: string; patientId: number; onDone: (v: OpVisit, seenNow: boolean) => void; onCancel: () => void }) {
   const invalidate = useVisitInvalidate(branch);
+  const canSetFee = useCan('billing.receive'); // reading the standard fee needs it
+  const canCallIn = useCan('patient.edit');
+  const standard = useQuery({ queryKey: ['billing-settings', branch], queryFn: () => api.get<{ consultationFeePaise: number }>(`/b/${branch}/billing/settings`), enabled: canSetFee });
+  // null = not touched: the visit follows the standard fee.
+  const [fee, setFee] = useState<string | null>(null);
+
+  async function create(values: VisitInput, seeNow: boolean) {
+    const { visit } = await api.post<{ visit: OpVisit }>(`/b/${branch}/patients/${patientId}/visits`, values);
+    try {
+      const paise = fee == null || fee.trim() === '' ? null : toPaise(Number(fee));
+      if (paise != null && Number.isFinite(paise) && paise >= 0 && paise !== standard.data?.consultationFeePaise) await api.put(`/b/${branch}/visits/${visit.id}/consultation-fee`, { consultationFeePaise: paise });
+      if (seeNow) await api.post(`/b/${branch}/visits/call-next`, { visitId: visit.id });
+    } catch (e) {
+      // The visit exists; only the extra step failed. Say so instead of losing the visit.
+      toast.error(`${visitLabel(visit)} was started, but: ${errorMessage(e)}`);
+      seeNow = false;
+    }
+    invalidate();
+    // Stays up longer: the front desk reads the token out to the patient.
+    if (seeNow) toast.success(`${visitLabel(visit)}, please go in`, { description: 'Sent straight in to the doctor.', duration: 12_000 });
+    else toast.success(visitLabel(visit), { description: "OP visit started. Tell the patient their token. Added to today's OP list as waiting.", duration: 12_000 });
+    onDone(visit, seeNow);
+  }
+
   return (
     <VisitForm
       branch={branch}
       submitLabel="Start OP visit"
       onCancel={onCancel}
-      onSubmit={async (values) => {
-        const { visit } = await api.post<{ visit: OpVisit }>(`/b/${branch}/patients/${patientId}/visits`, values);
-        invalidate();
-        // Stays up longer: the front desk reads the token out to the patient.
-        toast.success(visitLabel(visit), { description: "OP visit started. Tell the patient their token. Added to today's OP list as waiting.", duration: 12_000 });
-        onDone(visit);
-      }}
+      onSubmit={(values) => create(values, false)}
+      onSeeNow={canCallIn ? (values) => create(values, true) : undefined}
+      extra={
+        canSetFee && (
+          <Field label="Consultation fee (₹)" htmlFor="visit-fee-new" hint="Standard fee from Settings. Change it for this visit only.">
+            <Input id="visit-fee-new" inputMode="decimal" className="max-w-40" value={fee ?? (standard.data ? String(standard.data.consultationFeePaise / 100) : '')} onChange={(e) => setFee(e.target.value)} />
+          </Field>
+        )
+      }
     />
   );
 }
@@ -188,6 +282,10 @@ interface VisitFormProps {
   submitLabel: string;
   onSubmit: (values: VisitInput) => Promise<void>;
   onCancel: () => void;
+  /** New visits only: a second button that starts the visit and sends the patient straight in. */
+  onSeeNow?: (values: VisitInput) => Promise<void>;
+  /** Extra fields under the doctor (the fee, on a new visit). */
+  extra?: ReactNode;
 }
 
 /** Doctor + complaint + vitals + notes. Same Zod rules as the API. */
@@ -200,17 +298,21 @@ export function VisitForm(props: VisitFormProps) {
   return <VisitFields {...props} doctors={doctors.data?.doctors} defaultDoctorUserId={doctors.data?.defaultDoctorUserId ?? null} />;
 }
 
-function VisitFields({ initial, submitLabel, onSubmit, onCancel, doctors, defaultDoctorUserId }: VisitFormProps & { doctors?: Doctor[]; defaultDoctorUserId: number | null }) {
+function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNow, extra, doctors, defaultDoctorUserId }: VisitFormProps & { doctors?: Doctor[]; defaultDoctorUserId: number | null }) {
+  const { data: me } = useMe();
+  // A doctor starting a visit themselves: it is theirs unless they pick someone else.
+  const myself = doctors?.some((d) => d.userId === me?.user.id) ? me!.user.id : null;
   const {
     register,
     handleSubmit,
     setError,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<VisitFormValues, unknown, VisitInput>({
     resolver: zodResolver(visitInputSchema),
     defaultValues: {
       // Editing keeps the visit's own doctor; a new visit starts on the branch's default (still changeable).
-      doctorUserId: initial ? initial.doctorUserId : defaultDoctorUserId,
+      doctorUserId: initial ? initial.doctorUserId : (myself ?? defaultDoctorUserId),
       complaint: initial?.complaint ?? '',
       notes: initial?.notes ?? '',
       bpSystolic: initial?.bpSystolic ?? null,
@@ -222,19 +324,22 @@ function VisitFields({ initial, submitLabel, onSubmit, onCancel, doctors, defaul
     },
   });
 
+  // "See now" puts the patient inside at once, so it waits while that doctor still has someone inside.
+  const today = useQuery({ queryKey: ['visits', branch, '', ''], queryFn: () => api.get<{ visits: OpVisit[] }>(`/b/${branch}/visits?`), enabled: !!onSeeNow, staleTime: 0 });
+  const doctorId = num(watch('doctorUserId'));
+  const inside = today.data?.visits.find((v) => v.status === 'with_doctor' && v.doctorUserId === doctorId);
+  const submitWith = (fn: (values: VisitInput) => Promise<void>) =>
+    handleSubmit(async (values) => {
+      try {
+        await fn(values);
+      } catch (e) {
+        if (e instanceof ApiError && e.fields) for (const [f, m] of Object.entries(e.fields)) setError(f as keyof VisitFormValues, { message: m[0] });
+        else setError('root', { message: errorMessage(e) });
+      }
+    });
+
   return (
-    <form
-      noValidate
-      className="flex flex-col gap-4"
-      onSubmit={handleSubmit(async (values) => {
-        try {
-          await onSubmit(values);
-        } catch (e) {
-          if (e instanceof ApiError && e.fields) for (const [f, m] of Object.entries(e.fields)) setError(f as keyof VisitFormValues, { message: m[0] });
-          else setError('root', { message: errorMessage(e) });
-        }
-      })}
-    >
+    <form noValidate className="flex flex-col gap-4" onSubmit={submitWith(onSubmit)}>
       <Field
         label="Doctor"
         htmlFor="visit-doctor"
@@ -250,6 +355,7 @@ function VisitFields({ initial, submitLabel, onSubmit, onCancel, doctors, defaul
           ))}
         </NativeSelect>
       </Field>
+      {extra}
       <Field label="Complaint / reason for visit" htmlFor="complaint" error={errors.complaint?.message}>
         <Textarea id="complaint" rows={2} autoFocus={!initial} placeholder="e.g. Fever for 3 days" {...register('complaint')} />
       </Field>
@@ -279,10 +385,20 @@ function VisitFields({ initial, submitLabel, onSubmit, onCancel, doctors, defaul
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
+        {onSeeNow && (
+          <Button type="button" variant="outline" disabled={isSubmitting || !!inside} onClick={submitWith(onSeeNow)}>
+            <DoorOpen /> See now
+          </Button>
+        )}
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? 'Saving…' : submitLabel}
         </Button>
       </div>
+      {onSeeNow && (
+        <p className="text-right text-xs text-muted">
+          {inside ? `See now is off: ${visitLabel(inside)} is with this doctor. Finish that visit first.` : 'See now: no waiting, the patient goes straight in to the doctor.'}
+        </p>
+      )}
     </form>
   );
 }

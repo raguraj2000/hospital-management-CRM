@@ -2,17 +2,15 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ClipboardEdit, FlaskConical, Pill, Printer, Receipt, ReceiptText, Scale, Wallet } from 'lucide-react';
-import { formatRupees, type BillPaymentMode, type PatientBills, type PatientLabOrder } from '@platform/shared';
+import { formatRupees, type PatientBills, type PatientLabOrder } from '@platform/shared';
 import { Badge, buttonVariants, Card, EmptyState, Skeleton, StatCard, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
+import { PrintLink } from '@/components/print';
+import { LabResultReady } from '@/components/VisitLab';
 import { useCan } from '@/state/auth';
 import { TokenBadge } from '@/components/Visits';
-import { billLabel, billTone } from './Billing';
-import { labLabel, labTone } from './VisitDetail';
+import { billLabel, billTone, fmtDate, fmtDateTime, labLabel, labTone, modeLabel } from '@/components/format';
 
-const modeLabel: Record<BillPaymentMode, string> = { cash: 'Cash', upi: 'UPI', card: 'Card' };
-const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 
 // staleTime 0: payments and releases also happen in other browser tabs (print pages); coming back refetches.
 export function usePatientBills(branch: string | undefined, id: string | undefined) {
@@ -228,12 +226,14 @@ export function PatientLabTab({ branch, query }: { branch: string; query: UseQue
                   </Link>
                 )}
                 {canPrint && anyCompleted && (
-                  <a href={`/${branch}/lab/visits/${visitId}/print`} className={buttonVariants({ variant: v.printAllowed ? 'default' : 'outline' })}>
+                  <PrintLink href={`/${branch}/lab/visits/${visitId}/print`} className={buttonVariants({ variant: v.printAllowed ? 'default' : 'outline' })}>
                     <Printer /> Print report
-                  </a>
+                  </PrintLink>
                 )}
               </div>
             </div>
+            {/* The values, on screen: a doctor can read an earlier report without ordering the test again. */}
+            {anyCompleted && canPrint && <LabResultReady branch={branch} visitId={visitId} />}
             <Table>
               <THead>
                 <tr>

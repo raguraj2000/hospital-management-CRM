@@ -20,6 +20,8 @@ export const patient = sqliteTable(
     bloodGroup: text('blood_group'),
     weightKg: real('weight_kg'),
     address: text('address'),
+    /** Long-term conditions (Diabetes, Hypertension …), comma-separated: shown wherever the patient is seen. */
+    conditions: text('conditions'),
     emergencyContactName: text('emergency_contact_name'),
     emergencyContactPhone: text('emergency_contact_phone'),
     createdBy: integer('created_by').references(() => user.id),
@@ -45,13 +47,18 @@ export const opVisit = sqliteTable(
     opNo: text('op_no').notNull(),
     /** Local date of the visit (YYYY-MM-DD). */
     visitDate: text('visit_date').notNull(),
-    status: text('status', { enum: ['waiting', 'completed', 'cancelled'] })
+    status: text('status', { enum: ['waiting', 'with_doctor', 'at_lab', 'at_counter', 'completed', 'cancelled'] })
       .notNull()
       .default('waiting'),
     /** Doctor seeing the patient (one of this branch's doctors: Doctor role, or listed in branch_doctor). */
     doctorUserId: integer('doctor_user_id').references(() => user.id),
     complaint: text('complaint'),
     notes: text('notes'),
+    /** The doctor's notes to the counters: shown at the pharmacy and in the lab for this visit. */
+    pharmacyNote: text('pharmacy_note'),
+    labNote: text('lab_note'),
+    /** The doctor's fee for THIS visit; null = the branch's standard fee (clinic_setting). */
+    consultationFeePaise: integer('consultation_fee_paise'),
     // Vitals taken at this visit (all optional).
     bpSystolic: integer('bp_systolic'),
     bpDiastolic: integer('bp_diastolic'),
@@ -126,6 +133,8 @@ export const prescriptionItem = sqliteTable(
     days: integer('days').notNull(),
     quantity: integer('quantity').notNull(),
     instructions: text('instructions'),
+    /** Given in the hospital by a nurse, dose by dose (see treatment_dose), instead of taken at home. */
+    givenHere: integer('given_here', { mode: 'boolean' }).notNull().default(false),
     /** pending -> dispensed (sold) or declined (patient didn't buy). */
     status: text('status', { enum: ['pending', 'dispensed', 'declined'] })
       .notNull()
@@ -135,6 +144,39 @@ export const prescriptionItem = sqliteTable(
     deletedAt: text('deleted_at'),
   },
   (t) => [index('ix_rx_visit').on(t.branchId, t.visitId), index('ix_rx_status').on(t.branchId, t.status)],
+);
+
+/**
+ * One dose of a medicine that is given in the hospital: made from the prescription line (dose pattern × days),
+ * ticked by the nurse when given.
+ */
+export const treatmentDose = sqliteTable(
+  'treatment_dose',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    prescriptionItemId: integer('prescription_item_id')
+      .notNull()
+      .references(() => prescriptionItem.id),
+    visitId: integer('visit_id')
+      .notNull()
+      .references(() => opVisit.id),
+    patientId: integer('patient_id')
+      .notNull()
+      .references(() => patient.id),
+    /** Local day the dose is due (YYYY-MM-DD). */
+    dueDate: text('due_date').notNull(),
+    /** Order within the day: 1 = morning, 2 = afternoon, 3 = night (or the nth dose of a 4-a-day pattern). */
+    slotNo: integer('slot_no').notNull(),
+    slot: text('slot').notNull(),
+    /** Units at this dose, as written in the pattern ("1", "0.5"); null for a typed dose. */
+    amount: text('amount'),
+    givenAt: text('given_at'),
+    givenBy: integer('given_by').references(() => user.id),
+    note: text('note'),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('ux_treatment_dose').on(t.prescriptionItemId, t.dueDate, t.slotNo), index('ix_treatment_dose_day').on(t.branchId, t.dueDate)],
 );
 
 export const pharmacySale = sqliteTable(
@@ -328,9 +370,24 @@ export const purchaseLine = sqliteTable(
     batchId: integer('batch_id')
       .notNull()
       .references(() => medicineBatch.id),
+    /** Loose units that went into stock: (packs bought + free packs) × pack size. */
     quantity: integer('quantity').notNull(),
+    /** What one unit really cost: the line amount spread over those units. */
     unitCostPaise: integer('unit_cost_paise').notNull(),
+    /** What the vendor charges for the line: packs bought × rate, plus GST. */
     amountPaise: integer('amount_paise').notNull(),
+    // As printed on the vendor's invoice. (Lines entered before these existed: pack size 1, no free, no GST.)
+    /** Units in one pack: 10 for a strip of 10, 1 for a vial or a tube. */
+    packSize: integer('pack_size').notNull().default(1),
+    /** Packs charged for. null on old lines (= quantity). */
+    packQty: integer('pack_qty'),
+    /** Packs received free on top. */
+    freeQty: integer('free_qty').notNull().default(0),
+    /** Rate per pack before GST. null on old lines (= unit cost). */
+    ratePaise: integer('rate_paise'),
+    /** Printed MRP per pack. */
+    mrpPaise: integer('mrp_paise'),
+    gstPercent: real('gst_percent').notNull().default(0),
   },
   (t) => [index('ix_purchase_line_bill').on(t.billId)],
 );

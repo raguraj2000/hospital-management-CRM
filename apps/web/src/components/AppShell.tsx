@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router';
-import { Check, ChevronRight, ChevronsUpDown, KeyRound, LogOut, Monitor, Moon, MoreHorizontal, Search, Sun } from 'lucide-react';
+import { Check, ChevronRight, ChevronsUpDown, KeyRound, LogOut, Moon, MoreHorizontal, Search, Sun, SunMoon } from 'lucide-react';
 import { Avatar, cn, ErrorBoundary, Menu, MenuCheckItem, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '@platform/ui';
 import { NAV, NAV_GROUPS, type NavItem } from '@/nav';
 import { useLogout, useMe } from '@/state/auth';
@@ -8,9 +8,9 @@ import { useTheme, type Theme } from '@/state/theme';
 import { ChangePasswordDialog } from './ChangePassword';
 
 const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
+  { value: 'auto', label: 'Auto (day light, night dark)', icon: SunMoon },
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
-  { value: 'system', label: 'System', icon: Monitor },
 ];
 
 export function AppShell() {

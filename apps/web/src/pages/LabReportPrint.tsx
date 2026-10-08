@@ -6,6 +6,7 @@ import { api, ApiError, errorMessage } from '@/api/client';
 import { useMe } from '@/state/auth';
 import { ReportHeader } from '@/components/ReportHeader';
 import { useAutoPrint } from '@/components/useAutoPrint';
+import { printDateTime } from '@/components/printFormat';
 
 const fmt = (iso: string | null | undefined) =>
   iso ? new Date(iso.length === 10 ? `${iso}T00:00:00` : iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
@@ -32,9 +33,10 @@ export function LabReportPrint() {
     if (data) document.title = `Lab Report - ${data.patient.name}`;
   }, [data]);
   // Only tests with results print. (Nothing to print, "Payment pending" or an error: no print dialog.)
-  const tests = (data?.tests ?? []).filter((t) => t.parameters.some((p) => p.value.trim()));
+  // Only finished tests are a report: values typed but not yet "Save & complete" stay in the lab.
+  const tests = (data?.tests ?? []).filter((t) => t.status === 'completed' && t.parameters.some((p) => p.value.trim()));
   const printable = tests.length > 0;
-  useAutoPrint(!error && printable);
+  useAutoPrint(!error && printable, !me || !allowed || !!error || (!!data && !printable));
 
   if (!me) return <Navigate to="/login" replace />;
   if (!allowed) return <p className="p-8 text-sm">No access to lab reports in this branch.</p>;
@@ -91,17 +93,17 @@ function Sheet({ data, tests }: { data: LabReport; tests: LabReportTest[] }) {
         <Kv k="Patient Name" v={p.name} />
         <Kv k="UHID" v={p.uhid} />
         <Kv k="Age / Sex" v={[p.age != null ? `${p.age} Y` : '', p.gender ? p.gender[0]!.toUpperCase() + p.gender.slice(1) : ''].filter(Boolean).join(' / ')} />
-        <Kv k="Bill Date" v={fmt(data.visit.visitDate)} />
+        <Kv k="Bill Date" v={printDateTime(data.billedAt) || fmt(data.visit.visitDate)} />
         <Kv k="Mobile" v={p.phone?.replace(/^\+91/, '') ?? ''} />
-        <Kv k="Sample Date" v={fmt(sampleAt)} />
+        <Kv k="Sample Date" v={printDateTime(sampleAt)} />
         <Kv k="Referred By" v={data.visit.doctorName ?? ''} />
-        <Kv k="Report Date" v={fmt(reportAt ?? new Date().toISOString())} />
+        <Kv k="Report Date" v={printDateTime(reportAt ?? new Date().toISOString())} />
         <Kv k="OP No." v={data.visit.opNo} />
         <Kv k="Bill No." v={data.billNo ?? ''} />
       </div>
 
       {tests.length === 0 ? (
-        <p className="no-print py-10 text-center text-[#3f4a45]">No results entered yet.</p>
+        <p className="no-print py-10 text-center text-[#3f4a45]">No completed results yet. Enter the results and press "Save & complete" in the lab.</p>
       ) : (
         <PanelResults tests={tests} />
       )}

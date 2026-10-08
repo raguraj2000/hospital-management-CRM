@@ -1,9 +1,9 @@
 import { useDeferredValue } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { ChevronLeft, ChevronRight, Plus, Search, SearchX, Users } from 'lucide-react';
+import { ChevronRight, Plus, Search, SearchX, Users } from 'lucide-react';
 import type { Patient } from '@platform/shared';
-import { Avatar, Badge, Button, Card, Dialog, EmptyState, Input, PageHeader, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+import { Avatar, Badge, Button, Card, Dialog, EmptyState, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { PatientForm } from '@/components/PatientForm';
@@ -47,9 +47,6 @@ export function Patients() {
   });
 
   const total = data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const to = Math.min(page * PAGE_SIZE, total);
   const filtered = q !== '' || gender !== 'all';
 
   return (
@@ -163,23 +160,7 @@ export function Patients() {
               </Table>
             </div>
 
-            {/* Pagination */}
-            <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm text-muted">
-              <span>
-                {from}–{to} of {total}
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="hidden sm:inline">
-                  Page {page} of {pages}
-                </span>
-                <Button variant="outline" size="icon-sm" aria-label="Previous page" disabled={page <= 1} onClick={() => setParam('page', String(page - 1))}>
-                  <ChevronLeft />
-                </Button>
-                <Button variant="outline" size="icon-sm" aria-label="Next page" disabled={page >= pages} onClick={() => setParam('page', String(page + 1))}>
-                  <ChevronRight />
-                </Button>
-              </div>
-            </div>
+            <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={(n) => setParam('page', String(n))} />
           </div>
         )}
       </Card>

@@ -3,6 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { patientInputSchema, type Patient, type PatientFormValues, type PatientInput } from '@platform/shared';
 import { Button, Field, Input, NativeSelect, Textarea } from '@platform/ui';
 import { ApiError, errorMessage } from '@/api/client';
+import { ConditionsPicker } from './Conditions';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const emptyToNull = (v: unknown) => (v === '' ? null : v);
@@ -23,6 +24,8 @@ export function PatientForm({
     register,
     handleSubmit,
     setError,
+    watch,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<PatientFormValues, unknown, PatientInput>({
     resolver: zodResolver(patientInputSchema),
@@ -36,6 +39,7 @@ export function PatientForm({
       bloodGroup: initial?.bloodGroup ?? '',
       weightKg: initial?.weightKg ?? null,
       address: initial?.address ?? '',
+      conditions: initial?.conditions ?? '',
       emergencyContactName: initial?.emergencyContactName ?? '',
       emergencyContactPhone: initial?.emergencyContactPhone?.replace(/^\+91/, '') ?? '',
     },
@@ -104,6 +108,13 @@ export function PatientForm({
         <Field label="Address" htmlFor="address" error={errors.address?.message}>
           <Textarea id="address" rows={2} placeholder="House, street, town" {...register('address')} />
         </Field>
+      </div>
+
+      <div className="border-t border-border pt-4 sm:col-span-2">
+        <div className="text-sm font-semibold">Long-term conditions</div>
+        <p className="mb-2 text-xs text-muted">Shown in red to the doctor at every visit. Optional.</p>
+        <ConditionsPicker value={watch('conditions') ?? ''} onChange={(c) => setValue('conditions', c, { shouldDirty: true })} />
+        {errors.conditions && <p className="mt-1 text-xs font-medium text-critical">{errors.conditions.message}</p>}
       </div>
 
       <div className="border-t border-border pt-4 sm:col-span-2">

@@ -1,190 +1,21 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, Ban, Plus, Trash2, Wallet } from 'lucide-react';
+import { Link, useParams } from 'react-router';
+import { ArrowLeft, Ban, Wallet } from 'lucide-react';
 import {
-  FORM_UNIT,
   formatRupees,
   toPaise,
   VENDOR_PAYMENT_MODES,
-  type Medicine,
   type PurchaseBillDetail,
-  type Vendor,
   type VendorPaymentMode,
 } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, Dialog, EmptyState, Field, Input, NativeSelect, PageHeader, Skeleton, Table, TBody, TD, Textarea, TH, THead, toast, TR } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
-import { fmtDay, purchaseStatus } from './Vendors';
+import { fmtDay } from '@/components/format';
+import { purchaseStatus } from './Vendors';
 
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
 const modeLabel: Record<VendorPaymentMode, string> = { cash: 'Cash', upi: 'UPI', cheque: 'Cheque', bank: 'Bank transfer' };
-
-interface Line {
-  key: number;
-  medicineId: string;
-  batchNo: string;
-  expiryDate: string;
-  quantity: string;
-  cost: string;
-}
-const emptyLine = (key: number): Line => ({ key, medicineId: '', batchNo: '', expiryDate: '', quantity: '', cost: '' });
-
-/** Enter a vendor's bill as it arrives: every line becomes stock (batch + expiry). */
-export function NewPurchaseBill() {
-  const { branch } = useParams();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const vendors = useQuery({ queryKey: ['vendors', branch], queryFn: () => api.get<{ vendors: Vendor[] }>(`/b/${branch}/vendors`) });
-  const meds = useQuery({ queryKey: ['medicines', branch], queryFn: () => api.get<{ medicines: Medicine[] }>(`/b/${branch}/medicines`) });
-  const [vendorId, setVendorId] = useState('');
-  const [vendorBillNo, setVendorBillNo] = useState('');
-  const [billDate, setBillDate] = useState(today());
-  const [lines, setLines] = useState<Line[]>([emptyLine(1)]);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-
-  const total = useMemo(() => lines.reduce((s, l) => s + (Number(l.quantity) || 0) * toPaise(Number(l.cost) || 0), 0), [lines]);
-  const setLine = (key: number, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
-
-  async function save() {
-    setErrors({});
-    const filled = lines.filter((l) => l.medicineId || l.batchNo || l.quantity);
-    setSaving(true);
-    try {
-      const { bill } = await api.post<{ bill: PurchaseBillDetail }>(`/b/${branch}/purchases`, {
-        vendorId: Number(vendorId) || 0,
-        vendorBillNo,
-        billDate,
-        lines: filled.map((l) => ({
-          medicineId: Number(l.medicineId) || 0,
-          batchNo: l.batchNo,
-          expiryDate: l.expiryDate,
-          quantity: Number(l.quantity) || 0,
-          unitCostPaise: toPaise(Number(l.cost) || 0),
-        })),
-      });
-      qc.invalidateQueries({ queryKey: ['purchases', branch] });
-      qc.invalidateQueries({ queryKey: ['vendors', branch] });
-      qc.invalidateQueries({ queryKey: ['medicines', branch] });
-      toast.success('Purchase bill saved', { description: `${filled.length} item${filled.length > 1 ? 's' : ''} added to stock · ${formatRupees(bill.totalPaise)}` });
-      navigate(`/${branch}/vendors/purchases/${bill.id}`, { replace: true });
-    } catch (e) {
-      if (e instanceof ApiError && e.fields) setErrors(Object.fromEntries(Object.entries(e.fields).map(([k, v]) => [k, v[0]!])));
-      toast.error(errorMessage(e));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div>
-      <Link to={`/${branch}/vendors`} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
-        <ArrowLeft className="size-4" /> Vendors
-      </Link>
-      <PageHeader title="New purchase bill" description="Type it exactly as on the vendor's bill. Saving adds every line to stock." />
-      <Card className="mb-4 grid gap-4 p-4 sm:grid-cols-3">
-        <Field label="Vendor" htmlFor="pb-vendor" error={errors.vendorId}>
-          <NativeSelect id="pb-vendor" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
-            <option value="">{vendors.data?.vendors.length === 0 ? 'Add a vendor first' : 'Choose vendor'}</option>
-            {vendors.data?.vendors.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name}
-                {v.creditDays ? ` · ${v.creditDays} days credit` : ''}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Field label="Vendor's bill no." htmlFor="pb-no">
-          <Input id="pb-no" className="font-mono" value={vendorBillNo} onChange={(e) => setVendorBillNo(e.target.value)} />
-        </Field>
-        <Field label="Bill date" htmlFor="pb-date" error={errors.billDate}>
-          <Input id="pb-date" type="date" value={billDate} max={today()} onChange={(e) => setBillDate(e.target.value)} />
-        </Field>
-      </Card>
-
-      <Card>
-        <CardHeader title="Items" description="One line per batch." />
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead className="bg-subtle/60 text-left text-xs text-muted">
-              <tr>
-                <th className="px-3 py-2 font-medium">Medicine</th>
-                <th className="px-3 py-2 font-medium">Batch no.</th>
-                <th className="px-3 py-2 font-medium">Expiry</th>
-                <th className="px-3 py-2 text-right font-medium">Qty</th>
-                <th className="px-3 py-2 text-right font-medium">Cost / unit (₹)</th>
-                <th className="px-3 py-2 text-right font-medium">Amount</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l, i) => {
-                const med = meds.data?.medicines.find((m) => String(m.id) === l.medicineId);
-                const err = (f: string) => errors[`lines.${i}.${f}`];
-                return (
-                  <tr key={l.key} className="border-t border-border align-top">
-                    <td className="px-3 py-2">
-                      <NativeSelect aria-label={`Line ${i + 1} medicine`} value={l.medicineId} onChange={(e) => setLine(l.key, { medicineId: e.target.value })} aria-invalid={!!err('medicineId')}>
-                        <option value="">Choose</option>
-                        {meds.data?.medicines.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                            {m.strength ? ` ${m.strength}` : ''}
-                          </option>
-                        ))}
-                      </NativeSelect>
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input aria-label={`Line ${i + 1} batch`} className="w-28 font-mono uppercase" value={l.batchNo} onChange={(e) => setLine(l.key, { batchNo: e.target.value })} aria-invalid={!!err('batchNo')} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input aria-label={`Line ${i + 1} expiry`} type="date" className="w-40" value={l.expiryDate} onChange={(e) => setLine(l.key, { expiryDate: e.target.value })} aria-invalid={!!err('expiryDate')} />
-                      {err('expiryDate') && <div className="mt-1 text-xs text-critical">{err('expiryDate')}</div>}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Input aria-label={`Line ${i + 1} quantity`} inputMode="numeric" className="ml-auto w-20 text-right" value={l.quantity} onChange={(e) => setLine(l.key, { quantity: e.target.value })} aria-invalid={!!err('quantity')} />
-                      {med && <div className="mt-1 text-xs text-muted">{FORM_UNIT[med.form]}</div>}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Input aria-label={`Line ${i + 1} cost`} inputMode="decimal" className="ml-auto w-24 text-right" value={l.cost} onChange={(e) => setLine(l.key, { cost: e.target.value })} />
-                      {med && <div className="mt-1 text-xs text-muted">sells {formatRupees(med.pricePaise)}</div>}
-                    </td>
-                    <td className="px-3 py-2 pt-4 text-right font-medium tabular-nums">{formatRupees((Number(l.quantity) || 0) * toPaise(Number(l.cost) || 0))}</td>
-                    <td className="px-1 py-2">
-                      {lines.length > 1 && (
-                        <Button size="icon-sm" variant="ghost" aria-label={`Remove line ${i + 1}`} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}>
-                          <Trash2 className="text-critical" />
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex flex-col gap-3 border-t border-border p-4 sm:flex-row sm:items-center sm:justify-between">
-          <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, emptyLine(Math.max(...ls.map((x) => x.key)) + 1)])}>
-            <Plus /> Add line
-          </Button>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <div className="text-xs text-muted">Bill total</div>
-              <div className="text-2xl font-semibold tabular-nums">{formatRupees(total)}</div>
-            </div>
-            <Button size="lg" disabled={saving} onClick={save}>
-              {saving ? 'Saving…' : 'Save & add to stock'}
-            </Button>
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-}
 
 /** One purchase bill: lines, payments to the vendor, cancel. */
 export function PurchaseBillPage() {
@@ -262,7 +93,7 @@ export function PurchaseBillPage() {
                 <TH>Medicine</TH>
                 <TH>Batch · Expiry</TH>
                 <TH className="text-right">Qty</TH>
-                <TH className="text-right">Cost</TH>
+                <TH className="text-right">Rate</TH>
                 <TH className="text-right">Amount</TH>
               </tr>
             </THead>
@@ -274,10 +105,22 @@ export function PurchaseBillPage() {
                     <span className="font-mono text-xs">{l.batchNo}</span> · {fmtDay(l.expiryDate)}
                   </TD>
                   <TD className="text-right tabular-nums">
-                    {l.quantity}
+                    {l.packSize > 1 || l.freeQty > 0 ? (
+                      <>
+                        {l.packQty} × {l.packSize}
+                        {l.freeQty > 0 && <span className="text-positive"> + {l.freeQty} free</span>}
+                        <div className="text-xs text-muted">= {l.quantity} units</div>
+                      </>
+                    ) : (
+                      l.quantity
+                    )}
                     {l.soldQty > 0 && <div className="text-xs text-muted">{l.soldQty} sold</div>}
                   </TD>
-                  <TD className="text-right tabular-nums text-muted">{formatRupees(l.unitCostPaise)}</TD>
+                  <TD className="text-right tabular-nums text-muted">
+                    {formatRupees(l.ratePaise)}
+                    {l.gstPercent > 0 && <div className="text-xs">+ {l.gstPercent}% GST</div>}
+                    {l.mrpPaise != null && <div className="text-xs">MRP {formatRupees(l.mrpPaise)}</div>}
+                  </TD>
                   <TD className="text-right font-medium tabular-nums">{formatRupees(l.amountPaise)}</TD>
                 </TR>
               ))}

@@ -44,6 +44,7 @@ export async function setup() {
   await addStaff('labtech', [{ branchId: s.branch.id, roleKey: 'lab_technician' }]); // main, view only
   await addStaff('pharm', [{ branchId: s.branch.id, roleKey: 'pharmacist' }]); // main
   await addStaff('desk', [{ branchId: s.branch.id, roleKey: 'front_desk' }]); // main
+  await addStaff('nurse', [{ branchId: s.branch.id, roleKey: 'nurse' }]); // main
 
   const app = createApp(db);
 

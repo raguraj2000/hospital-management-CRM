@@ -2,16 +2,19 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useParams } from 'react-router';
 import { ArrowLeft, Lock, Printer, Wallet } from 'lucide-react';
-import { BILL_PAYMENT_MODES, formatRupees, toPaise, type BillPaymentMode, type OpBill, type PrintHeader } from '@platform/shared';
-import { Badge, Button, Card, CardHeader, Field, Input, NativeSelect, Skeleton, toast } from '@platform/ui';
+import { formatRupees, toPaise, type BillPaymentMode, type OpBill } from '@platform/shared';
+import { Badge, Button, Card, CardHeader, Field, Input, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
-import { ReportHeader } from '@/components/ReportHeader';
+import { PrintLink, printInPlace } from '@/components/print';
+import { PrintFacts, PrintSheet, usePrintHeader } from '@/components/PrintSheet';
 import { useAutoPrint } from '@/components/useAutoPrint';
+import { printDateTime, printMoney } from '@/components/printFormat';
 import { visitLabel } from '@/components/Visits';
-import { billLabel, billTone } from './Billing';
+import { billLabel, billTone, fmtDateTime, modeLabel } from '@/components/format';
+import { receiptUrl } from './Billing';
+import { PaymentModeSelect } from '@/components/PaymentModeSelect';
 
-const modeLabel: Record<BillPaymentMode, string> = { cash: 'Cash', upi: 'UPI', card: 'Card' };
 const rupees = (p: number) => String(p / 100);
 
 /** One OP bill: fees + lab lines + discount; take payments; print. */
@@ -62,6 +65,7 @@ export function BillPage() {
     onSuccess: ({ bill }) => {
       after(bill);
       toast.success(bill.status === 'paid' ? `Fully paid · ${bill.billNo}` : `Payment recorded · ${formatRupees(bill.balancePaise)} still due`);
+      printInPlace(receiptUrl(branch!, bill.id, bill.payments.at(-1)!.id));
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -163,13 +167,7 @@ export function BillPage() {
                 <Input id="pay-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
               </Field>
               <Field label="Paid by" htmlFor="pay-mode">
-                <NativeSelect id="pay-mode" value={mode} onChange={(e) => setMode(e.target.value as BillPaymentMode)}>
-                  {BILL_PAYMENT_MODES.map((m) => (
-                    <option key={m} value={m}>
-                      {modeLabel[m]}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <PaymentModeSelect id="pay-mode" value={mode} onChange={setMode} />
               </Field>
               <Button type="submit" className="col-span-2" size="lg" disabled={pay.isPending}>
                 <Wallet /> Receive {formatRupees(toPaise(Number(amount) || 0))}
@@ -179,15 +177,20 @@ export function BillPage() {
           {b.payments.length > 0 && (
             <ul className="divide-y divide-border">
               {b.payments.map((p) => (
-                <li key={p.id} className="flex justify-between px-4 py-2.5 text-sm">
+                <li key={p.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
                   <span>
                     {modeLabel[p.mode]}
                     <span className="block text-xs text-muted">
-                      {new Date(p.receivedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                      {fmtDateTime(p.receivedAt)}
                       {p.receivedByName && ` · ${p.receivedByName}`}
                     </span>
                   </span>
-                  <span className="font-medium tabular-nums">{formatRupees(p.amountPaise)}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="font-medium tabular-nums">{formatRupees(p.amountPaise)}</span>
+                    <PrintLink href={receiptUrl(branch!, b.id, p.id)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium hover:bg-subtle">
+                      <Printer className="size-3.5" /> Receipt
+                    </PrintLink>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -225,10 +228,7 @@ export function BillPrint() {
   const { data: me } = useMe();
   const allowed = me?.branches.find((b) => b.slug === branch)?.permissions.some((p) => p === 'billing.receive' || p === 'patient.view');
   const bill = useQuery({ queryKey: ['bill', branch, billId], queryFn: () => api.get<{ bill: OpBill }>(`/b/${branch}/bills/${billId}`), enabled: !!allowed });
-  const header = useQuery({ queryKey: ['print-header', branch], queryFn: () => api.get<{ header: PrintHeader }>(`/b/${branch}/print-header`), enabled: !!allowed });
-  useEffect(() => {
-    if (bill.data) document.title = `Bill ${bill.data.bill.billNo} - ${bill.data.bill.patientName}`;
-  }, [bill.data]);
+  const header = usePrintHeader(branch, !!allowed);
   useAutoPrint(!!bill.data && !!header.data);
 
   if (!me) return <Navigate to="/login" replace />;
@@ -242,36 +242,17 @@ export function BillPrint() {
   if (b.otherChargesPaise) rows.push([b.otherChargesLabel || 'Other charges', b.otherChargesPaise]);
 
   return (
-    <div className="min-h-dvh bg-[#dfe5e1] text-[13px] text-[#111]">
-      <style>{`@page { size: A4; margin: 10mm; } @media print { .no-print { display:none !important } .sheet { box-shadow:none !important; margin:0 !important; width:auto !important; padding:0 !important } body { background:#fff } }`}</style>
-      <div className="no-print sticky top-0 flex justify-end gap-2 border-b border-[#b7c3bd] bg-white px-4 py-2.5">
-        <button onClick={() => window.print()} className="rounded-md bg-[#1f6b4f] px-4 py-1.5 text-sm font-semibold text-white">
-          Print
-        </button>
-      </div>
-      <div className="sheet mx-auto my-6 w-[210mm] bg-white px-[11mm] py-[9mm] shadow">
-        <ReportHeader header={header.data.header} />
-        <div className="mb-3 text-center text-[15px] font-semibold text-[#1f6b4f]">BILL</div>
-        <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border border-[#111] px-3 py-2">
-          <div>
-            <b>Patient:</b> {b.patientName}
-          </div>
-          <div>
-            <b>Bill No.:</b> {b.billNo}
-          </div>
-          <div>
-            <b>UHID:</b> {b.patientUhid}
-          </div>
-          <div>
-            <b>Date:</b> {new Date(`${b.billDate}T00:00:00`).toLocaleDateString('en-GB')}
-          </div>
-          <div>
-            <b>OP No.:</b> {b.opNo}
-          </div>
-          <div>
-            <b>Doctor:</b> {b.doctorName ?? '—'}
-          </div>
-        </div>
+    <PrintSheet header={header.data.header} title="BILL" tabTitle={`Bill ${b.billNo} - ${b.patientName}`}>
+      <PrintFacts
+        facts={[
+          ['Patient', b.patientName],
+          ['Bill No.', b.billNo],
+          ['UHID', b.patientUhid],
+          ['Date & time', printDateTime(b.createdAt)],
+          ['OP No.', b.opNo],
+          ['Doctor', b.doctorName ?? '—'],
+        ]}
+      />
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-y border-[#111]">
@@ -285,39 +266,44 @@ export function BillPrint() {
               <tr key={i} className="border-b border-[#ccc]">
                 <td className="py-1.5">{i + 1}</td>
                 <td className="py-1.5">{d}</td>
-                <td className="py-1.5 text-right tabular-nums">{(a / 100).toFixed(2)}</td>
+                <td className="py-1.5 text-right tabular-nums">{printMoney(a)}</td>
               </tr>
             ))}
             {b.discountPaise > 0 && (
               <tr>
                 <td />
                 <td className="py-1.5 text-right">Discount</td>
-                <td className="py-1.5 text-right tabular-nums">− {(b.discountPaise / 100).toFixed(2)}</td>
+                <td className="py-1.5 text-right tabular-nums">− {printMoney(b.discountPaise)}</td>
               </tr>
             )}
             <tr className="border-t-2 border-[#111] text-[15px] font-bold">
               <td />
               <td className="py-2 text-right">Total</td>
-              <td className="py-2 text-right tabular-nums">{(b.totalPaise / 100).toFixed(2)}</td>
+              <td className="py-2 text-right tabular-nums">{printMoney(b.totalPaise)}</td>
             </tr>
             <tr>
               <td />
               <td className="py-1 text-right">Paid {b.payments.length > 0 && `(${[...new Set(b.payments.map((p) => modeLabel[p.mode]))].join(', ')})`}</td>
-              <td className="py-1 text-right tabular-nums">{(b.paidPaise / 100).toFixed(2)}</td>
+              <td className="py-1 text-right tabular-nums">{printMoney(b.paidPaise)}</td>
             </tr>
+            {b.payments.map((x) => (
+              <tr key={x.id} className="text-[12px]">
+                <td />
+                <td className="py-0.5 text-right">
+                  {printDateTime(x.receivedAt)} · {modeLabel[x.mode]}
+                </td>
+                <td className="py-0.5 text-right tabular-nums">{printMoney(x.amountPaise)}</td>
+              </tr>
+            ))}
             {b.balancePaise > 0 && (
               <tr className="font-semibold">
                 <td />
                 <td className="py-1 text-right">Balance due</td>
-                <td className="py-1 text-right tabular-nums">{(b.balancePaise / 100).toFixed(2)}</td>
+                <td className="py-1 text-right tabular-nums">{printMoney(b.balancePaise)}</td>
               </tr>
             )}
           </tbody>
         </table>
-        <div className="mt-16 flex justify-end">
-          <div className="w-[60mm] border-t border-[#111] pt-1 text-center text-[12px]">Authorised signature</div>
-        </div>
-      </div>
-    </div>
+    </PrintSheet>
   );
 }

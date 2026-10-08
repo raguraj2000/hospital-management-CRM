@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
-import { Building2, CircleUserRound, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users } from 'lucide-react';
+import { Building2, CircleUserRound, DatabaseBackup, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users } from 'lucide-react';
 import {
   ADMIN_ONLY_PERMISSIONS,
   ADMIN_ROLE_KEY,
@@ -59,6 +59,7 @@ import { ME_KEY, useBranch, useCan, useMe } from '@/state/auth';
 import { PrintHeaderForm } from '@/components/PrintHeaderForm';
 import { BillingSettings } from '@/components/BillingSettings';
 import { DoctorSettings } from '@/components/DoctorSettings';
+import { BackupRestore } from '@/components/BackupRestore';
 
 export function Settings() {
   const { data: me } = useMe();
@@ -88,6 +89,11 @@ export function Settings() {
                 <SlidersHorizontal className="size-4" /> Branch settings
               </TabsTrigger>
             )}
+            {canHeader && (
+              <TabsTrigger value="backup">
+                <DatabaseBackup className="size-4" /> Backup
+              </TabsTrigger>
+            )}
             {isOwner && (
               <TabsTrigger value="branches">
                 <Building2 className="size-4" /> Branches
@@ -114,6 +120,11 @@ export function Settings() {
               <BillingSettings branch={current.slug} />
               <DoctorSettings branch={current.slug} branchName={current.name} />
               <PrintHeaderForm branch={current.slug} branchName={current.name} />
+            </TabsContent>
+          )}
+          {canHeader && current && (
+            <TabsContent value="backup">
+              <BackupRestore branch={current.slug} />
             </TabsContent>
           )}
           {isOwner && (
