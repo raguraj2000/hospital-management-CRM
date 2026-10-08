@@ -13,8 +13,8 @@ import {
   type VisitSendResponse,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { labOrder, opVisit, patient, prescriptionItem, user } from '../db/schema.js';
-import { withToken } from '../lib/clinic.js';
+import { labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
+import { balanceDueOf, settledAtCounter, withToken } from '../lib/clinic.js';
 import { visitFee } from './billing.js';
 import { defaultDoctorOf, doctorsOf } from './doctors.js';
 
@@ -59,8 +59,11 @@ function pickNext(rows: OpVisitRow[], excludeId?: number): VisitQueue['next'] {
   return waiting ? { visit: waiting, reason: 'next_token' } : null;
 }
 
-/** One doctor's visits out of the day's list; null = all doctors. */
-const ofDoctor = (rows: OpVisitRow[], doctorUserId: number | null) => (doctorUserId == null ? rows : rows.filter((v) => v.doctorUserId === doctorUserId));
+/**
+ * One doctor's visits out of the day's list; null = all doctors. Visits with no doctor chosen belong to every
+ * doctor's queue: whoever calls the patient in becomes their doctor (else nobody could call them in).
+ */
+const ofDoctor = (rows: OpVisitRow[], doctorUserId: number | null) => (doctorUserId == null ? rows : rows.filter((v) => v.doctorUserId === doctorUserId || v.doctorUserId == null));
 
 function queueOf(rows: OpVisitRow[], doctorUserId: number | null): VisitQueue {
   const mine = ofDoctor(rows, doctorUserId);
@@ -136,8 +139,11 @@ export function createVisitRoutes(db: Db) {
    * The patient goes in to their doctor. Only one can be inside per doctor (visits with no doctor share
    * one slot), so whoever was inside goes back to waiting. Returns that visit's id, if any.
    */
-  async function callIn(tx: Tx, branchId: number, visit: { id: number; doctorUserId: number | null }): Promise<number | null> {
+  async function callIn(tx: Tx, branchId: number, picked: { id: number; doctorUserId: number | null }, byDoctorUserId: number | null = null): Promise<number | null> {
     const now = new Date().toISOString();
+    // A patient with no doctor chosen, called in from a doctor's queue: that doctor is now their doctor.
+    const visit = picked.doctorUserId == null && byDoctorUserId != null ? { id: picked.id, doctorUserId: byDoctorUserId } : picked;
+    if (visit !== picked) await tx.update(opVisit).set({ doctorUserId: byDoctorUserId, updatedAt: now }).where(and(visitInBranch(branchId), eq(opVisit.id, visit.id)));
     const slot = visit.doctorUserId == null ? isNull(opVisit.doctorUserId) : eq(opVisit.doctorUserId, visit.doctorUserId);
     const moved = await tx
       .update(opVisit)
@@ -240,7 +246,7 @@ export function createVisitRoutes(db: Db) {
     const done = await db.transaction(async (tx) => {
       const pick: VisitQueue['next'] = chosen ? { visit: chosen, reason: 'chosen' } : pickNext(ofDoctor(await dayRows(tx, b.id, today), doctorId));
       if (!pick) throw new AppError(409, 'nobody_waiting', 'Nobody is waiting for the doctor right now');
-      const previousId = await callIn(tx, b.id, pick.visit);
+      const previousId = await callIn(tx, b.id, pick.visit, doctorId);
       await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: pick.visit.id, detail: { status: 'with_doctor', reason: pick.reason, backToWaiting: previousId } });
       return { id: pick.visit.id, previousId, reason: pick.reason };
     });
@@ -258,17 +264,18 @@ export function createVisitRoutes(db: Db) {
     if (NOT_OPEN[visit.status]) throw new AppError(409, 'bad_state', NOT_OPEN[visit.status]!);
     const { to, callNext } = parsed.data;
     if (to === 'lab' && visit.lab.ordered + visit.lab.sampleCollected === 0) throw new AppError(400, 'no_lab_test', 'Order a test first');
-    const status = ({ lab: 'at_lab', counter: 'at_counter', waiting: 'waiting' } as const)[to];
     const today = await localToday(db);
 
     const next = await db.transaction(async (tx) => {
+      // Sent to the counter with nothing left to collect or give there (paid before seeing the doctor, no medicines): the visit is done.
+      const status = to === 'counter' && (await settledAtCounter(tx, b.id, visit.id)) && (await balanceDueOf(tx, b.id, visit.id)) === 0 ? 'completed' : ({ lab: 'at_lab', counter: 'at_counter', waiting: 'waiting' } as const)[to];
       await tx.update(opVisit).set({ status, updatedAt: new Date().toISOString() }).where(and(visitInBranch(b.id), eq(opVisit.id, visit.id)));
       await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: visit.id, detail: { status } });
       if (!callNext) return null;
       // Same doctor's queue (visits with no doctor are one queue); never the patient who just went out. Nobody waiting is not an error here.
-      const pick = pickNext((await dayRows(tx, b.id, today)).filter((v) => v.doctorUserId === visit.doctorUserId), visit.id);
+      const pick = pickNext(ofDoctor(await dayRows(tx, b.id, today), visit.doctorUserId).filter((v) => visit.doctorUserId != null || v.doctorUserId == null), visit.id);
       if (!pick) return null;
-      const previousId = await callIn(tx, b.id, pick.visit);
+      const previousId = await callIn(tx, b.id, pick.visit, visit.doctorUserId);
       await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: pick.visit.id, detail: { status: 'with_doctor', reason: pick.reason, backToWaiting: previousId } });
       return { id: pick.visit.id, reason: pick.reason };
     });
@@ -317,6 +324,10 @@ export function createVisitRoutes(db: Db) {
     const u = c.get('user');
     const id = Number(c.req.param('visitId'));
     await findVisit(b.id, id);
+    // Its bills and sales would stay in Billing and the day report, pointing at a visit that is gone.
+    const [bill] = await db.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, b.id), eq(opBill.visitId, id))).limit(1);
+    const [sale] = await db.select({ id: pharmacySale.id }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), eq(pharmacySale.visitId, id))).limit(1);
+    if (bill || sale) throw new AppError(409, 'has_bills', 'This visit has a bill or a pharmacy sale, so it cannot be deleted.');
     await db.update(opVisit).set({ deletedAt: new Date().toISOString() }).where(and(visitInBranch(b.id), eq(opVisit.id, id)));
     await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'delete', entity: 'op_visit', entityId: id });
     return c.json({ ok: true });

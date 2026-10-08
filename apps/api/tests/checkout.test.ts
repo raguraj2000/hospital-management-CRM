@@ -40,7 +40,7 @@ async function world() {
 type World = Awaited<ReturnType<typeof world>>;
 
 /** A visit today; with 2 lab tests (₹380) and 2 medicines (10 Paracetamol ₹20 + 1 syrup ₹90) unless switched off. */
-async function visit(w: World, name: string, opts: { labs?: boolean; rx?: boolean } = {}) {
+async function visit(w: World, name: string, opts: { labs?: boolean; rx?: boolean; sent?: boolean } = {}) {
   const { patient } = await json(w.doc('/api/b/main/patients', { method: 'POST', body: { name } }));
   const { visit: v } = await json(w.doc(`/api/b/main/patients/${patient.id}/visits`, { method: 'POST', body: {} }));
   if (opts.labs !== false) expect((await w.doc(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [w.cbc, w.sugar] } })).status).toBe(201);
@@ -49,6 +49,8 @@ async function visit(w: World, name: string, opts: { labs?: boolean; rx?: boolea
     items.push((await json(w.doc(`/api/b/main/visits/${v.id}/prescription`, { method: 'POST', body: { medicineId: w.para, dose: '1-0-1', days: 5 } }))).id);
     items.push((await json(w.doc(`/api/b/main/visits/${v.id}/prescription`, { method: 'POST', body: { medicineId: w.syrup, dose: 'SOS', days: 3, quantity: 1 } }))).id);
   }
+  // Sent to the counter by the doctor: only then does a checkout complete the visit.
+  if (opts.sent) await setStatus(v.id, 'at_counter');
   return { id: v.id as number, opNo: v.opNo as string, patientId: patient.id as number, items };
 }
 const checkout = (caller: Caller, visitId: number, body: unknown, branch = 'main') => caller(`/api/b/${branch}/visits/${visitId}/checkout`, { method: 'POST', body });
@@ -75,7 +77,7 @@ describe('checkout: one payment for the whole visit', () => {
   it.each(['pharm', 'desk'])('%s (default role) collects consultation + 2 lab tests + medicines with ONE call', async (who) => {
     const w = await world();
     const me = await t.as(who);
-    const v = await visit(w, 'Ravi Kumar');
+    const v = await visit(w, 'Ravi Kumar', { sent: true });
     await w.doc(`/api/b/main/visits/${v.id}`, { method: 'PATCH', body: { pharmacyNote: 'Give the generic brand' } });
 
     // The counter sees the whole amount before taking it.
@@ -124,7 +126,7 @@ describe('checkout: one payment for the whole visit', () => {
 
   it('consultation only: no lab, no medicines', async () => {
     const w = await world();
-    const v = await visit(w, 'Asha Devi', { labs: false, rx: false });
+    const v = await visit(w, 'Asha Devi', { labs: false, rx: false, sent: true });
     expect((await json(w.desk(`/api/b/main/visits/${v.id}/checkout`))).totals).toEqual({ billDuePaise: 20000, medicinesPaise: 0, grandTotalPaise: 20000 });
     const done = await json(checkout(w.desk, v.id, { paymentMode: 'upi', amountPaise: 20000 }));
     expect(done).toMatchObject({ bill: { totalPaise: 20000, status: 'paid', lines: [] }, sale: null, visitStatus: 'completed', totals: { receivedPaise: 20000, medicinesPaise: 0, balancePaise: 0 } });
@@ -134,7 +136,7 @@ describe('checkout: one payment for the whole visit', () => {
 
   it('medicines only, when the bill is already paid', async () => {
     const w = await world();
-    const v = await visit(w, 'Ravi Kumar', { labs: false, rx: false });
+    const v = await visit(w, 'Ravi Kumar', { labs: false, rx: false, sent: true });
     const { bill } = await json(w.desk(`/api/b/main/visits/${v.id}/bills`, { method: 'POST' }));
     await w.desk(`/api/b/main/bills/${bill.id}/payments`, { method: 'POST', body: { amountPaise: 20000, mode: 'cash' } });
     expect(await queueOf(w.pharm)).toEqual([]); // settled so far
@@ -159,7 +161,7 @@ describe('checkout: one payment for the whole visit', () => {
     const a = await json(checkout(w.pharm, reduced.id, { consultationFeePaise: 5000, otherChargesPaise: 1000, otherChargesLabel: 'Dressing', paymentMode: 'cash', amountPaise: 44000 }));
     expect(a.bill).toMatchObject({ consultationFeePaise: 5000, otherChargesPaise: 1000, otherChargesLabel: 'Dressing', totalPaise: 44000, status: 'paid' });
 
-    const free = await visit(w, 'Meena', { rx: false });
+    const free = await visit(w, 'Meena', { rx: false, sent: true });
     // More than the bill is a field error and creates nothing.
     const over = await checkout(w.pharm, free.id, { discountPaise: 58001, paymentMode: 'cash', amountPaise: 0 });
     expect(over.status).toBe(400);
@@ -178,12 +180,12 @@ describe('checkout: one payment for the whole visit', () => {
 
   it('pay later: medicines are paid in full, the rest stays as balance due; a wrong amount changes nothing', async () => {
     const w = await world();
-    const v = await visit(w, 'Ravi Kumar');
+    const v = await visit(w, 'Ravi Kumar', { sent: true });
     for (const amountPaise of [10999, 69001]) {
       const res = await checkout(w.pharm, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise });
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({ code: 'validation', fields: { amountPaise: [expect.any(String)] } });
-      await expectUntouched(w, v);
+      await expectUntouched(w, v, 'at_counter');
     }
 
     const done = await json(checkout(w.pharm, v.id, { itemIds: v.items, paymentMode: 'upi', amountPaise: 30000 }));
@@ -233,7 +235,7 @@ describe('checkout: one payment for the whole visit', () => {
 
   it('unticked medicines become declined', async () => {
     const w = await world();
-    const v = await visit(w, 'Ravi Kumar', { labs: false });
+    const v = await visit(w, 'Ravi Kumar', { labs: false, sent: true });
     const done = await json(checkout(w.desk, v.id, { itemIds: [v.items[0]], paymentMode: 'cash', amountPaise: 22000 }));
     expect(done).toMatchObject({ sale: { totalPaise: 2000 }, visitStatus: 'completed' });
     expect((await json(w.doc(`/api/b/main/visits/${v.id}/prescription`))).items.map((i: any) => [i.medicineName, i.status])).toEqual([['Paracetamol', 'dispensed'], ['Cough syrup', 'declined']]);
@@ -341,6 +343,7 @@ describe('checkout: nothing owed may disappear', () => {
     expect(toBill.find((x) => x.visitId === yesterday.id)).toMatchObject({ visitDate: inDays(-1), opNo: yesterday.opNo, hasBill: false, unbilledLabPaise: 0, unbilledLabCount: 0, patientName: 'Yesterday', status: 'waiting' });
 
     // Yesterday's visit is collected like any other, and then leaves both lists.
+    await setStatus(yesterday.id, 'at_counter');
     expect((await json(checkout(w.pharm, yesterday.id, { paymentMode: 'cash', amountPaise: 20000 }))).visitStatus).toBe('completed');
     expect((await queueOf(w.pharm)).map((q) => q.visitId)).not.toContain(yesterday.id);
     expect((await toBillOf(w.desk)).map((x) => x.visitId)).not.toContain(yesterday.id);
@@ -383,7 +386,7 @@ describe('checkout: nothing owed may disappear', () => {
 describe('combined bill (one print for the visit)', () => {
   it('returns the OP bill and the pharmacy sale with batches, totals by mode, who collected and the letterhead', async () => {
     const w = await world();
-    const v = await visit(w, 'Ravi Kumar');
+    const v = await visit(w, 'Ravi Kumar', { sent: true });
     const done = await json(checkout(w.pharm, v.id, { itemIds: v.items, discountPaise: 8000, paymentMode: 'upi', amountPaise: 41000 }));
     const print = await json(w.desk(`/api/b/main/visits/${v.id}/combined-bill`));
     expect(print.visit).toMatchObject({ id: v.id, opNo: v.opNo, token: 1, visitDate: inDays(0), status: 'completed', doctorName: null });

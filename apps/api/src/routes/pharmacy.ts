@@ -510,7 +510,7 @@ export function createPharmacyRoutes(db: Db) {
       .innerJoin(opVisit, eq(opVisit.id, prescriptionItem.visitId))
       .innerJoin(patient, eq(patient.id, opVisit.patientId))
       .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
-      .where(and(eq(prescriptionItem.branchId, b.id), eq(prescriptionItem.status, 'pending'), isNull(prescriptionItem.deletedAt), isNull(opVisit.deletedAt)))
+      .where(and(eq(prescriptionItem.branchId, b.id), eq(prescriptionItem.status, 'pending'), isNull(prescriptionItem.deletedAt), isNull(opVisit.deletedAt), sql`${opVisit.status} <> 'cancelled'`))
       .orderBy(asc(opVisit.id));
     if (!visits.length) return c.json({ queue: [] });
     const items = await prescriptionLines(db, b.id, today, and(eq(prescriptionItem.status, 'pending'), inArray(prescriptionItem.visitId, visits.map((v) => v.visitId))));
@@ -530,6 +530,7 @@ export function createPharmacyRoutes(db: Db) {
     const u = c.get('user');
     const { itemIds, paymentMode, quantities } = parsed.data;
     const v = await visitOfBranch(db, b.id, parsed.data.visitId);
+    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
     const today = await localToday(db);
 
     const sale = await db.transaction((tx) => dispenseItems(tx, b.id, u, v, itemIds, paymentMode, today, quantities));

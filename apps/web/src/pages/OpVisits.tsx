@@ -232,7 +232,7 @@ function StartVisitSearch({ branch }: { branch: string }) {
               <span>
                 {found.length === 0 ? 'No patient found with this name, UHID or phone.' : data!.total > found.length ? `Showing ${found.length} of ${data!.total} — type more to narrow down.` : 'Not the right person?'}
               </span>
-              <Link to={`/${branch}/patients?add=1`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+              <Link to={`/${branch}/patients?add=1`} className={buttonVariants({ variant: 'brand', size: 'sm' })}>
                 <UserPlus /> Register new patient
               </Link>
             </div>
@@ -298,7 +298,8 @@ function QueueBanner({ branch, queue, doctorName }: { branch: string; queue: Vis
   const { withDoctor, next } = queue;
   // Someone is still inside with the doctor the next patient would go to: the doctor first chooses what happens
   // to them (on the visit page), which also calls the next patient. So the button here opens that visit instead.
-  const inside = next ? withDoctor.find((v) => v.doctorUserId === next.visit.doctorUserId) : withDoctor[0];
+  // (A next patient with no doctor chosen yet goes to the doctor whose queue this is.)
+  const inside = next ? withDoctor.find((v) => v.doctorUserId === (next.visit.doctorUserId ?? queue.doctorUserId)) : withDoctor[0];
   const big = 'h-14 w-full px-6 text-lg md:w-auto';
 
   return (

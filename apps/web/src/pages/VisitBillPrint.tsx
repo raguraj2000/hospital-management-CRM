@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
-import type { BillPaymentMode, VisitBillPrint as VisitBillData } from '@platform/shared';
+import { billCharges, type BillPaymentMode, type VisitBillPrint as VisitBillData } from '@platform/shared';
 import { api, errorMessage } from '@/api/client';
 import { useMe } from '@/state/auth';
 import { PrintSheet, PrintSignature } from '@/components/PrintSheet';
@@ -40,8 +40,8 @@ export function VisitBillPrint() {
   const charges: [string, number][] = [];
   for (const b of bills) {
     if (b.consultationFeePaise > 0 || b === bills[0]) charges.push(['Consultation fee', b.consultationFeePaise]);
-    for (const l of b.lines) charges.push([`Lab: ${l.description}`, l.amountPaise]);
-    if (b.otherChargesPaise) charges.push([b.otherChargesLabel || 'Other charges', b.otherChargesPaise]);
+    for (const l of b.lines) if (l.labOrderId != null) charges.push([`Lab: ${l.description}`, l.amountPaise]);
+    for (const x of billCharges(b)) charges.push([x.description, x.amountPaise]);
   }
   const discountPaise = bills.reduce((s, b) => s + b.discountPaise, 0);
   const billNos = [...bills.map((b) => b.billNo), ...sales.map((s) => s.saleNo)];

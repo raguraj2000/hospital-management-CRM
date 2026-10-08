@@ -13,6 +13,11 @@ export const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('en-IN'
 /** A UTC timestamp -> "6:31 pm" in India time. */
 export const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 
+/** A UTC timestamp -> its India day, "2026-10-07". */
+export const istDay = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+/** Is this day ("2026-10-07") inside the From / To filter? An empty end is open. */
+export const inDays = (day: string, from: string, to: string) => (!from || day >= from) && (!to || day <= to);
+
 export const billTone: Record<OpBill['status'], Tone> = { unpaid: 'warning', part_paid: 'brand', paid: 'positive' };
 export const billLabel: Record<OpBill['status'], string> = { unpaid: 'Unpaid', part_paid: 'Part paid', paid: 'Paid' };
 

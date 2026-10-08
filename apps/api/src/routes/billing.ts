@@ -23,7 +23,7 @@ import {
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, user, vendorPayment } from '../db/schema.js';
-import { dayStamp, localToday, patientOfBranch, visitOfBranch, visitsToCollect, withToken } from '../lib/clinic.js';
+import { dayStamp, exclusively, localToday, patientOfBranch, visitOfBranch, visitsToCollect, withToken } from '../lib/clinic.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const doctor = alias(user, 'doctor');
@@ -177,13 +177,20 @@ export async function createBill(tx: Tx, branchId: number, u: Who, v: { id: numb
 export async function updateBill(tx: Tx, branchId: number, u: Who, bill: OpBill, data: z.infer<typeof billUpdateSchema>) {
   if (!bill.editable) throw new AppError(409, 'has_payments', 'This bill has payments and can no longer be changed');
   const unbilled = await unbilledLabOrders(tx, branchId, bill.visitId);
-  const lines: Pick<BillLine, 'amountPaise'>[] = [...bill.lines, ...unbilled.map((o) => ({ amountPaise: o.pricePaise }))];
-  const subtotal = (data.consultationFeePaise ?? bill.consultationFeePaise) + (data.otherChargesPaise ?? bill.otherChargesPaise) + lines.reduce((s, l) => s + l.amountPaise, 0);
-  if ((data.discountPaise ?? bill.discountPaise) > subtotal) {
+  // A list of charges replaces every extra charge the bill has, also the single "other charges" of older bills.
+  const { charges, ...fields } = data;
+  const set: typeof fields = charges ? { ...fields, otherChargesPaise: 0, otherChargesLabel: null } : fields;
+  const lines: Pick<BillLine, 'amountPaise'>[] = [...bill.lines.filter((l) => !charges || l.labOrderId != null), ...(charges ?? []), ...unbilled.map((o) => ({ amountPaise: o.pricePaise }))];
+  const subtotal = (set.consultationFeePaise ?? bill.consultationFeePaise) + (set.otherChargesPaise ?? bill.otherChargesPaise) + lines.reduce((s, l) => s + l.amountPaise, 0);
+  if ((set.discountPaise ?? bill.discountPaise) > subtotal) {
     throw new AppError(400, 'validation', 'Discount is more than the bill', { discountPaise: ['Discount is more than the bill'] });
   }
   // An empty body is allowed: it just pulls in newly ordered lab tests.
-  if (Object.keys(data).length) await tx.update(opBill).set(data).where(eq(opBill.id, bill.id));
+  if (Object.keys(set).length) await tx.update(opBill).set(set).where(eq(opBill.id, bill.id));
+  if (charges) {
+    await tx.delete(opBillLine).where(and(eq(opBillLine.billId, bill.id), isNull(opBillLine.labOrderId)));
+    if (charges.length) await tx.insert(opBillLine).values(charges.map((c) => ({ branchId, billId: bill.id, labOrderId: null, description: c.description, amountPaise: c.amountPaise })));
+  }
   if (unbilled.length) await tx.insert(opBillLine).values(labLines(branchId, bill.id, unbilled));
   await recomputeTotal(tx, bill.id);
   await writeAudit(tx, { organizationId: u.organizationId, branchId, userId: u.id, action: 'update', entity: 'op_bill', entityId: bill.id, detail: data });
@@ -289,7 +296,8 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const bill = await billOfBranch(b.id, Number(c.req.param('id')));
-    await payBill(db, b.id, u, bill, parsed.data);
+    // The balance is read again inside the transaction: two payments at the same moment can't take more than is due.
+    await exclusively(db, async (tx) => payBill(tx, b.id, u, await billOf(tx, b.id, bill.id), parsed.data));
     return c.json({ bill: await billOfBranch(b.id, bill.id) }, 201);
   });
 
@@ -408,21 +416,23 @@ export function createBillingRoutes(db: Db) {
     const sum = (col: AnyColumn) => sql<number>`coalesce(sum(${col}), 0)`;
 
     const visitRows = await db
-      .select({ status: opVisit.status, doctorName: doctor.name, n })
+      .select({ status: opVisit.status, doctorUserId: opVisit.doctorUserId, doctorName: doctor.name, n })
       .from(opVisit)
       .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
       .where(and(eq(opVisit.branchId, b.id), isNull(opVisit.deletedAt), eq(opVisit.visitDate, day)))
       .groupBy(opVisit.status, opVisit.doctorUserId);
     const seen = visitRows.filter((r) => r.status !== 'cancelled');
-    const byDoctor = new Map<string | null, number>();
-    for (const r of seen) byDoctor.set(r.doctorName, (byDoctor.get(r.doctorName) ?? 0) + r.n);
+    // By person, not by name: two doctors with the same name stay two lines.
+    const byDoctor = new Map<number | null, { doctorName: string | null; count: number }>();
+    for (const r of seen) byDoctor.set(r.doctorUserId, { doctorName: r.doctorName, count: (byDoctor.get(r.doctorUserId)?.count ?? 0) + r.n });
     const count = (rows: { n: number }[]) => rows.reduce((s, r) => s + r.n, 0);
     const [newPatients] = await db.select({ n }).from(patient).where(and(eq(patient.branchId, b.id), isNull(patient.deletedAt), onDay(patient.createdAt)));
     const [labTests] = await db.select({ n }).from(labOrder).where(and(eq(labOrder.branchId, b.id), sql`${labOrder.status} <> 'cancelled'`, onDay(labOrder.createdAt)));
 
     const billsOfDay = and(eq(opBill.branchId, b.id), onDay(opBill.createdAt));
     const [heads] = await db.select({ consultation: sum(opBill.consultationFeePaise), other: sum(opBill.otherChargesPaise), discount: sum(opBill.discountPaise) }).from(opBill).where(billsOfDay);
-    const [lab] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(billsOfDay);
+    const [lab] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, sql`${opBillLine.labOrderId} is not null`));
+    const [charges] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, isNull(opBillLine.labOrderId)));
     const [sold] = await db.select({ sum: sum(pharmacySale.totalPaise) }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt)));
     const paidOnBill = sql<number>`(select coalesce(sum(${billPayment.amountPaise}), 0) from ${billPayment} where ${billPayment.billId} = ${opBill.id})`;
     const due = sql<number>`coalesce(sum(max(0, ${opBill.totalPaise} - ${paidOnBill})), 0)`;
@@ -454,9 +464,9 @@ export function createBillingRoutes(db: Db) {
 
     const result: DayReport = {
       ...(await collectionOf(b.id, day)),
-      visits: { total: count(seen), completed: count(seen.filter((r) => r.status === 'completed')), cancelled: count(visitRows) - count(seen), newPatients: newPatients!.n, byDoctor: [...byDoctor].map(([doctorName, c]) => ({ doctorName, count: c })) },
+      visits: { total: count(seen), completed: count(seen.filter((r) => r.status === 'completed')), cancelled: count(visitRows) - count(seen), newPatients: newPatients!.n, byDoctor: [...byDoctor.values()] },
       labTests: labTests!.n,
-      billed: { consultationPaise: heads!.consultation, labPaise: lab!.sum, otherPaise: heads!.other, discountPaise: heads!.discount, pharmacyPaise: sold!.sum },
+      billed: { consultationPaise: heads!.consultation, labPaise: lab!.sum, otherPaise: heads!.other + charges!.sum, discountPaise: heads!.discount, pharmacyPaise: sold!.sum },
       pendingDayPaise: pendingDay!.due,
       pendingAllPaise: pendingAll!.due,
       receipts,

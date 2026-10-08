@@ -120,7 +120,8 @@ export function createApp(db: Db) {
       const [r] = await db
         .select({ n: sql<number>`count(*)` })
         .from(labOrder)
-        .where(and(eq(labOrder.branchId, branchId), inArray(labOrder.status, ['ordered', 'sample_collected'])));
+        .innerJoin(opVisit, eq(opVisit.id, labOrder.visitId))
+        .where(and(eq(labOrder.branchId, branchId), inArray(labOrder.status, ['ordered', 'sample_collected']), isNull(opVisit.deletedAt), sql`${opVisit.status} <> 'cancelled'`));
       labPending = r!.n;
     }
 

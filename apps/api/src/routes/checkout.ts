@@ -5,6 +5,7 @@ import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import {
+  billCharges,
   checkoutSchema,
   formatRupees,
   type BillPaymentMode,
@@ -17,7 +18,7 @@ import {
 } from '@platform/shared';
 import { AppError, forbidden, notFound, printHeaderOf, requireAnyPermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
-import { localToday, visitsToCollect, withToken } from '../lib/clinic.js';
+import { localToday, settledAtCounter, visitsToCollect, withToken } from '../lib/clinic.js';
 import { billOf, consultationFee, createBill, visitFee, labPaymentState, payBill, unbilledLabOrders, updateBill } from './billing.js';
 import { dispenseItems, prescriptionLines, saleDetail } from './pharmacy.js';
 
@@ -83,8 +84,9 @@ export function createCheckoutRoutes(db: Db) {
       const editable = !!open || willCreate;
       // A later bill of the same visit carries no consultation fee.
       const fee = open ? open.consultationFeePaise : willCreate && bills.length === 0 ? (await visitFee(db, b.id, v.id)).consultationFeePaise : 0;
-      const labLines = editable ? [...(open?.lines ?? []).map((l) => ({ description: l.description, amountPaise: l.amountPaise, billed: true })), ...unbilled.map((o) => ({ description: o.testName, amountPaise: o.pricePaise, billed: false }))] : [];
-      const other = open?.otherChargesPaise ?? 0;
+      const labLines = editable ? [...(open?.lines ?? []).filter((l) => l.labOrderId != null).map((l) => ({ description: l.description, amountPaise: l.amountPaise, billed: true })), ...unbilled.map((o) => ({ description: o.testName, amountPaise: o.pricePaise, billed: false }))] : [];
+      const charges = open ? billCharges(open) : [];
+      const other = charges.reduce((s, x) => s + x.amountPaise, 0);
       const discount = open?.discountPaise ?? 0;
       const earlier = bills.filter((x) => x !== open);
       bill = {
@@ -92,8 +94,7 @@ export function createCheckoutRoutes(db: Db) {
         billNo: open?.billNo ?? null,
         editable,
         consultationFeePaise: fee,
-        otherChargesPaise: other,
-        otherChargesLabel: open?.otherChargesLabel ?? null,
+        charges,
         discountPaise: discount,
         labLines,
         earlierBills: earlier.filter((x) => x.balancePaise > 0).map((x) => ({ id: x.id, billNo: x.billNo, totalPaise: x.totalPaise, paidPaise: x.paidPaise, balancePaise: x.balancePaise })),
@@ -182,12 +183,11 @@ export function createCheckoutRoutes(db: Db) {
         left -= pay;
       }
 
-      // 4. The patient is done once everything is billed and nothing is left to dispense.
-      //    (A balance due is tracked on the bill, not by keeping the visit open.)
-      const [{ pending }] = await tx.select({ pending: sql<number>`count(*)` }).from(prescriptionItem).where(and(eq(prescriptionItem.branchId, b.id), pendingOf(v.id), isNull(prescriptionItem.deletedAt)));
-      const [{ billCount }] = await tx.select({ billCount: sql<number>`count(*)` }).from(opBill).where(and(eq(opBill.branchId, b.id), eq(opBill.visitId, v.id)));
+      // 4. The patient is done once everything is billed and nothing is left to dispense -- but only a patient the
+      //    doctor sent to the counter. Money taken earlier (the fee at the front desk, before the doctor) leaves the
+      //    patient where they are: still waiting, with the doctor or at the lab.
       let visitStatus = v.status;
-      if (pending === 0 && billCount > 0 && (await unbilledLabOrders(tx, b.id, v.id)).length === 0 && v.status !== 'completed') {
+      if (v.status === 'at_counter' && (await settledAtCounter(tx, b.id, v.id))) {
         visitStatus = 'completed';
         await tx.update(opVisit).set({ status: 'completed', updatedAt: new Date().toISOString() }).where(eq(opVisit.id, v.id));
         await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: v.id, detail: { status: 'completed', by: 'checkout' } });

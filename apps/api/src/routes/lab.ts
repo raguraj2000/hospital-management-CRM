@@ -279,7 +279,8 @@ export function createLabRoutes(db: Db) {
       .innerJoin(opVisit, eq(opVisit.id, labOrder.visitId))
       .innerJoin(patient, eq(patient.id, labOrder.patientId))
       .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
-      .where(and(eq(labOrder.branchId, b.id), inArray(labOrder.status, [...statuses])))
+      // A deleted visit's tests are gone with it; a cancelled visit has nothing waiting at the lab.
+      .where(and(eq(labOrder.branchId, b.id), inArray(labOrder.status, [...statuses]), isNull(opVisit.deletedAt), status === 'completed' ? undefined : sql`${opVisit.status} <> 'cancelled'`))
       // The queue in the order the tests came in; finished ones newest first, and only the latest (the rest are on the patient's page).
       .orderBy(status === 'completed' ? desc(labOrder.id) : asc(labOrder.id))
       .limit(status === 'completed' ? 300 : 1000);
@@ -308,6 +309,9 @@ export function createLabRoutes(db: Db) {
     const [o] = await db.select({ id: labOrder.id, testId: labOrder.testId, status: labOrder.status }).from(labOrder).where(and(eq(labOrder.branchId, b.id), eq(labOrder.id, id)));
     if (!o) throw notFound('Lab order not found');
     if (o.status === 'cancelled') throw new AppError(409, 'bad_state', 'This test was cancelled');
+    const amending = o.status === 'completed';
+    // A final report stays whole: a value can be corrected, not emptied.
+    if (amending && parsed.data.results.some((r) => r.value === '')) throw new AppError(400, 'validation', 'This test is completed. A value can be corrected, but not left empty.');
     const params = await db
       .select({ id: labTestParameter.id, refRange: labTestParameter.refRange, noFlag: labTestParameter.noFlag })
       .from(labTestParameter)
@@ -328,7 +332,10 @@ export function createLabRoutes(db: Db) {
           .values({ branchId: b.id, orderId: id, parameterId: r.parameterId, value: r.value, flag, enteredBy: u.id })
           .onConflictDoUpdate({ target: [labResult.orderId, labResult.parameterId], set: { value: r.value, flag, enteredBy: u.id, updatedAt: now } });
       }
-      if (parsed.data.complete) {
+      if (amending) {
+        // A correction after the report was final: when and by whom it was completed stays as it was.
+        await tx.update(labOrder).set({ updatedAt: now }).where(eq(labOrder.id, id));
+      } else if (parsed.data.complete) {
         await tx
           .update(labOrder)
           .set({ status: 'completed', completedAt: now, completedBy: u.id, sampleCollectedAt: sql`coalesce(${labOrder.sampleCollectedAt}, ${now})`, updatedAt: now })
@@ -336,7 +343,7 @@ export function createLabRoutes(db: Db) {
       } else if (o.status === 'ordered') {
         await tx.update(labOrder).set({ status: 'sample_collected', sampleCollectedAt: now, updatedAt: now }).where(eq(labOrder.id, id));
       }
-      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: parsed.data.complete ? 'complete' : 'results', entity: 'lab_order', entityId: id });
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: amending ? 'amend' : parsed.data.complete ? 'complete' : 'results', entity: 'lab_order', entityId: id, detail: amending ? { results: parsed.data.results } : undefined });
     });
     return c.json({ ok: true });
   });

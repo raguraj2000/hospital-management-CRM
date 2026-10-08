@@ -89,9 +89,9 @@ export function createBackupRoutes(db: Db) {
 
       // 2. Keep what is here now, in case the wrong file was chosen.
       let safetyCopy: string | null = null;
-      if (config.dbUrl.startsWith('file:')) {
-        const live = config.dbUrl.slice('file:'.length);
-        safetyCopy = path.join(path.dirname(live), `before-restore-${stamp()}.db`);
+      const [live] = await db.all<{ file: string }>(sql`select file from pragma_database_list where name = 'main'`);
+      if (live?.file) {
+        safetyCopy = path.join(path.dirname(live.file), `before-restore-${stamp()}.db`);
         removeDb(safetyCopy);
         await db.run(sql`VACUUM INTO ${sqlPath(safetyCopy)}`);
       }

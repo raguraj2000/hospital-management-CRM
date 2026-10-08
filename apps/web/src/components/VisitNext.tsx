@@ -40,9 +40,10 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
   const who = tokenName({ ...visit, patientName });
   const send = useMutation({
     mutationFn: (to: VisitSendTo) => api.post<VisitSendResponse>(`/b/${branch}/visits/${visit.id}/send`, { to, callNext: true }),
-    onSuccess: ({ next }, to) => {
+    onSuccess: ({ visit: sent, next }, to) => {
       invalidate();
-      const description = `${who} ${SENT[to]}.`;
+      // Already paid and nothing to give at the counter: the visit is done.
+      const description = sent.status === 'completed' ? `${who}: visit completed, nothing to collect.` : `${who} ${SENT[to]}.`;
       if (next) {
         toast.success(next.reason === 'lab_ready' ? `Back from lab: ${tokenName(next.visit)}, result ready` : `Next: ${tokenName(next.visit)}`, { description, duration: 10_000 });
         navigate(`/${branch}/visits/${next.visit.id}`);

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useParams } from 'react-router';
 import { ArrowLeft, Lock, Printer, Wallet } from 'lucide-react';
-import { formatRupees, toPaise, type BillPaymentMode, type OpBill } from '@platform/shared';
+import { billCharges, formatRupees, toPaise, type BillPaymentMode, type OpBill } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, Field, Input, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
@@ -14,6 +14,7 @@ import { visitLabel } from '@/components/Visits';
 import { billLabel, billTone, fmtDateTime, modeLabel } from '@/components/format';
 import { receiptUrl } from './Billing';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
+import { chargeRowsOf, ChargeRowsEditor, chargesOf, type ChargeRow } from '@/components/BillCharges';
 
 const rupees = (p: number) => String(p / 100);
 
@@ -25,8 +26,7 @@ export function BillPage() {
   const key = ['bill', branch, billId];
   const { data, isLoading, error } = useQuery({ queryKey: key, queryFn: () => api.get<{ bill: OpBill }>(`/b/${branch}/bills/${billId}`) });
   const [fee, setFee] = useState('');
-  const [other, setOther] = useState('');
-  const [otherLabel, setOtherLabel] = useState('');
+  const [charges, setCharges] = useState<ChargeRow[]>([]);
   const [discount, setDiscount] = useState('');
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState<BillPaymentMode>('cash');
@@ -35,8 +35,7 @@ export function BillPage() {
     if (!data) return;
     const b = data.bill;
     setFee(rupees(b.consultationFeePaise));
-    setOther(rupees(b.otherChargesPaise));
-    setOtherLabel(b.otherChargesLabel ?? '');
+    setCharges(chargeRowsOf(billCharges(b)));
     setDiscount(rupees(b.discountPaise));
     setAmount(rupees(b.balancePaise));
   }, [data]);
@@ -50,8 +49,7 @@ export function BillPage() {
     mutationFn: () =>
       api.patch<{ bill: OpBill }>(`/b/${branch}/bills/${billId}`, {
         consultationFeePaise: toPaise(Number(fee) || 0),
-        otherChargesPaise: toPaise(Number(other) || 0),
-        otherChargesLabel: otherLabel,
+        charges: chargesOf(charges),
         discountPaise: toPaise(Number(discount) || 0),
       }),
     onSuccess: ({ bill }) => {
@@ -112,22 +110,22 @@ export function BillPage() {
           />
           <div className="divide-y divide-border">
             <Row label="Consultation fee">{editable ? <MoneyInput label="Consultation fee" value={fee} onChange={setFee} /> : formatRupees(b.consultationFeePaise)}</Row>
-            {b.lines.map((l) => (
-              <Row key={l.id} label={l.description} hint="Lab test">
-                {formatRupees(l.amountPaise)}
-              </Row>
-            ))}
-            <Row
-              label={
-                editable ? (
-                  <Input aria-label="Other charges label" placeholder="Other charges (e.g. Dressing)" value={otherLabel} onChange={(e) => setOtherLabel(e.target.value)} className="h-8 max-w-56" />
-                ) : (
-                  b.otherChargesLabel || 'Other charges'
-                )
-              }
-            >
-              {editable ? <MoneyInput label="Other charges" value={other} onChange={setOther} /> : formatRupees(b.otherChargesPaise)}
-            </Row>
+            {b.lines
+              .filter((l) => l.labOrderId != null)
+              .map((l) => (
+                <Row key={l.id} label={l.description} hint="Lab test">
+                  {formatRupees(l.amountPaise)}
+                </Row>
+              ))}
+            {editable ? (
+              <ChargeRowsEditor rows={charges} onChange={setCharges} />
+            ) : (
+              billCharges(b).map((x, i) => (
+                <Row key={i} label={x.description} hint="Other charge">
+                  {formatRupees(x.amountPaise)}
+                </Row>
+              ))
+            )}
             <Row label="Discount">{editable ? <MoneyInput label="Discount" value={discount} onChange={setDiscount} /> : `− ${formatRupees(b.discountPaise)}`}</Row>
             <div className="flex items-center justify-between px-4 py-3 text-base font-semibold">
               <span>Total</span>
@@ -238,8 +236,8 @@ export function BillPrint() {
   const b = bill.data.bill;
   // Consultation always shows; lab tests and other charges when present.
   const rows: [string, number][] = [['Consultation fee', b.consultationFeePaise]];
-  for (const l of b.lines) rows.push([`Lab: ${l.description}`, l.amountPaise]);
-  if (b.otherChargesPaise) rows.push([b.otherChargesLabel || 'Other charges', b.otherChargesPaise]);
+  for (const l of b.lines) if (l.labOrderId != null) rows.push([`Lab: ${l.description}`, l.amountPaise]);
+  for (const x of billCharges(b)) rows.push([x.description, x.amountPaise]);
 
   return (
     <PrintSheet header={header.data.header} title="BILL" tabTitle={`Bill ${b.billNo} - ${b.patientName}`}>

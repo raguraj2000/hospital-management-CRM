@@ -143,10 +143,16 @@ export interface PurchaseBillDetail extends PurchaseBillSummary {
 export const BILL_PAYMENT_MODES = ['cash', 'upi', 'card'] as const;
 export type BillPaymentMode = (typeof BILL_PAYMENT_MODES)[number];
 
+/** One extra charge on a bill (dressing, injection, ...). */
+export const billChargeSchema = z.object({ description: z.string().trim().min(1, 'Say what this charge is for').max(60), amountPaise: paise('the amount') });
+export type BillCharge = z.infer<typeof billChargeSchema>;
+
 export const billUpdateSchema = z.object({
   consultationFeePaise: paise('the fee').optional(),
   otherChargesPaise: paise('the amount').optional(),
   otherChargesLabel: text(60),
+  /** Every extra charge of the bill. Given, it replaces the ones the bill has (and the single "other charges" of older bills). */
+  charges: z.array(billChargeSchema).max(20, 'At most 20 extra charges on a bill').optional(),
   discountPaise: paise('the discount').optional(),
 });
 
@@ -163,6 +169,12 @@ export interface BillLine {
   amountPaise: number;
   labOrderId: number | null;
 }
+
+/** The extra charges of a bill: its charge lines (not lab tests), and the single "other charges" older bills carry. */
+export const billCharges = (b: { lines: Pick<BillLine, 'description' | 'amountPaise' | 'labOrderId'>[]; otherChargesPaise: number; otherChargesLabel: string | null }): BillCharge[] => [
+  ...(b.otherChargesPaise > 0 ? [{ description: b.otherChargesLabel || 'Other charges', amountPaise: b.otherChargesPaise }] : []),
+  ...b.lines.filter((l) => l.labOrderId == null).map((l) => ({ description: l.description, amountPaise: l.amountPaise })),
+];
 
 export interface OpBill {
   id: number;
@@ -317,8 +329,8 @@ export interface CheckoutBill {
   /** Fees and discount can still be changed (no payment taken on that bill yet). */
   editable: boolean;
   consultationFeePaise: number;
-  otherChargesPaise: number;
-  otherChargesLabel: string | null;
+  /** Extra charges on that bill (dressing, injection, ...). */
+  charges: BillCharge[];
   discountPaise: number;
   /** Lab tests on that bill, and those ordered since (billed: false) which the checkout adds to it. */
   labLines: { description: string; amountPaise: number; billed: boolean }[];

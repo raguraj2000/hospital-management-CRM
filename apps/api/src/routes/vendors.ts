@@ -13,7 +13,7 @@ import {
 } from '@platform/shared';
 import { AppError, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { medicine, medicineBatch, purchaseBill, purchaseLine, user, vendor, vendorPayment } from '../db/schema.js';
-import { localToday } from '../lib/clinic.js';
+import { exclusively, localToday } from '../lib/clinic.js';
 
 const addDays = (iso: string, days: number) => {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -238,12 +238,16 @@ export function createVendorRoutes(db: Db) {
     const u = c.get('user');
     const bill = await billDetail(b.id, Number(c.req.param('id')));
     if (bill.status === 'cancelled') throw new AppError(409, 'cancelled', 'This bill was cancelled');
-    const balance = bill.totalPaise - bill.paidPaise;
-    if (parsed.data.amountPaise > balance) {
-      throw new AppError(400, 'validation', `Only ₹${(balance / 100).toFixed(2)} is due on this bill`, { amountPaise: [`Only ₹${(balance / 100).toFixed(2)} is due`] });
-    }
-    await db.insert(vendorPayment).values({ ...parsed.data, branchId: b.id, billId: bill.id, paidBy: u.id });
-    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'pay', entity: 'purchase_bill', entityId: bill.id, detail: parsed.data });
+    // What is paid is read again inside the transaction: two payments at the same moment can't pay more than is due.
+    await exclusively(db, async (tx) => {
+        const [{ paid }] = await tx.select({ paid: sql<number>`coalesce(sum(${vendorPayment.amountPaise}), 0)` }).from(vendorPayment).where(eq(vendorPayment.billId, bill.id));
+        const balance = bill.totalPaise - paid;
+        if (parsed.data.amountPaise > balance) {
+          throw new AppError(400, 'validation', `Only ₹${(balance / 100).toFixed(2)} is due on this bill`, { amountPaise: [`Only ₹${(balance / 100).toFixed(2)} is due`] });
+        }
+        await tx.insert(vendorPayment).values({ ...parsed.data, branchId: b.id, billId: bill.id, paidBy: u.id });
+        await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'pay', entity: 'purchase_bill', entityId: bill.id, detail: parsed.data });
+    });
     return c.json({ bill: await billDetail(b.id, bill.id) }, 201);
   });
 

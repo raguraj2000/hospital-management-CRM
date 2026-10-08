@@ -11,6 +11,7 @@ import { PrintLink } from './print';
 import { useCan } from '@/state/auth';
 import { fmtDay } from '@/components/format';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
+import { chargeRowsOf, ChargeRowsEditor, chargesOf, type ChargeRow } from '@/components/BillCharges';
 
 /** What is typed in a ₹ box, as paise (empty or not a number = 0). */
 const paiseOf = (rupees: string) => Math.max(0, toPaise(Number(rupees) || 0));
@@ -165,8 +166,7 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
   // Charges: null = as the server has them.
   const [editing, setEditing] = useState(false);
   const [fee, setFee] = useState<string | null>(null);
-  const [other, setOther] = useState<string | null>(null);
-  const [otherLabel, setOtherLabel] = useState<string | null>(null);
+  const [chargeRows, setChargeRows] = useState<ChargeRow[] | null>(null);
   const [discount, setDiscount] = useState<string | null>(null);
   const [confirmFree, setConfirmFree] = useState(false);
   // Amount received: null = the whole total.
@@ -175,7 +175,8 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
 
   const editable = !!bill?.editable;
   const feePaise = fee != null && editable ? paiseOf(fee) : (bill?.consultationFeePaise ?? 0);
-  const otherPaise = other != null && editable ? paiseOf(other) : (bill?.otherChargesPaise ?? 0);
+  const charges = chargeRows != null && editable ? chargesOf(chargeRows) : (bill?.charges ?? []);
+  const otherPaise = charges.reduce((s, x) => s + x.amountPaise, 0);
   const discountPaise = discount != null && editable ? paiseOf(discount) : (bill?.discountPaise ?? 0);
   const labPaise = bill?.labLines.reduce((s, l) => s + l.amountPaise, 0) ?? 0;
   const earlierPaise = bill?.earlierBills.reduce((s, b) => s + b.balancePaise, 0) ?? 0;
@@ -215,7 +216,7 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
         if (less.length) body.quantities = Object.fromEntries(less.map((i) => [i.id, giveQty(i)]));
       }
       // What is on the screen is what gets billed.
-      if (editable) Object.assign(body, { consultationFeePaise: feePaise, otherChargesPaise: otherPaise, otherChargesLabel: otherLabel ?? bill!.otherChargesLabel ?? '', discountPaise });
+      if (editable) Object.assign(body, { consultationFeePaise: feePaise, charges, discountPaise });
       return api.post<CheckoutResult>(`/b/${branch}/visits/${data.visitId}/checkout`, body);
     },
     onSuccess: (r) => {
@@ -273,11 +274,13 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
               </Line>
             ))}
             {editing ? (
-              <Line label={<Input aria-label="Other charges: what for" placeholder="Other charges (e.g. Dressing)" className="h-11 max-w-64 text-base" value={otherLabel ?? bill.otherChargesLabel ?? ''} onChange={(e) => setOtherLabel(e.target.value)} />}>
-                <MoneyInput label="Other charges" value={other ?? rupeesOf(otherPaise)} onChange={setOther} />
-              </Line>
+              <ChargeRowsEditor big rows={chargeRows ?? chargeRowsOf(bill.charges)} onChange={setChargeRows} />
             ) : (
-              otherPaise > 0 && <Line label={`Other charges: ${otherLabel ?? bill.otherChargesLabel ?? ''}`}>{formatRupees(otherPaise)}</Line>
+              charges.map((x, i) => (
+                <Line key={i} label={x.description}>
+                  {formatRupees(x.amountPaise)}
+                </Line>
+              ))
             )}
             {editing ? (
               <Line label="Discount">
