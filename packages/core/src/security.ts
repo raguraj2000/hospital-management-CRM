@@ -28,7 +28,7 @@ export function securityHeaders(): MiddlewareHandler {
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'blob:'],
       connectSrc: ["'self'"],
-      frameAncestors: ["'none'"],
+      frameAncestors: ["'self'"], // only the app itself: it loads its own print pages in a hidden frame
       objectSrc: ["'none'"],
     },
     strictTransportSecurity: false, // turned on when served over https

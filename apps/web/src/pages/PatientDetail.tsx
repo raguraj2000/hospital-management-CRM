@@ -32,17 +32,18 @@ import {
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
+import { ConditionBadges } from '@/components/Conditions';
 import { PatientForm } from '@/components/PatientForm';
 import { NewVisitForm, TokenBadge, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
 import { ageOf, formatPhone } from './Patients';
-import { PatientBillsTab, PatientLabTab, usePatientBills, usePatientLab } from './PatientTabs';
+import { billsInDays, DayRangeFilter, labInDays, PatientBillsTab, PatientLabTab, usePatientBills, usePatientLab } from './PatientTabs';
+import { fmtDate, inDays } from '@/components/format';
 
 /** Free WhatsApp click-to-chat: opens WhatsApp with the message ready; staff press send. */
 function whatsAppLink(phone: string, text: string) {
   return `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 }
 
-const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 
 export function PatientDetail() {
   const { branch, id } = useParams();
@@ -56,6 +57,7 @@ export function PatientDetail() {
   const [deleting, setDeleting] = useState(false);
   const [startingVisit, setStartingVisit] = useState(false);
   const [tab, setTab] = useState('overview');
+  const [range, setRange] = useState({ from: '', to: '' });
 
   const visits = useQuery({
     queryKey: ['patient-visits', branch, id],
@@ -113,6 +115,10 @@ export function PatientDetail() {
 
   const p = data.patient;
   const age = ageOf(p);
+  // The Visits, Bills and Lab tabs show only the chosen days (and count only those).
+  const filtered = !!(range.from || range.to);
+  const shownVisits = visits.data?.visits.filter((v) => inDays(v.visitDate, range.from, range.to));
+  const shownBills = bills.data && billsInDays(bills.data, range);
 
   return (
     <div>
@@ -135,6 +141,7 @@ export function PatientDetail() {
               {p.bloodGroup && <Badge tone="critical">{p.bloodGroup}</Badge>}
               <span className="text-xs text-muted">Registered {fmtDate(p.createdAt)}</span>
             </div>
+            <ConditionBadges conditions={p.conditions} className="mt-2" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {canCreate && (
@@ -174,15 +181,16 @@ export function PatientDetail() {
         <TabsList className="mb-4">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="visits">
-            Visits{visits.data ? <span className="text-xs text-muted">{visits.data.visits.length}</span> : null}
+            Visits{shownVisits ? <span className="text-xs text-muted">{shownVisits.length}</span> : null}
           </TabsTrigger>
           <TabsTrigger value="bills">
-            Bills{bills.data ? <span className="text-xs text-muted">{bills.data.bills.length + (bills.data.pharmacy?.length ?? 0)}</span> : null}
+            Bills{shownBills ? <span className="text-xs text-muted">{shownBills.bills.length + (shownBills.pharmacy?.length ?? 0)}</span> : null}
           </TabsTrigger>
           <TabsTrigger value="lab">
-            Lab{lab.data ? <span className="text-xs text-muted">{lab.data.orders.length}</span> : null}
+            Lab{lab.data ? <span className="text-xs text-muted">{labInDays(lab.data.orders, range).length}</span> : null}
           </TabsTrigger>
         </TabsList>
+        {tab !== 'overview' && <DayRangeFilter value={range} onChange={setRange} />}
 
         <TabsContent value="overview" className="grid gap-4 md:grid-cols-2">
           <Card>
@@ -215,7 +223,9 @@ export function PatientDetail() {
           <Card>
             {visits.isLoading ? (
               <div className="space-y-3 p-4">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-10" />)}</div>
-            ) : !visits.data?.visits.length ? (
+            ) : filtered && visits.data?.visits.length && !shownVisits?.length ? (
+              <EmptyState icon={Stethoscope} title="No OP visits in these dates" description="Change or clear the dates to see other visits." />
+            ) : !shownVisits?.length ? (
               <EmptyState
                 icon={Stethoscope}
                 title="No OP visits yet"
@@ -236,7 +246,7 @@ export function PatientDetail() {
                   </tr>
                 </THead>
                 <TBody>
-                  {visits.data.visits.map((v) => (
+                  {shownVisits.map((v) => (
                     <TR key={v.id} onOpen={() => navigate(`/${branch}/visits/${v.id}`)}>
                       <TD className="whitespace-nowrap">
                         <TokenBadge opNo={v.opNo} token={v.token} />
@@ -251,7 +261,7 @@ export function PatientDetail() {
                         {vitalsSummary(v) && <div className="truncate text-xs text-muted tabular-nums">{vitalsSummary(v)}</div>}
                         {v.notes && <div className="truncate text-xs text-muted italic">{v.notes}</div>}
                       </TD>
-                      <TD><VisitStatusBadge status={v.status} /></TD>
+                      <TD><VisitStatusBadge status={v.status} labReady={v.labReady} /></TD>
                       <TD><VisitActions branch={branch!} visit={v} label={p.name} /></TD>
                     </TR>
                   ))}
@@ -261,10 +271,10 @@ export function PatientDetail() {
           </Card>
         </TabsContent>
         <TabsContent value="bills">
-          <PatientBillsTab branch={branch!} query={bills} />
+          <PatientBillsTab branch={branch!} query={bills} range={range} />
         </TabsContent>
         <TabsContent value="lab">
-          <PatientLabTab branch={branch!} query={lab} />
+          <PatientLabTab branch={branch!} query={lab} range={range} />
         </TabsContent>
       </Tabs>
 

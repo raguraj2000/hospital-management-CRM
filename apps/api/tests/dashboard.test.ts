@@ -143,6 +143,11 @@ describe("owner's daily view", () => {
   it('each part needs its own permission, else it is null', async () => {
     const owner = await t.as('owner');
     await takeMoney(owner, 'main', [{ amountPaise: 20000, mode: 'cash' }], 'upi'); // so nothing is null for lack of data
+    // The default Front desk and Pharmacist roles hold both billing.receive and pharmacy.sell; narrow them to one part each.
+    const { roles } = await json(owner('/api/org/roles'));
+    const setRole = (key: string, permissions: string[]) => owner(`/api/org/roles/${roles.find((r: any) => r.key === key).id}/permissions`, { method: 'PUT', body: { permissions } });
+    await setRole('front_desk', ['dashboard.view', 'billing.receive']);
+    await setRole('pharmacist', ['dashboard.view', 'inventory.view']);
 
     const lab = await json((await t.as('labtech'))('/api/b/main/dashboard')); // lab.view only
     expect(lab).toMatchObject({ patients: 1, collectionToday: null, stock: null, labPending: 0 });

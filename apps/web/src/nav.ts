@@ -1,4 +1,4 @@
-import { BedDouble, Building2,ClipboardList, FlaskConical, LayoutDashboard, Package, Pill, Receipt, Settings, Users, type LucideIcon } from 'lucide-react';
+import { BedDouble, Building2,ClipboardList, FlaskConical, LayoutDashboard, Package, Pill, Receipt, Settings, Syringe, Users, type LucideIcon } from 'lucide-react';
 import type { Permission } from '@platform/shared';
 
 /** One list drives the sidebar, the phone bottom bar AND the route guards. */
@@ -21,6 +21,7 @@ export const NAV: NavItem[] = [
   { path: 'billing', label: 'Billing', icon: Receipt, permission: 'billing.receive', group: 'Clinic', primary: true },
   { path: 'pharmacy', label: 'Pharmacy', icon: Pill, permission: 'pharmacy.sell', group: 'Clinic' },
   { path: 'lab', label: 'Lab', icon: FlaskConical, permission: 'lab.view', group: 'Clinic' },
+  { path: 'treatments', label: 'Treatments', icon: Syringe, permission: 'treatment.give', group: 'Clinic' },
   // TODO(shortcut): reuses patient.view until IPD has its own permission
   { path: 'admissions', label: 'Admissions', icon: BedDouble, permission: 'patient.view', group: 'Clinic', soon: true },
   { path: 'inventory', label: 'Inventory', icon: Package, permission: 'inventory.view', group: 'Manage' },

@@ -37,8 +37,9 @@ import {
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
+import { fmtDay } from '@/components/format';
 
-export const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+
 
 export const purchaseStatus: Record<PurchaseBillSummary['status'], { label: string; tone: 'warning' | 'brand' | 'positive' | 'neutral' }> = {
   unpaid: { label: 'Unpaid', tone: 'warning' },
@@ -268,7 +269,7 @@ function VendorForm({ initial, onSubmit, onCancel }: { initial?: Vendor; onSubmi
         }),
       )}
     >
-      <Field label="Vendor name" htmlFor="v-name" error={errors.name?.message} className="sm:col-span-2">
+      <Field required label="Vendor name" htmlFor="v-name" error={errors.name?.message} className="sm:col-span-2">
         <Input id="v-name" autoFocus {...register('name')} />
       </Field>
       <Field label="Phone" htmlFor="v-phone">

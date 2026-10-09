@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatRupees, toPaise } from '@platform/shared';
-import { Button, Card, Field, Input, toast } from '@platform/ui';
+import { Button, Card, CardHeader, Field, Input, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 
 /** Per-branch default consultation fee (front desk can still change it on a bill). */
@@ -14,12 +14,15 @@ export function BillingSettings({ branch }: { branch: string }) {
     if (data) setFee(String(data.consultationFeePaise / 100));
   }, [data]);
   return (
-    <Card className="mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
-      <Field label="Consultation fee (₹)" htmlFor="consult-fee" hint="Put on every new OP bill. Can be changed on a bill." className="sm:w-64">
-        <Input id="consult-fee" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
-      </Field>
-      <Button
-        disabled={saving}
+    <Card className="mb-4">
+      <CardHeader title="Consultation fee" description="Put on every new OP bill. Can be changed on a bill." />
+      {/* Input and button share one row; the button lines up with the input, not with a hint under it. */}
+      <div className="flex items-end gap-3 p-4">
+        <Field required label="Fee (₹)" htmlFor="consult-fee" className="w-40">
+          <Input id="consult-fee" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
+        </Field>
+        <Button
+          disabled={saving || !data || toPaise(Number(fee) || 0) === data.consultationFeePaise}
         onClick={async () => {
           setSaving(true);
           try {
@@ -34,7 +37,8 @@ export function BillingSettings({ branch }: { branch: string }) {
         }}
       >
         Save fee
-      </Button>
+        </Button>
+      </div>
     </Card>
   );
 }

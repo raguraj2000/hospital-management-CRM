@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router';
 import { z } from 'zod';
-import { Boxes, CalendarClock, IndianRupee, MoreHorizontal, PackageCheck, PackagePlus, PackageX, Plus, Printer, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { Boxes, CalendarClock, IndianRupee, MoreHorizontal, PackageCheck, Pencil, PackagePlus, PackageX, Plus, Printer, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { batchInputSchema, FORM_UNIT, formatRupees, MEDICINE_FORMS, toPaise, type BatchInput, type Medicine, type MedicineBatch, type StockReport, type StockReportBatch } from '@platform/shared';
 import {
   Badge,
@@ -35,11 +35,13 @@ import {
   THead,
   toast,
   TR,
+  Pager,
+  usePaged,
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
+import { fmtDay } from '@/components/format';
 
-const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 const daysUntil = (iso: string) => Math.round((new Date(`${iso}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) / 86_400_000);
 
 export function Inventory() {
@@ -55,6 +57,7 @@ export function Inventory() {
   const [stockFor, setStockFor] = useState<Medicine | null>(null);
   const [batchesFor, setBatchesFor] = useState<Medicine | null>(null);
   const [deleting, setDeleting] = useState<Medicine | null>(null);
+  const [editing, setEditing] = useState<Medicine | null>(null);
 
   const { data, isLoading, error } = useQuery({ queryKey: ['medicines', branch], queryFn: () => api.get<{ medicines: Medicine[] }>(`/b/${branch}/medicines`) });
   const refresh = () => qc.invalidateQueries({ queryKey: ['medicines', branch] });
@@ -70,6 +73,7 @@ export function Inventory() {
   const q = search.trim().toLowerCase();
   const medicines = (data?.medicines ?? []).filter((m) => !q || m.name.toLowerCase().includes(q));
   const low = (data?.medicines ?? []).filter((m) => m.stock <= m.reorderLevel).length;
+  const { rows, pager } = usePaged(medicines, q);
 
   return (
     <div>
@@ -121,7 +125,7 @@ export function Inventory() {
                   </tr>
                 </THead>
                 <TBody>
-                  {medicines.map((m) => {
+                  {rows.map((m) => {
                     const expDays = m.nextExpiry ? daysUntil(m.nextExpiry) : null;
                     return (
                       <TR key={m.id}>
@@ -164,6 +168,11 @@ export function Inventory() {
                                 </Button>
                               </MenuTrigger>
                               <MenuContent align="end">
+                                {canManage && (
+                                  <MenuItem onSelect={() => setEditing(m)}>
+                                    <Pencil /> Edit price &amp; details
+                                  </MenuItem>
+                                )}
                                 <MenuItem onSelect={() => setBatchesFor(m)}>
                                   <Boxes /> View batches
                                 </MenuItem>
@@ -182,12 +191,28 @@ export function Inventory() {
                 </TBody>
               </Table>
             )}
+            <Pager {...pager} />
           </Card>
         </TabsContent>
         <TabsContent value="reports">
           <Reports branch={branch!} branchName={current?.name ?? ''} />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)} title={`Edit ${editing?.name ?? ''}`} description="Price is per single unit (one tablet, one bottle…). The new price applies to sales from now on.">
+        {editing && (
+          <MedicineForm
+            initial={editing}
+            onCancel={() => setEditing(null)}
+            onSubmit={async (v) => {
+              await api.patch(`/b/${branch}/medicines/${editing.id}`, v);
+              refresh();
+              setEditing(null);
+              toast.success(`${v.name} saved`, { description: `Selling price ${formatRupees(v.pricePaise)} per unit.` });
+            }}
+          />
+        )}
+      </Dialog>
 
       <Dialog open={adding} onOpenChange={setAdding} title="Add medicine" description="Price is per single unit (one tablet, one bottle…).">
         <MedicineForm
@@ -239,13 +264,15 @@ const medicineFormSchema = z.object({
 });
 type MedicineFormValues = z.infer<typeof medicineFormSchema>;
 
-function MedicineForm({ onSubmit, onCancel }: { onSubmit: (v: { name: string; form: MedicineFormValues['form']; strength: string; pricePaise: number; reorderLevel: number }) => Promise<void>; onCancel: () => void }) {
+/** Add a medicine, or edit one (`initial`). */
+function MedicineForm({ initial, onSubmit, onCancel }: { initial?: Medicine; onSubmit: (v: { name: string; form: MedicineFormValues['form']; strength: string; pricePaise: number; reorderLevel: number }) => Promise<void>; onCancel: () => void }) {
   const {
     register,
     handleSubmit,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm<MedicineFormValues>({ resolver: zodResolver(medicineFormSchema), defaultValues: { form: 'tablet', strength: '', reorderLevel: 20 } });
+  } = useForm<MedicineFormValues>({ resolver: zodResolver(medicineFormSchema), defaultValues: initial ? { name: initial.name, form: initial.form, strength: initial.strength ?? '', price: initial.pricePaise / 100, reorderLevel: initial.reorderLevel } : { form: 'tablet', strength: '', reorderLevel: 20 },
+  });
   const num = (v: unknown) => (v === '' || v == null ? undefined : Number(v));
   return (
     <form
@@ -260,10 +287,10 @@ function MedicineForm({ onSubmit, onCancel }: { onSubmit: (v: { name: string; fo
         }
       })}
     >
-      <Field label="Medicine name" htmlFor="med-name" error={errors.name?.message} className="sm:col-span-2">
+      <Field required label="Medicine name" htmlFor="med-name" error={errors.name?.message} className="sm:col-span-2">
         <Input id="med-name" autoFocus placeholder="e.g. Paracetamol" {...register('name')} />
       </Field>
-      <Field label="Form" htmlFor="med-form">
+      <Field required label="Form" htmlFor="med-form">
         <NativeSelect id="med-form" {...register('form')}>
           {MEDICINE_FORMS.map((f) => (
             <option key={f} value={f} className="capitalize">
@@ -275,7 +302,7 @@ function MedicineForm({ onSubmit, onCancel }: { onSubmit: (v: { name: string; fo
       <Field label="Strength" htmlFor="med-strength" hint="Optional, e.g. 500 mg">
         <Input id="med-strength" {...register('strength')} />
       </Field>
-      <Field label="Selling price per unit (₹)" htmlFor="med-price" error={errors.price?.message}>
+      <Field required label="Selling price per unit (₹)" htmlFor="med-price" error={errors.price?.message}>
         <Input id="med-price" inputMode="decimal" placeholder="e.g. 2.50" {...register('price', { setValueAs: num })} />
       </Field>
       <Field label="Warn when stock is at or below" htmlFor="med-reorder" error={errors.reorderLevel?.message}>
@@ -287,7 +314,7 @@ function MedicineForm({ onSubmit, onCancel }: { onSubmit: (v: { name: string; fo
           Cancel
         </Button>
         <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Saving…' : 'Add medicine'}
+          {isSubmitting ? 'Saving…' : initial ? 'Save changes' : 'Add medicine'}
         </Button>
       </div>
     </form>
@@ -314,13 +341,13 @@ function StockForm({ unit, onSubmit, onCancel }: { unit: string; onSubmit: (v: B
         }
       })}
     >
-      <Field label="Batch no." htmlFor="batch-no" error={errors.batchNo?.message}>
+      <Field required label="Batch no." htmlFor="batch-no" error={errors.batchNo?.message}>
         <Input id="batch-no" autoFocus className="font-mono uppercase" {...register('batchNo')} />
       </Field>
-      <Field label="Expiry date" htmlFor="batch-expiry" error={errors.expiryDate?.message}>
+      <Field required label="Expiry date" htmlFor="batch-expiry" error={errors.expiryDate?.message}>
         <Input id="batch-expiry" type="date" {...register('expiryDate')} />
       </Field>
-      <Field label={`Quantity (${unit})`} htmlFor="batch-qty" error={errors.quantity?.message}>
+      <Field required label={`Quantity (${unit})`} htmlFor="batch-qty" error={errors.quantity?.message}>
         <Input id="batch-qty" inputMode="numeric" {...register('quantity', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })} />
       </Field>
       {errors.root && <p className="text-sm text-critical sm:col-span-3">{errors.root.message}</p>}

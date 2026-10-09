@@ -1,15 +1,17 @@
 import { useDeferredValue, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
-import { AlertTriangle, PackageCheck, Pill, Printer, ReceiptText, Search, ShoppingCart, Trash2, X } from 'lucide-react';
-import { FORM_UNIT, formatRupees, PAYMENT_MODES, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
-import { Avatar, Badge, Button, Card, CardHeader, EmptyState, Field, Input, NativeSelect, PageHeader, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+import { AlertTriangle, PackageCheck, Pill, Printer, ReceiptText, RotateCcw, Search, ShoppingCart, Trash2, X } from 'lucide-react';
+import { FORM_UNIT, formatRupees, type LastPurchase, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
+import { Avatar, Badge, Button, Card, CardHeader, EmptyState, Field, Input, PageHeader, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, Pager, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { visitLabel } from '@/components/Visits';
+import { CheckoutList, useCheckoutQueue } from '@/components/Checkout';
+import { fmtDate, fmtDay, modeLabel } from '@/components/format';
+import { PaymentModeSelect } from '@/components/PaymentModeSelect';
+import { KeyHint } from '@/components/Shortcuts';
 
-const modeLabel: Record<PaymentMode, string> = { cash: 'Cash', upi: 'UPI', card: 'Card' };
-const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 const printUrl = (branch: string, saleId: number) => `/${branch}/pharmacy/sales/${saleId}/print`;
 /** Same limit as the server (directSaleSchema). */
 const MAX_QTY = 10_000;
@@ -17,21 +19,29 @@ const MAX_QTY = 10_000;
 export function Pharmacy() {
   const { branch } = useParams();
   const current = useBranch();
+  // With billing.receive too, this counter takes the visit's whole payment (checkout); otherwise it only dispenses, as before.
+  const fullCheckout = useCan('billing.receive');
+  const checkout = useCheckoutQueue(branch, fullCheckout);
   const queue = useQuery({
     queryKey: ['pharmacy-queue', branch],
     queryFn: () => api.get<{ queue: PharmacyQueueEntry[] }>(`/b/${branch}/pharmacy/queue`),
     refetchInterval: 20_000, // new prescriptions appear without reloading
+    enabled: !fullCheckout,
   });
   const sales = useQuery({ queryKey: ['pharmacy-sales', branch], queryFn: () => api.get<{ sales: PharmacySale[]; totalPaise: number }>(`/b/${branch}/pharmacy/sales`) });
-  const waiting = queue.data?.queue.length ?? 0;
+  const { rows: saleRows, pager: salePager } = usePaged(sales.data?.sales ?? []);
+  const waiting = (fullCheckout ? checkout.data?.queue.length : queue.data?.queue.length) ?? 0;
 
   return (
     <div>
-      <PageHeader title="Pharmacy" description={`Prescriptions waiting at ${current?.name}. Tick what the patient buys, then dispense.`} />
+      <PageHeader
+        title="Pharmacy"
+        description={fullCheckout ? `Checkout at ${current?.name}: see the patient's total bill, collect it once, then give the medicines.` : `Prescriptions waiting at ${current?.name}. Tick what the patient buys, then dispense.`}
+      />
       <Tabs defaultValue="queue">
         <TabsList className="mb-4">
           <TabsTrigger value="queue">
-            Waiting {waiting > 0 && <Badge tone="warning">{waiting}</Badge>}
+            Checkout {waiting > 0 && <Badge tone="warning">{waiting}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="direct">Direct sale</TabsTrigger>
           <TabsTrigger value="sales">
@@ -40,7 +50,9 @@ export function Pharmacy() {
         </TabsList>
 
         <TabsContent value="queue" className="space-y-4">
-          {queue.isLoading ? (
+          {fullCheckout ? (
+            <CheckoutList branch={branch!} />
+          ) : queue.isLoading ? (
             <Skeleton className="h-48" />
           ) : queue.error ? (
             <Card className="p-4 text-sm text-critical">{errorMessage(queue.error)}</Card>
@@ -79,7 +91,7 @@ export function Pharmacy() {
                   </tr>
                 </THead>
                 <TBody>
-                  {sales.data.sales.map((s) => (
+                  {saleRows.map((s) => (
                     <TR key={s.id}>
                       <TD className="font-mono text-xs whitespace-nowrap">{s.saleNo}</TD>
                       <TD>
@@ -111,6 +123,7 @@ export function Pharmacy() {
                 </TBody>
               </Table>
             )}
+            <Pager {...salePager} />
           </Card>
         </TabsContent>
       </Tabs>
@@ -155,6 +168,12 @@ function QueueCard({ branch, entry }: { branch: string; entry: PharmacyQueueEntr
         }
         description={`${visitLabel(entry)} · ${entry.patientUhid}${entry.doctorName ? ` · ${entry.doctorName}` : ''}`}
       />
+      {entry.pharmacyNote && (
+        <p className="border-b border-border px-4 py-2.5 text-sm whitespace-pre-wrap">
+          <span className="font-semibold">Doctor's note: </span>
+          {entry.pharmacyNote}
+        </p>
+      )}
       <Table>
         <THead>
           <tr>
@@ -213,13 +232,7 @@ function QueueCard({ branch, entry }: { branch: string; entry: PharmacyQueueEntr
           <div className="text-2xl font-semibold tracking-tight tabular-nums">{formatRupees(total)}</div>
         </div>
         <div className="flex items-center gap-2">
-          <NativeSelect aria-label="Paid by" value={mode} onChange={(e) => setMode(e.target.value as PaymentMode)} className="w-28">
-            {PAYMENT_MODES.map((m) => (
-              <option key={m} value={m}>
-                {modeLabel[m]}
-              </option>
-            ))}
-          </NativeSelect>
+          <PaymentModeSelect aria-label="Paid by" value={mode} onChange={setMode} className="w-28" />
           <Button size="lg" disabled={!chosen.length || shortOnTicked || dispense.isPending} onClick={() => dispense.mutate()}>
             <PackageCheck /> {dispense.isPending ? 'Dispensing…' : `Dispense ${formatRupees(total)}`}
           </Button>
@@ -241,6 +254,16 @@ function DirectSale({ branch }: { branch: string }) {
   const [mode, setMode] = useState<PaymentMode>('cash');
   const [lastSale, setLastSale] = useState<{ id: number; saleNo: string; totalPaise: number } | null>(null);
   const meds = useQuery({ queryKey: ['medicines', branch], queryFn: () => api.get<{ medicines: Medicine[] }>(`/b/${branch}/medicines`) });
+  // A regular customer (heart, sugar, BP tablets every month): what they bought last time, to sell the same again.
+  const last = useQuery({ queryKey: ['last-purchase', branch, patient?.id], queryFn: () => api.get<{ purchase: LastPurchase | null }>(`/b/${branch}/patients/${patient!.id}/last-purchase`), enabled: !!patient, staleTime: 0 });
+
+  /** Puts last time's medicines and quantities in the sale; the price, batch and stock are today's. */
+  function repeatLast(p: LastPurchase) {
+    const known = p.items.filter((i) => i.available && meds.data?.medicines.some((m) => m.id === i.medicineId));
+    const gone = p.items.filter((i) => !known.includes(i));
+    setCart((c) => [...c.filter((x) => !known.some((i) => i.medicineId === x.medicineId)), ...known.map((i) => ({ medicineId: i.medicineId, qty: String(i.quantity) }))]);
+    toast.success(`${known.length} medicine${known.length === 1 ? '' : 's'} added from the last purchase`, { description: gone.length ? `No longer in the medicine list: ${gone.map((i) => i.medicineName).join(', ')}.` : 'Check the quantities, then sell.' });
+  }
 
   const q = search.trim().toLowerCase();
   const matches = q ? (meds.data?.medicines ?? []).filter((m) => m.name.toLowerCase().includes(q)).slice(0, 8) : [];
@@ -283,7 +306,7 @@ function DirectSale({ branch }: { branch: string }) {
       setLastSale(sale);
       setCart([]);
       setPatient(null);
-      for (const k of ['pharmacy-sales', 'pharmacy-queue', 'medicines', 'batches', 'dashboard', 'collection', 'patient-bills']) qc.invalidateQueries({ queryKey: [k, branch] });
+      for (const k of ['pharmacy-sales', 'pharmacy-queue', 'medicines', 'batches', 'dashboard', 'collection', 'patient-bills', 'last-purchase']) qc.invalidateQueries({ queryKey: [k, branch] });
     },
     onError: (e) => {
       toast.error(errorMessage(e));
@@ -310,10 +333,34 @@ function DirectSale({ branch }: { branch: string }) {
         </div>
       )}
 
+      {/* Who is buying comes first: a regular customer's last purchase is offered right away. */}
+      <div className="border-b border-border p-3">
+        <div className="sm:max-w-md">
+          <PatientPicker branch={branch} value={patient} onChange={setPatient} />
+        </div>
+        {patient &&
+          last.data &&
+          (last.data.purchase ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand/30 bg-brand-soft px-3 py-2.5 text-sm">
+              <div className="min-w-0">
+                <div className="font-medium">
+                  Last bought on {fmtDate(last.data.purchase.createdAt)} <span className="font-mono text-xs font-normal text-muted">{last.data.purchase.saleNo}</span>
+                </div>
+                <div className="text-muted">{last.data.purchase.items.map((i) => `${i.medicineName}${i.strength ? ` ${i.strength}` : ''} ×${i.quantity}`).join(', ')}</div>
+              </div>
+              <Button variant="brand" data-shortcut="alt+r" onClick={() => repeatLast(last.data!.purchase!)}>
+                <RotateCcw /> Add the same again <KeyHint>Alt+R</KeyHint>
+              </Button>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-muted">{patient.name} has not bought at this pharmacy before.</p>
+          ))}
+      </div>
+
       <div className="border-b border-border p-3">
         <div className="relative w-full sm:max-w-md">
           <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted" />
-          <Input type="search" aria-label="Search medicine to add" placeholder="Search medicine to add…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          <Input type="search" aria-label="Search medicine to add" data-shortcut="alt+m" placeholder="Search medicine to add…   (Alt+M)" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
         {meds.isLoading ? (
           <Skeleton className="mt-3 h-10" />
@@ -426,8 +473,7 @@ function DirectSale({ branch }: { branch: string }) {
         </>
       )}
 
-      <div className="grid gap-4 border-t border-border p-4 md:grid-cols-2 md:items-end">
-        <PatientPicker branch={branch} value={patient} onChange={setPatient} />
+      <div className="border-t border-border p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between md:justify-end md:gap-6">
           <div>
             <div className="text-xs text-muted">
@@ -436,15 +482,9 @@ function DirectSale({ branch }: { branch: string }) {
             <div className="text-3xl font-semibold tracking-tight tabular-nums">{formatRupees(total)}</div>
           </div>
           <div className="flex items-center gap-2">
-            <NativeSelect aria-label="Paid by" value={mode} onChange={(e) => setMode(e.target.value as PaymentMode)} className="w-28">
-              {PAYMENT_MODES.map((m) => (
-                <option key={m} value={m}>
-                  {modeLabel[m]}
-                </option>
-              ))}
-            </NativeSelect>
-            <Button size="lg" disabled={!rows.length || invalid || sell.isPending} onClick={() => sell.mutate()}>
-              <PackageCheck /> {sell.isPending ? 'Selling…' : `Sell ${formatRupees(total)}`}
+            <PaymentModeSelect aria-label="Paid by" value={mode} onChange={setMode} className="w-28" />
+            <Button size="lg" data-shortcut="alt+s" disabled={!rows.length || invalid || sell.isPending} onClick={() => sell.mutate()}>
+              <PackageCheck /> {sell.isPending ? 'Selling…' : `Sell ${formatRupees(total)}`} <KeyHint>Alt+S</KeyHint>
             </Button>
           </div>
         </div>
@@ -489,7 +529,7 @@ function PatientPicker({ branch, value, onChange }: { branch: string; value: Pic
     );
   }
   return (
-    <Field label="Patient (optional)" htmlFor="sale-patient" hint={q.length >= 2 ? undefined : 'Walk-in customer. Search to attach a registered patient.'}>
+    <Field label="Patient" htmlFor="sale-patient" hint={q.length >= 2 ? undefined : 'Walk-in customer. Search a registered patient by name or phone to see what they bought last time.'}>
       <Input id="sale-patient" type="search" placeholder="Search name, UHID or phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
       {q.length >= 2 &&
         (found.error ? (

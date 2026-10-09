@@ -37,10 +37,10 @@ export function ChangePasswordDialog({ open, onOpenChange }: { open: boolean; on
           }
         })}
       >
-        <Field label="Current password" htmlFor="current-password" error={errors.currentPassword?.message}>
+        <Field required label="Current password" htmlFor="current-password" error={errors.currentPassword?.message}>
           <Input id="current-password" type="password" autoComplete="current-password" autoFocus {...register('currentPassword')} />
         </Field>
-        <Field label="New password" htmlFor="new-password" error={errors.newPassword?.message} hint="At least 8 characters">
+        <Field required label="New password" htmlFor="new-password" error={errors.newPassword?.message} hint="At least 8 characters">
           <Input id="new-password" type="password" autoComplete="new-password" {...register('newPassword')} />
         </Field>
         {errors.root && <p className="text-sm text-critical">{errors.root.message}</p>}

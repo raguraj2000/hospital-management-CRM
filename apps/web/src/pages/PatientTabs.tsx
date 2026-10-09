@@ -2,17 +2,15 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ClipboardEdit, FlaskConical, Pill, Printer, Receipt, ReceiptText, Scale, Wallet } from 'lucide-react';
-import { formatRupees, type BillPaymentMode, type PatientBills, type PatientLabOrder } from '@platform/shared';
-import { Badge, buttonVariants, Card, EmptyState, Skeleton, StatCard, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
+import { formatRupees, type PatientBills, type PatientLabOrder } from '@platform/shared';
+import { Badge, Button, buttonVariants, Card, EmptyState, Input, Skeleton, StatCard, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
+import { PrintLink } from '@/components/print';
+import { LabResultReady } from '@/components/VisitLab';
 import { useCan } from '@/state/auth';
 import { TokenBadge } from '@/components/Visits';
-import { billLabel, billTone } from './Billing';
-import { labLabel, labTone } from './VisitDetail';
+import { billLabel, billTone, fmtDate, fmtDateTime, inDays, istDay, labLabel, labTone, modeLabel } from '@/components/format';
 
-const modeLabel: Record<BillPaymentMode, string> = { cash: 'Cash', upi: 'UPI', card: 'Card' };
-const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 
 // staleTime 0: payments and releases also happen in other browser tabs (print pages); coming back refetches.
 export function usePatientBills(branch: string | undefined, id: string | undefined) {
@@ -20,6 +18,53 @@ export function usePatientBills(branch: string | undefined, id: string | undefin
 }
 export function usePatientLab(branch: string | undefined, id: string | undefined) {
   return useQuery({ queryKey: ['patient-lab', branch, id], queryFn: () => api.get<{ orders: PatientLabOrder[] }>(`/b/${branch}/patients/${id}/lab-orders`), staleTime: 0 });
+}
+
+/** The From / To days chosen on the patient page; an empty end is open. */
+export interface DayRange {
+  from: string;
+  to: string;
+}
+const sum = (ns: number[]) => ns.reduce((a, n) => a + n, 0);
+
+/** The patient's bills inside the chosen days, with the totals of just those bills. */
+export function billsInDays(data: PatientBills, { from, to }: DayRange): PatientBills {
+  if (!from && !to) return data;
+  const bills = data.bills.filter((b) => inDays(b.billDate, from, to));
+  const pharmacy = data.pharmacy && data.pharmacy.filter((s) => inDays(istDay(s.createdAt), from, to));
+  return {
+    bills,
+    pharmacy,
+    summary: {
+      billedPaise: sum(bills.map((b) => b.totalPaise)),
+      paidPaise: sum(bills.map((b) => b.paidPaise)),
+      balancePaise: sum(bills.map((b) => b.balancePaise)),
+      pharmacyPaise: pharmacy && sum(pharmacy.map((s) => s.totalPaise)),
+    },
+  };
+}
+/** The patient's lab tests of the visits inside the chosen days. */
+export const labInDays = (orders: PatientLabOrder[], { from, to }: DayRange) => orders.filter((o) => inDays(o.visitDate, from, to));
+
+/** From / To days for the Visits, Bills and Lab tabs of the patient page. */
+export function DayRangeFilter({ value, onChange }: { value: DayRange; onChange: (v: DayRange) => void }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
+      <label htmlFor="range-from" className="text-muted">
+        From
+      </label>
+      <Input id="range-from" type="date" value={value.from} max={value.to || undefined} onChange={(e) => onChange({ ...value, from: e.target.value })} className="w-auto" />
+      <label htmlFor="range-to" className="text-muted">
+        To
+      </label>
+      <Input id="range-to" type="date" value={value.to} min={value.from || undefined} onChange={(e) => onChange({ ...value, to: e.target.value })} className="w-auto" />
+      {(value.from || value.to) && (
+        <Button variant="ghost" size="sm" onClick={() => onChange({ from: '', to: '' })}>
+          Clear
+        </Button>
+      )}
+    </div>
+  );
 }
 
 function SectionTitle({ title, description }: { title: string; description?: string }) {
@@ -33,7 +78,7 @@ function SectionTitle({ title, description }: { title: string; description?: str
 
 // ---------------------------------------------------------------- bills
 
-export function PatientBillsTab({ branch, query }: { branch: string; query: UseQueryResult<PatientBills> }) {
+export function PatientBillsTab({ branch, query, range }: { branch: string; query: UseQueryResult<PatientBills>; range: DayRange }) {
   const navigate = useNavigate();
   const canOpenBill = useCan('billing.receive'); // the bill page needs it
   const canPrintSale = useCan('pharmacy.sell'); // the pharmacy bill print page needs it
@@ -50,11 +95,18 @@ export function PatientBillsTab({ branch, query }: { branch: string; query: UseQ
     );
   }
   if (error || !data) return <Card className="p-4 text-sm text-critical">{errorMessage(error)}</Card>;
-  const { bills, pharmacy, summary } = data;
-  if (!bills.length && !pharmacy?.length) {
+  if (!data.bills.length && !data.pharmacy?.length) {
     return (
       <Card>
         <EmptyState icon={Receipt} title="No bills yet" description="Consultation, lab and pharmacy bills of this patient will appear here." />
+      </Card>
+    );
+  }
+  const { bills, pharmacy, summary } = billsInDays(data, range);
+  if (!bills.length && !pharmacy?.length) {
+    return (
+      <Card>
+        <EmptyState icon={Receipt} title="No bills in these dates" description="Change or clear the dates to see other bills." />
       </Card>
     );
   }
@@ -172,7 +224,7 @@ export function PatientBillsTab({ branch, query }: { branch: string; query: UseQ
 
 // ---------------------------------------------------------------- lab
 
-export function PatientLabTab({ branch, query }: { branch: string; query: UseQueryResult<{ orders: PatientLabOrder[] }> }) {
+export function PatientLabTab({ branch, query, range }: { branch: string; query: UseQueryResult<{ orders: PatientLabOrder[] }>; range: DayRange }) {
   const canEnter = useCan('lab.view'); // the results page needs it
   const canOrder = useCan('lab.order');
   const canPrint = canEnter || canOrder; // the report page takes either
@@ -201,13 +253,22 @@ export function PatientLabTab({ branch, query }: { branch: string; query: UseQue
     );
   }
 
+  const shown = labInDays(data.orders, range);
+  if (!shown.length) {
+    return (
+      <Card>
+        <EmptyState icon={FlaskConical} title="No lab tests in these dates" description="Change or clear the dates to see other tests." />
+      </Card>
+    );
+  }
+
   // Newest visit first (the list comes newest first).
-  const visitIds = [...new Set(data.orders.map((o) => o.visitId))];
+  const visitIds = [...new Set(shown.map((o) => o.visitId))];
 
   return (
     <div className="space-y-4">
       {visitIds.map((visitId) => {
-        const orders = data.orders.filter((o) => o.visitId === visitId);
+        const orders = shown.filter((o) => o.visitId === visitId);
         const v = orders[0]!;
         const anyCompleted = orders.some((o) => o.status === 'completed');
         return (
@@ -228,12 +289,14 @@ export function PatientLabTab({ branch, query }: { branch: string; query: UseQue
                   </Link>
                 )}
                 {canPrint && anyCompleted && (
-                  <a href={`/${branch}/lab/visits/${visitId}/print`} className={buttonVariants({ variant: v.printAllowed ? 'default' : 'outline' })}>
+                  <PrintLink href={`/${branch}/lab/visits/${visitId}/print`} className={buttonVariants({ variant: v.printAllowed ? 'default' : 'outline' })}>
                     <Printer /> Print report
-                  </a>
+                  </PrintLink>
                 )}
               </div>
             </div>
+            {/* The values, on screen: a doctor can read an earlier report without ordering the test again. */}
+            {anyCompleted && canPrint && <LabResultReady branch={branch} visitId={visitId} />}
             <Table>
               <THead>
                 <tr>

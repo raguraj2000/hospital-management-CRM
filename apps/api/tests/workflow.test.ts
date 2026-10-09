@@ -141,7 +141,6 @@ describe('lab', () => {
       ['Blood sugar (fasting)', 'ordered', v.opNo, 'Ravi Kumar'],
     ]);
     expect((await lab(`/api/b/main/lab/orders/${orders[0].id}`, { method: 'PATCH', body: { status: 'sample_collected' } })).status).toBe(200);
-    expect((await doc(`/api/b/main/lab/orders/${orders[0].id}`, { method: 'PATCH', body: { status: 'cancelled' } })).status).toBe(409); // already collected
     expect((await doc(`/api/b/main/lab/orders/${orders[1].id}`, { method: 'PATCH', body: { status: 'cancelled' } })).status).toBe(200);
     const after = (await json(doc(`/api/b/main/visits/${v.id}/lab-orders`))).orders.map((o: any) => o.status);
     expect(after).toEqual(['sample_collected', 'cancelled']);
@@ -160,5 +159,76 @@ describe('roles', () => {
     expect(r1.permissions).not.toContain('settings.manage');
     const r2 = await json(owner(`/api/org/roles/${admin.id}/permissions`, { method: 'PUT', body: { permissions: admin.permissions } }));
     expect(r2.permissions).toContain('users.manage');
+  });
+});
+
+describe("doctor's notes to the pharmacy and the lab", () => {
+  it('are saved on the visit and reach the pharmacy queue, the lab queue and the lab results screen', async () => {
+    const owner = await t.as('owner');
+    const doc = await t.as('doc');
+    const pharm = await t.as('pharm');
+    const lab = await t.as('labtech');
+    const med = await medicineWithStock(pharm, 'Paracetamol', 200, [{ batchNo: 'B1', days: 200, quantity: 50 }]);
+    await owner('/api/b/main/lab/tests/load-standard', { method: 'POST' });
+    const { tests } = await json(owner('/api/b/main/lab/tests'));
+    const v = await visitFor(doc, 'Ravi Kumar');
+    await doc(`/api/b/main/visits/${v.id}/prescription`, { method: 'POST', body: { medicineId: med, dose: '1-0-1', days: 2 } });
+    await doc(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [tests[0].id] } });
+
+    // New visits have no notes; the lab technician (no patient.edit) cannot write one.
+    expect((await json(doc(`/api/b/main/visits/${v.id}`))).visit).toMatchObject({ pharmacyNote: null, labNote: null });
+    expect((await lab(`/api/b/main/visits/${v.id}`, { method: 'PATCH', body: { labNote: 'x' } })).status).toBe(403);
+
+    const saved = await json(doc(`/api/b/main/visits/${v.id}`, { method: 'PATCH', body: { pharmacyNote: '  Give the generic brand  ', labNote: 'Fasting sample' } }));
+    expect(saved.visit).toMatchObject({ pharmacyNote: 'Give the generic brand', labNote: 'Fasting sample', complaint: 'Fever' }); // trimmed; nothing else touched
+
+    const { queue } = await json(pharm('/api/b/main/pharmacy/queue'));
+    expect(queue.find((q: any) => q.visitId === v.id).pharmacyNote).toBe('Give the generic brand');
+    const { orders } = await json(lab('/api/b/main/lab/orders'));
+    expect(orders.find((o: any) => o.visitId === v.id).labNote).toBe('Fasting sample');
+    expect((await json(lab(`/api/b/main/visits/${v.id}/lab-report`))).visit.labNote).toBe('Fasting sample');
+
+    // Emptying a note clears it; too long is refused; another branch cannot see or change the visit.
+    expect((await json(doc(`/api/b/main/visits/${v.id}`, { method: 'PATCH', body: { pharmacyNote: '' } }))).visit.pharmacyNote).toBeNull();
+    expect((await doc(`/api/b/main/visits/${v.id}`, { method: 'PATCH', body: { labNote: 'x'.repeat(501) } })).status).toBe(400);
+    expect((await owner(`/api/b/east/visits/${v.id}`, { method: 'PATCH', body: { labNote: 'nope' } })).status).toBe(404);
+  });
+});
+
+describe('cancelling a lab test', () => {
+  it('is allowed until results are entered, even after the sample is collected; never after', async () => {
+    const owner = await t.as('owner');
+    const doc = await t.as('doc');
+    const lab = await t.as('labtech');
+    await owner('/api/b/main/lab/tests/load-standard', { method: 'POST' });
+    const { tests } = await json(owner('/api/b/main/lab/tests'));
+    const v = await visitFor(doc, 'Kavitha Raman');
+    await doc(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [tests[0].id, tests[1].id, tests[2].id] } });
+    const { orders } = await json(doc(`/api/b/main/visits/${v.id}/lab-orders`));
+    const [a, b, c] = orders.map((o: any) => o.id);
+    const cancel = (who: Caller, id: number) => who(`/api/b/main/lab/orders/${id}`, { method: 'PATCH', body: { status: 'cancelled' } });
+
+    // a: sample collected, no results yet -> the patient is going elsewhere, it can still be cancelled (by the lab too)
+    await lab(`/api/b/main/lab/orders/${a}`, { method: 'PATCH', body: { status: 'sample_collected' } });
+    expect((await cancel(lab, a)).status).toBe(200);
+    expect((await cancel(lab, a)).status).toBe(409); // already cancelled
+
+    // b: a value was typed and saved (not completed) -> results exist, it stays on record
+    const report = await json(lab(`/api/b/main/visits/${v.id}/lab-report`));
+    const bTest = report.tests.find((x: any) => x.orderId === b);
+    await lab(`/api/b/main/lab/orders/${b}/results`, { method: 'PUT', body: { results: [{ parameterId: bTest.parameters[0].id, value: '12' }] } });
+    const refusedB = await cancel(doc, b);
+    expect(refusedB.status).toBe(409);
+    expect((await refusedB.json()).error).toMatch(/Results are already entered/);
+
+    // c: completed -> never
+    const cTest = report.tests.find((x: any) => x.orderId === c);
+    await lab(`/api/b/main/lab/orders/${c}/results`, { method: 'PUT', body: { results: [{ parameterId: cTest.parameters[0].id, value: '5' }], complete: true } });
+    expect((await cancel(doc, c)).status).toBe(409);
+
+    const after = (await json(doc(`/api/b/main/visits/${v.id}/lab-orders`))).orders;
+    expect(after.map((o: any) => o.status)).toEqual(['cancelled', 'sample_collected', 'completed']);
+    expect((await cancel(owner, 999999)).status).toBe(404);
+    expect((await owner(`/api/b/east/lab/orders/${b}`, { method: 'PATCH', body: { status: 'cancelled' } })).status).toBe(404); // another branch
   });
 });

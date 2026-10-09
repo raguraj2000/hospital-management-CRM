@@ -1,29 +1,48 @@
 // Patient billing: one OP bill per visit (consultation + lab tests + other - discount),
 // part payments, daily collection, and the "lab report only after payment" rule.
-import { and, asc, desc, eq, inArray, isNull, notInArray, sql, type AnyColumn } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, lte, notInArray, sql, type AnyColumn } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
+import type { z } from 'zod';
 import {
   billingSettingsSchema,
   billPaymentSchema,
   billStatus,
   billUpdateSchema,
   labReleaseSchema,
+  receiptNo,
+  visitFeeSchema,
+  type BillLine,
   type BillListRow,
   type Collection,
+  type DayReceipt,
+  type DayReport,
   type OpBill,
   type PatientBills,
+  type VisitFee,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, user, vendorPayment } from '../db/schema.js';
-import { dayStamp, localToday, patientOfBranch, visitOfBranch, withToken } from '../lib/clinic.js';
+import { dayStamp, exclusively, localToday, patientOfBranch, visitOfBranch, visitsToCollect, withToken } from '../lib/clinic.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const doctor = alias(user, 'doctor');
 
-async function consultationFee(db: Db | Tx, branchId: number) {
+export async function consultationFee(db: Db | Tx, branchId: number) {
   const [s] = await db.select({ fee: clinicSetting.consultationFeePaise }).from(clinicSetting).where(eq(clinicSetting.branchId, branchId));
   return s?.fee ?? 0;
+}
+
+/**
+ * What a visit's consultation costs: the fee on its first bill once billed (the counter may have changed it there),
+ * else the doctor's own fee for the visit, else the branch's standard fee.
+ */
+export async function visitFee(db: Db | Tx, branchId: number, visitId: number): Promise<VisitFee> {
+  const standardFeePaise = await consultationFee(db, branchId);
+  const [first] = await db.select({ id: opBill.id, fee: opBill.consultationFeePaise }).from(opBill).where(and(eq(opBill.branchId, branchId), eq(opBill.visitId, visitId))).orderBy(asc(opBill.id)).limit(1);
+  if (first) return { consultationFeePaise: first.fee, standardFeePaise, locked: (await paidOf(db, first.id)) > 0 };
+  const [v] = await db.select({ fee: opVisit.consultationFeePaise }).from(opVisit).where(and(eq(opVisit.branchId, branchId), eq(opVisit.id, visitId)));
+  return { consultationFeePaise: v?.fee ?? standardFeePaise, standardFeePaise, locked: false };
 }
 
 async function paidOf(db: Db | Tx, billId: number) {
@@ -41,7 +60,7 @@ async function recomputeTotal(db: Db | Tx, billId: number) {
 }
 
 /** Lab orders of a visit that aren't cancelled and aren't on any bill yet. */
-async function unbilledLabOrders(db: Db | Tx, branchId: number, visitId: number) {
+export async function unbilledLabOrders(db: Db | Tx, branchId: number, visitId: number) {
   const billed = db.select({ id: opBillLine.labOrderId }).from(opBillLine).where(sql`${opBillLine.labOrderId} is not null`);
   return db
     .select({ id: labOrder.id, testName: labTest.name, pricePaise: labOrder.pricePaise })
@@ -55,7 +74,7 @@ async function unbilledLabOrders(db: Db | Tx, branchId: number, visitId: number)
  * Can this visit's lab report be printed? Yes when every (non-cancelled) lab test is on a
  * fully paid bill, or an admin released it.
  */
-export async function labPaymentState(db: Db, branchId: number, visitId: number) {
+export async function labPaymentState(db: Db | Tx, branchId: number, visitId: number) {
   const [released] = await db.select({ id: labRelease.id, reason: labRelease.reason }).from(labRelease).where(and(eq(labRelease.branchId, branchId), eq(labRelease.visitId, visitId))).limit(1);
   const unbilled = await unbilledLabOrders(db, branchId, visitId);
   const billIds = (
@@ -82,46 +101,115 @@ export async function onLabOrderCancel(db: Db | Tx, orderId: number) {
   await recomputeTotal(db, line.billId);
 }
 
+/** One OP bill of this branch with its lines and payments, or 404. */
+export async function billOf(db: Db | Tx, branchId: number, id: number): Promise<OpBill> {
+  if (!Number.isInteger(id)) throw notFound('Bill not found');
+  const [b] = await db
+    .select({
+      id: opBill.id,
+      billNo: opBill.billNo,
+      visitId: opBill.visitId,
+      opNo: opVisit.opNo,
+      billDate: sql<string>`date(${opBill.createdAt}, 'localtime')`,
+      createdAt: opBill.createdAt,
+      patientId: patient.id,
+      patientName: patient.name,
+      patientUhid: patient.uhid,
+      patientPhone: patient.phone,
+      doctorName: doctor.name,
+      consultationFeePaise: opBill.consultationFeePaise,
+      otherChargesPaise: opBill.otherChargesPaise,
+      otherChargesLabel: opBill.otherChargesLabel,
+      discountPaise: opBill.discountPaise,
+      totalPaise: opBill.totalPaise,
+    })
+    .from(opBill)
+    .innerJoin(opVisit, eq(opVisit.id, opBill.visitId))
+    .innerJoin(patient, eq(patient.id, opBill.patientId))
+    .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
+    .where(and(eq(opBill.branchId, branchId), eq(opBill.id, id)));
+  if (!b) throw notFound('Bill not found');
+  const lines = await db.select({ id: opBillLine.id, description: opBillLine.description, amountPaise: opBillLine.amountPaise, labOrderId: opBillLine.labOrderId }).from(opBillLine).where(eq(opBillLine.billId, id)).orderBy(asc(opBillLine.id));
+  const payments = await db
+    .select({ id: billPayment.id, amountPaise: billPayment.amountPaise, mode: billPayment.mode, receivedAt: billPayment.receivedAt, receivedByName: user.name })
+    .from(billPayment)
+    .leftJoin(user, eq(user.id, billPayment.receivedBy))
+    .where(eq(billPayment.billId, id))
+    .orderBy(asc(billPayment.id));
+  const paidPaise = payments.reduce((s, p) => s + p.amountPaise, 0);
+  return { ...withToken(b), lines, payments, paidPaise, balancePaise: Math.max(0, b.totalPaise - paidPaise), status: billStatus(b.totalPaise, paidPaise), editable: payments.length === 0 };
+}
+
+type Who = { id: number; organizationId: number };
+const labLines = (branchId: number, billId: number, orders: { id: number; testName: string; pricePaise: number }[]) =>
+  orders.map((o) => ({ branchId, billId, labOrderId: o.id, description: o.testName, amountPaise: o.pricePaise }));
+
+/**
+ * New bill for a visit: the first bill carries the consultation fee; later bills (for tests
+ * ordered after the first bill was paid) carry only those new tests. Returns the bill id.
+ */
+export async function createBill(tx: Tx, branchId: number, u: Who, v: { id: number; patientId: number }, today: string) {
+  const existing = await tx.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, branchId), eq(opBill.visitId, v.id)));
+  const unbilled = await unbilledLabOrders(tx, branchId, v.id);
+  if (existing.length) {
+    for (const e of existing) if ((await paidOf(tx, e.id)) === 0) throw new AppError(409, 'open_bill', 'This visit already has an unpaid bill. Open it instead.');
+    if (!unbilled.length) throw new AppError(409, 'nothing_to_bill', 'Everything on this visit is already billed');
+  }
+  const n = await nextNumber(tx, branchId, `bill:${today}`);
+  const [bill] = await tx
+    .insert(opBill)
+    .values({
+      branchId,
+      billNo: `BL-${dayStamp(today)}-${String(n).padStart(3, '0')}`,
+      visitId: v.id,
+      patientId: v.patientId,
+      consultationFeePaise: existing.length ? 0 : (await visitFee(tx, branchId, v.id)).consultationFeePaise,
+      createdBy: u.id,
+    })
+    .returning({ id: opBill.id });
+  if (unbilled.length) await tx.insert(opBillLine).values(labLines(branchId, bill.id, unbilled));
+  await recomputeTotal(tx, bill.id);
+  await writeAudit(tx, { organizationId: u.organizationId, branchId, userId: u.id, action: 'create', entity: 'op_bill', entityId: bill.id, detail: { visitId: v.id } });
+  return bill.id;
+}
+
+/** Change fees/discount; also pulls in lab tests ordered since. Only before the first payment. */
+export async function updateBill(tx: Tx, branchId: number, u: Who, bill: OpBill, data: z.infer<typeof billUpdateSchema>) {
+  if (!bill.editable) throw new AppError(409, 'has_payments', 'This bill has payments and can no longer be changed');
+  const unbilled = await unbilledLabOrders(tx, branchId, bill.visitId);
+  // A list of charges replaces every extra charge the bill has, also the single "other charges" of older bills.
+  const { charges, ...fields } = data;
+  const set: typeof fields = charges ? { ...fields, otherChargesPaise: 0, otherChargesLabel: null } : fields;
+  const lines: Pick<BillLine, 'amountPaise'>[] = [...bill.lines.filter((l) => !charges || l.labOrderId != null), ...(charges ?? []), ...unbilled.map((o) => ({ amountPaise: o.pricePaise }))];
+  const subtotal = (set.consultationFeePaise ?? bill.consultationFeePaise) + (set.otherChargesPaise ?? bill.otherChargesPaise) + lines.reduce((s, l) => s + l.amountPaise, 0);
+  if ((set.discountPaise ?? bill.discountPaise) > subtotal) {
+    throw new AppError(400, 'validation', 'Discount is more than the bill', { discountPaise: ['Discount is more than the bill'] });
+  }
+  // An empty body is allowed: it just pulls in newly ordered lab tests.
+  if (Object.keys(set).length) await tx.update(opBill).set(set).where(eq(opBill.id, bill.id));
+  if (charges) {
+    await tx.delete(opBillLine).where(and(eq(opBillLine.billId, bill.id), isNull(opBillLine.labOrderId)));
+    if (charges.length) await tx.insert(opBillLine).values(charges.map((c) => ({ branchId, billId: bill.id, labOrderId: null, description: c.description, amountPaise: c.amountPaise })));
+  }
+  if (unbilled.length) await tx.insert(opBillLine).values(labLines(branchId, bill.id, unbilled));
+  await recomputeTotal(tx, bill.id);
+  await writeAudit(tx, { organizationId: u.organizationId, branchId, userId: u.id, action: 'update', entity: 'op_bill', entityId: bill.id, detail: data });
+}
+
+/** Take a payment on a bill: never more than its balance. */
+export async function payBill(db: Db | Tx, branchId: number, u: Who, bill: OpBill, data: z.infer<typeof billPaymentSchema>) {
+  if (data.amountPaise > bill.balancePaise) {
+    const msg = bill.balancePaise === 0 ? 'This bill is already fully paid' : `Only ₹${(bill.balancePaise / 100).toFixed(2)} is due`;
+    throw new AppError(400, 'validation', msg, { amountPaise: [msg] });
+  }
+  await db.insert(billPayment).values({ ...data, branchId, billId: bill.id, receivedBy: u.id });
+  await writeAudit(db, { organizationId: u.organizationId, branchId, userId: u.id, action: 'payment', entity: 'op_bill', entityId: bill.id, detail: data });
+}
+
 export function createBillingRoutes(db: Db) {
   const app = new Hono<BranchEnv>();
   const receive = requirePermission('billing.receive');
-
-  async function billOf(branchId: number, id: number): Promise<OpBill> {
-    if (!Number.isInteger(id)) throw notFound('Bill not found');
-    const [b] = await db
-      .select({
-        id: opBill.id,
-        billNo: opBill.billNo,
-        visitId: opBill.visitId,
-        opNo: opVisit.opNo,
-        billDate: sql<string>`date(${opBill.createdAt}, 'localtime')`,
-        patientId: patient.id,
-        patientName: patient.name,
-        patientUhid: patient.uhid,
-        patientPhone: patient.phone,
-        doctorName: doctor.name,
-        consultationFeePaise: opBill.consultationFeePaise,
-        otherChargesPaise: opBill.otherChargesPaise,
-        otherChargesLabel: opBill.otherChargesLabel,
-        discountPaise: opBill.discountPaise,
-        totalPaise: opBill.totalPaise,
-      })
-      .from(opBill)
-      .innerJoin(opVisit, eq(opVisit.id, opBill.visitId))
-      .innerJoin(patient, eq(patient.id, opBill.patientId))
-      .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
-      .where(and(eq(opBill.branchId, branchId), eq(opBill.id, id)));
-    if (!b) throw notFound('Bill not found');
-    const lines = await db.select({ id: opBillLine.id, description: opBillLine.description, amountPaise: opBillLine.amountPaise, labOrderId: opBillLine.labOrderId }).from(opBillLine).where(eq(opBillLine.billId, id)).orderBy(asc(opBillLine.id));
-    const payments = await db
-      .select({ id: billPayment.id, amountPaise: billPayment.amountPaise, mode: billPayment.mode, receivedAt: billPayment.receivedAt, receivedByName: user.name })
-      .from(billPayment)
-      .leftJoin(user, eq(user.id, billPayment.receivedBy))
-      .where(eq(billPayment.billId, id))
-      .orderBy(asc(billPayment.id));
-    const paidPaise = payments.reduce((s, p) => s + p.amountPaise, 0);
-    return { ...withToken(b), lines, payments, paidPaise, balancePaise: Math.max(0, b.totalPaise - paidPaise), status: billStatus(b.totalPaise, paidPaise), editable: payments.length === 0 };
-  }
+  const billOfBranch = (branchId: number, id: number) => billOf(db, branchId, id);
 
   // ---------------------------------------------------------------- settings
 
@@ -146,7 +234,7 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
     const ids = await db.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, b.id), eq(opBill.visitId, v.id))).orderBy(asc(opBill.id));
-    const bills = await Promise.all(ids.map((r) => billOf(b.id, r.id)));
+    const bills = await Promise.all(ids.map((r) => billOfBranch(b.id, r.id)));
     const unbilled = await unbilledLabOrders(db, b.id, v.id);
     return c.json({ bills, unbilledLab: unbilled, labPayment: await labPaymentState(db, b.id, v.id) });
   });
@@ -160,35 +248,36 @@ export function createBillingRoutes(db: Db) {
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
     if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
-    const existing = await db.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, b.id), eq(opBill.visitId, v.id)));
-    const unbilled = await unbilledLabOrders(db, b.id, v.id);
-    if (existing.length) {
-      for (const e of existing) if ((await paidOf(db, e.id)) === 0) throw new AppError(409, 'open_bill', 'This visit already has an unpaid bill. Open it instead.');
-      if (!unbilled.length) throw new AppError(409, 'nothing_to_bill', 'Everything on this visit is already billed');
-    }
     const today = await localToday(db);
-    const id = await db.transaction(async (tx) => {
-      const n = await nextNumber(tx, b.id, `bill:${today}`);
-      const [bill] = await tx
-        .insert(opBill)
-        .values({
-          branchId: b.id,
-          billNo: `BL-${dayStamp(today)}-${String(n).padStart(3, '0')}`,
-          visitId: v.id,
-          patientId: v.patientId,
-          consultationFeePaise: existing.length ? 0 : await consultationFee(tx, b.id),
-          createdBy: u.id,
-        })
-        .returning({ id: opBill.id });
-      if (unbilled.length) await tx.insert(opBillLine).values(unbilled.map((o) => ({ branchId: b.id, billId: bill.id, labOrderId: o.id, description: o.testName, amountPaise: o.pricePaise })));
-      await recomputeTotal(tx, bill.id);
-      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'op_bill', entityId: bill.id, detail: { visitId: v.id } });
-      return bill.id;
-    });
-    return c.json({ bill: await billOf(b.id, id) }, 201);
+    const id = await db.transaction((tx) => createBill(tx, b.id, u, v, today));
+    return c.json({ bill: await billOfBranch(b.id, id) }, 201);
   });
 
-  app.get('/bills/:id', requireAnyPermission('billing.receive', 'patient.view'), async (c) => c.json({ bill: await billOf(c.get('branch').id, Number(c.req.param('id'))) }));
+  /**
+   * The fee for this one visit (null = back to the standard fee). The doctor sets it while seeing the patient;
+   * the counter can too. Refused once a payment was taken on the bill that carries the fee.
+   */
+  app.put('/visits/:visitId/consultation-fee', requireAnyPermission('prescription.write', 'billing.receive'), async (c) => {
+    const parsed = visitFeeSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    const fee = parsed.data.consultationFeePaise;
+    await db.transaction(async (tx) => {
+      const now = await visitFee(tx, b.id, v.id);
+      if (now.locked) throw new AppError(409, 'has_payments', 'A payment was already taken on this bill; the fee can no longer be changed');
+      await tx.update(opVisit).set({ consultationFeePaise: fee, updatedAt: new Date().toISOString() }).where(eq(opVisit.id, v.id));
+      // Already billed (not paid): the bill follows.
+      const [first] = await tx.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, b.id), eq(opBill.visitId, v.id))).orderBy(asc(opBill.id)).limit(1);
+      if (first) await updateBill(tx, b.id, u, await billOf(tx, b.id, first.id), { consultationFeePaise: fee ?? now.standardFeePaise });
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: v.id, detail: { consultationFeePaise: fee } });
+    });
+    return c.json({ fee: await visitFee(db, b.id, v.id) });
+  });
+
+  app.get('/bills/:id', requireAnyPermission('billing.receive', 'patient.view'), async (c) => c.json({ bill: await billOfBranch(c.get('branch').id, Number(c.req.param('id'))) }));
 
   /** Change fees/discount; also pulls in lab tests ordered since. Only before the first payment. */
   app.patch('/bills/:id', receive, async (c) => {
@@ -196,22 +285,9 @@ export function createBillingRoutes(db: Db) {
     if (!parsed.success) throw validationError(parsed.error);
     const b = c.get('branch');
     const u = c.get('user');
-    const bill = await billOf(b.id, Number(c.req.param('id')));
-    if (!bill.editable) throw new AppError(409, 'has_payments', 'This bill has payments and can no longer be changed');
-    const subtotal =
-      (parsed.data.consultationFeePaise ?? bill.consultationFeePaise) + (parsed.data.otherChargesPaise ?? bill.otherChargesPaise) + bill.lines.reduce((s, l) => s + l.amountPaise, 0);
-    if ((parsed.data.discountPaise ?? bill.discountPaise) > subtotal) {
-      throw new AppError(400, 'validation', 'Discount is more than the bill', { discountPaise: ['Discount is more than the bill'] });
-    }
-    await db.transaction(async (tx) => {
-      // An empty body is allowed: it just pulls in newly ordered lab tests.
-      if (Object.keys(parsed.data).length) await tx.update(opBill).set(parsed.data).where(eq(opBill.id, bill.id));
-      const unbilled = await unbilledLabOrders(tx, b.id, bill.visitId);
-      if (unbilled.length) await tx.insert(opBillLine).values(unbilled.map((o) => ({ branchId: b.id, billId: bill.id, labOrderId: o.id, description: o.testName, amountPaise: o.pricePaise })));
-      await recomputeTotal(tx, bill.id);
-      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_bill', entityId: bill.id, detail: parsed.data });
-    });
-    return c.json({ bill: await billOf(b.id, bill.id) });
+    const bill = await billOfBranch(b.id, Number(c.req.param('id')));
+    await db.transaction((tx) => updateBill(tx, b.id, u, bill, parsed.data));
+    return c.json({ bill: await billOfBranch(b.id, bill.id) });
   });
 
   app.post('/bills/:id/payments', receive, async (c) => {
@@ -219,14 +295,10 @@ export function createBillingRoutes(db: Db) {
     if (!parsed.success) throw validationError(parsed.error);
     const b = c.get('branch');
     const u = c.get('user');
-    const bill = await billOf(b.id, Number(c.req.param('id')));
-    if (parsed.data.amountPaise > bill.balancePaise) {
-      const msg = bill.balancePaise === 0 ? 'This bill is already fully paid' : `Only ₹${(bill.balancePaise / 100).toFixed(2)} is due`;
-      throw new AppError(400, 'validation', msg, { amountPaise: [msg] });
-    }
-    await db.insert(billPayment).values({ ...parsed.data, branchId: b.id, billId: bill.id, receivedBy: u.id });
-    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'payment', entity: 'op_bill', entityId: bill.id, detail: parsed.data });
-    return c.json({ bill: await billOf(b.id, bill.id) }, 201);
+    const bill = await billOfBranch(b.id, Number(c.req.param('id')));
+    // The balance is read again inside the transaction: two payments at the same moment can't take more than is due.
+    await exclusively(db, async (tx) => payBill(tx, b.id, u, await billOf(tx, b.id, bill.id), parsed.data));
+    return c.json({ bill: await billOfBranch(b.id, bill.id) }, 201);
   });
 
   // ---------------------------------------------------------------- bills of a patient
@@ -236,7 +308,7 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const p = await patientOfBranch(db, b.id, Number(c.req.param('id')));
     const ids = await db.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, b.id), eq(opBill.patientId, p.id))).orderBy(desc(opBill.id));
-    const bills = await Promise.all(ids.map((r) => billOf(b.id, r.id)));
+    const bills = await Promise.all(ids.map((r) => billOfBranch(b.id, r.id)));
     // OP bills are what a visit's bills already show to these roles. Pharmacy sales are only for the pharmacy counter, as everywhere else.
     const seesPharmacy = b.permissions.includes('pharmacy.sell');
     const pharmacy = seesPharmacy
@@ -265,11 +337,12 @@ export function createBillingRoutes(db: Db) {
 
   // ---------------------------------------------------------------- lists
 
-  /** Bills (default: with a balance). ?status=all for every bill of a day (?date=). */
+  /** Bills (default: with a balance). ?status=all for every bill of a day (?date=). ?status=paid: the fully paid bills of a day (default today). */
   app.get('/bills', receive, async (c) => {
     const b = c.get('branch');
     const status = c.req.query('status') ?? 'due';
-    const date = c.req.query('date');
+    const asked = c.req.query('date');
+    const date = status === 'paid' && !(asked && /^\d{4}-\d{2}-\d{2}$/.test(asked)) ? await localToday(db) : asked;
     const paid = db
       .select({ billId: billPayment.billId, paid: sql<number>`sum(${billPayment.amountPaise})`.as('paid') })
       .from(billPayment)
@@ -283,6 +356,7 @@ export function createBillingRoutes(db: Db) {
         opNo: opVisit.opNo,
         patientName: patient.name,
         patientUhid: patient.uhid,
+        patientPhone: patient.phone,
         totalPaise: opBill.totalPaise,
         paidPaise: sql<number>`coalesce(${paid.paid}, 0)`,
         createdAt: opBill.createdAt,
@@ -294,45 +368,32 @@ export function createBillingRoutes(db: Db) {
       .where(
         and(
           eq(opBill.branchId, b.id),
-          status === 'due' ? sql`coalesce(${paid.paid}, 0) < ${opBill.totalPaise}` : undefined,
+          status === 'due' ? sql`coalesce(${paid.paid}, 0) < ${opBill.totalPaise}` : status === 'paid' ? sql`coalesce(${paid.paid}, 0) >= ${opBill.totalPaise}` : undefined,
           date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? sql`date(${opBill.createdAt}, 'localtime') = ${date}` : undefined,
         ),
       )
       .orderBy(desc(opBill.id))
       .limit(200);
     const bills: BillListRow[] = rows.map((r) => ({ ...withToken(r), status: billStatus(r.totalPaise, r.paidPaise) }));
-    return c.json({ bills });
+    return c.json({ bills, date: date ?? null });
   });
 
-  /** Today's visits with something not billed yet (no bill at all, or new lab tests). */
+  /**
+   * Visits with something not billed yet (no bill at all, or new lab tests): today's and earlier days'
+   * (see visitsToCollect for the look-back), so an unbilled night visit does not drop off after midnight.
+   */
   app.get('/billing/to-bill', receive, async (c) => {
     const b = c.get('branch');
     const today = await localToday(db);
-    const visits = await db
-      .select({ visitId: opVisit.id, opNo: opVisit.opNo, status: opVisit.status, patientName: patient.name, patientUhid: patient.uhid, doctorName: doctor.name })
-      .from(opVisit)
-      .innerJoin(patient, eq(patient.id, opVisit.patientId))
-      .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
-      .where(and(eq(opVisit.branchId, b.id), isNull(opVisit.deletedAt), eq(opVisit.visitDate, today), sql`${opVisit.status} <> 'cancelled'`))
-      .orderBy(asc(opVisit.id));
-    const billed = new Set(
-      visits.length
-        ? (await db.selectDistinct({ visitId: opBill.visitId }).from(opBill).where(and(eq(opBill.branchId, b.id), inArray(opBill.visitId, visits.map((v) => v.visitId))))).map((r) => r.visitId)
-        : [],
-    );
-    const result = [];
-    for (const v of visits) {
-      const lab = await unbilledLabOrders(db, b.id, v.visitId);
-      if (!billed.has(v.visitId) || lab.length) result.push({ ...withToken(v), hasBill: billed.has(v.visitId), unbilledLabPaise: lab.reduce((s, o) => s + o.pricePaise, 0), unbilledLabCount: lab.length });
-    }
-    return c.json({ visits: result });
+    const visits = (await visitsToCollect(db, b.id, today))
+      .filter((v) => v.billCount === 0 || v.unbilledLabCount > 0)
+      .map(({ visitId, opNo, token, visitDate, status, patientName, patientUhid, doctorName, billCount, unbilledLabPaise, unbilledLabCount }) => ({ visitId, opNo, token, visitDate, status, patientName, patientUhid, doctorName, hasBill: billCount > 0, unbilledLabPaise, unbilledLabCount }));
+    return c.json({ visits, today });
   });
 
   /** Money received on a day: OP bills + pharmacy, by mode; and paid out to vendors. */
-  app.get('/billing/collection', receive, async (c) => {
-    const b = c.get('branch');
-    const date = c.req.query('date');
-    const day = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : await localToday(db);
+  async function collectionOf(branchId: number, day: string): Promise<Collection> {
+    const b = { id: branchId };
     const onDay = (col: AnyColumn) => sql`date(${col}, 'localtime') = ${day}`;
     const billRows = await db.select({ mode: billPayment.mode, sum: sql<number>`sum(${billPayment.amountPaise})` }).from(billPayment).where(and(eq(billPayment.branchId, b.id), onDay(billPayment.receivedAt))).groupBy(billPayment.mode);
     const phRows = await db.select({ mode: pharmacySale.paymentMode, sum: sql<number>`sum(${pharmacySale.totalPaise})` }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt))).groupBy(pharmacySale.paymentMode);
@@ -341,7 +402,76 @@ export function createBillingRoutes(db: Db) {
     const bills = byMode(billRows);
     const pharmacy = byMode(phRows);
     const total = [...Object.values(bills), ...Object.values(pharmacy)].reduce((s, x) => s + x, 0);
-    const result: Collection = { date: day, bills, pharmacy, totalPaise: total, vendorPaidPaise: vendorOut!.sum };
+    return { date: day, bills, pharmacy, totalPaise: total, vendorPaidPaise: vendorOut!.sum };
+  }
+  const dayOf = async (date: string | undefined) => (date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : await localToday(db));
+
+  app.get('/billing/collection', receive, async (c) => c.json(await collectionOf(c.get('branch').id, await dayOf(c.req.query('date')))));
+
+  /** The day's report (?date=, default today): visits, what was billed, every amount received, what is still due. */
+  app.get('/billing/day-report', receive, async (c) => {
+    const b = c.get('branch');
+    const day = await dayOf(c.req.query('date'));
+    const onDay = (col: AnyColumn) => sql`date(${col}, 'localtime') = ${day}`;
+    const n = sql<number>`count(*)`;
+    const sum = (col: AnyColumn) => sql<number>`coalesce(sum(${col}), 0)`;
+
+    const visitRows = await db
+      .select({ status: opVisit.status, doctorUserId: opVisit.doctorUserId, doctorName: doctor.name, n })
+      .from(opVisit)
+      .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
+      .where(and(eq(opVisit.branchId, b.id), isNull(opVisit.deletedAt), eq(opVisit.visitDate, day)))
+      .groupBy(opVisit.status, opVisit.doctorUserId);
+    const seen = visitRows.filter((r) => r.status !== 'cancelled');
+    // By person, not by name: two doctors with the same name stay two lines.
+    const byDoctor = new Map<number | null, { doctorName: string | null; count: number }>();
+    for (const r of seen) byDoctor.set(r.doctorUserId, { doctorName: r.doctorName, count: (byDoctor.get(r.doctorUserId)?.count ?? 0) + r.n });
+    const count = (rows: { n: number }[]) => rows.reduce((s, r) => s + r.n, 0);
+    const [newPatients] = await db.select({ n }).from(patient).where(and(eq(patient.branchId, b.id), isNull(patient.deletedAt), onDay(patient.createdAt)));
+    const [labTests] = await db.select({ n }).from(labOrder).where(and(eq(labOrder.branchId, b.id), sql`${labOrder.status} <> 'cancelled'`, onDay(labOrder.createdAt)));
+
+    const billsOfDay = and(eq(opBill.branchId, b.id), onDay(opBill.createdAt));
+    const [heads] = await db.select({ consultation: sum(opBill.consultationFeePaise), other: sum(opBill.otherChargesPaise), discount: sum(opBill.discountPaise) }).from(opBill).where(billsOfDay);
+    const [lab] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, sql`${opBillLine.labOrderId} is not null`));
+    const [charges] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, isNull(opBillLine.labOrderId)));
+    const [sold] = await db.select({ sum: sum(pharmacySale.totalPaise) }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt)));
+    const paidOnBill = sql<number>`(select coalesce(sum(${billPayment.amountPaise}), 0) from ${billPayment} where ${billPayment.billId} = ${opBill.id})`;
+    const due = sql<number>`coalesce(sum(max(0, ${opBill.totalPaise} - ${paidOnBill})), 0)`;
+    const [pendingDay] = await db.select({ due }).from(opBill).where(billsOfDay);
+    const [pendingAll] = await db.select({ due }).from(opBill).where(eq(opBill.branchId, b.id));
+
+    const payments = await db
+      .select({ paymentId: billPayment.id, billId: opBill.id, billNo: opBill.billNo, at: billPayment.receivedAt, patientName: patient.name, amountPaise: billPayment.amountPaise, mode: billPayment.mode })
+      .from(billPayment)
+      .innerJoin(opBill, eq(opBill.id, billPayment.billId))
+      .innerJoin(patient, eq(patient.id, opBill.patientId))
+      .where(and(eq(billPayment.branchId, b.id), onDay(billPayment.receivedAt)));
+    const receipts: DayReceipt[] = [];
+    for (const p of payments) {
+      // The receipt no. counts the bill's payments from its first one, whatever day that was.
+      const [nth] = await db.select({ n }).from(billPayment).where(and(eq(billPayment.billId, p.billId), lte(billPayment.id, p.paymentId)));
+      receipts.push({ kind: 'bill', no: receiptNo(p.billNo, nth!.n), billId: p.billId, paymentId: p.paymentId, saleId: null, at: p.at, patientName: p.patientName, amountPaise: p.amountPaise, mode: p.mode });
+    }
+    // Single sales are the pharmacy counter's to see, as everywhere else; the totals above are the day's money.
+    if (b.permissions.includes('pharmacy.sell')) {
+      const sales = await db
+        .select({ saleId: pharmacySale.id, no: pharmacySale.saleNo, at: pharmacySale.createdAt, patientName: patient.name, amountPaise: pharmacySale.totalPaise, mode: pharmacySale.paymentMode })
+        .from(pharmacySale)
+        .leftJoin(patient, eq(patient.id, pharmacySale.patientId))
+        .where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt)));
+      for (const s of sales) receipts.push({ kind: 'pharmacy', billId: null, paymentId: null, ...s });
+    }
+    receipts.sort((x, y) => x.at.localeCompare(y.at));
+
+    const result: DayReport = {
+      ...(await collectionOf(b.id, day)),
+      visits: { total: count(seen), completed: count(seen.filter((r) => r.status === 'completed')), cancelled: count(visitRows) - count(seen), newPatients: newPatients!.n, byDoctor: [...byDoctor.values()] },
+      labTests: labTests!.n,
+      billed: { consultationPaise: heads!.consultation, labPaise: lab!.sum, otherPaise: heads!.other + charges!.sum, discountPaise: heads!.discount, pharmacyPaise: sold!.sum },
+      pendingDayPaise: pendingDay!.due,
+      pendingAllPaise: pendingAll!.due,
+      receipts,
+    };
     return c.json(result);
   });
 

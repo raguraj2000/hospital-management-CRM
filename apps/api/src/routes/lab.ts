@@ -13,6 +13,7 @@ import {
   type LabQueueEntry,
   type LabReport,
   type LabReportTest,
+  type LabTestDetail,
   type PatientLabOrder,
 } from '@platform/shared';
 import { AppError, notFound, printHeaderOf, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
@@ -34,6 +35,15 @@ const orderColumns = {
   completedAt: labOrder.completedAt,
 };
 
+/**
+ * A result line added by hand. With a range that has a number in it ("12 - 15", "< 200") the result is a number
+ * and is flagged high / low; otherwise it is free text, with no quick picks.
+ */
+const newLine = (p: { name: string; method: string; unit: string; refRange: string }) => {
+  const number = /\d/.test(p.refRange);
+  return { name: p.name, method: p.method, unit: p.unit, refRange: p.refRange, valueType: number ? ('number' as const) : ('text' as const), options: number ? null : '[]' };
+};
+
 export function createLabRoutes(db: Db) {
   const app = new Hono<BranchEnv>();
 
@@ -46,7 +56,7 @@ export function createLabRoutes(db: Db) {
 
   async function labReportOf(branchId: number, visitId: number): Promise<LabReport> {
     const [v] = await db
-      .select({ id: opVisit.id, opNo: opVisit.opNo, visitDate: opVisit.visitDate, doctorName: doctor.name, patientId: opVisit.patientId })
+      .select({ id: opVisit.id, opNo: opVisit.opNo, visitDate: opVisit.visitDate, doctorName: doctor.name, labNote: opVisit.labNote, patientId: opVisit.patientId })
       .from(opVisit)
       .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
       .where(eq(opVisit.id, visitId));
@@ -98,7 +108,7 @@ export function createLabRoutes(db: Db) {
     }));
     // The patient bill(s) these lab tests are on (not the pharmacy sale); usually one.
     const bills = await db
-      .selectDistinct({ id: opBill.id, billNo: opBill.billNo })
+      .selectDistinct({ id: opBill.id, billNo: opBill.billNo, createdAt: opBill.createdAt })
       .from(opBillLine)
       .innerJoin(labOrder, eq(labOrder.id, opBillLine.labOrderId))
       .innerJoin(opBill, eq(opBill.id, opBillLine.billId))
@@ -106,11 +116,12 @@ export function createLabRoutes(db: Db) {
       .orderBy(asc(opBill.id));
     const dobAge = p!.dob ? Math.floor((Date.now() - new Date(p!.dob).getTime()) / 31_557_600_000) : null;
     return {
-      visit: { id: v!.id, opNo: v!.opNo, visitDate: v!.visitDate, doctorName: v!.doctorName },
+      visit: { id: v!.id, opNo: v!.opNo, visitDate: v!.visitDate, doctorName: v!.doctorName, labNote: v!.labNote },
       patient: { id: p!.id, name: p!.name, uhid: p!.uhid, gender: p!.gender, age: dobAge ?? p!.ageYears, phone: p!.phone },
       tests,
       header: await printHeaderOf(db, branchId),
       billNo: bills.length ? bills.map((b) => b.billNo).join(', ') : null,
+      billedAt: bills[0]?.createdAt ?? null,
     };
   }
 
@@ -143,10 +154,12 @@ export function createLabRoutes(db: Db) {
     if (!parsed.success) throw validationError(parsed.error);
     const b = c.get('branch');
     const u = c.get('user');
+    const { parameters, ...test } = parsed.data;
     const row = await db.transaction(async (tx) => {
-      const [t] = await tx.insert(labTest).values({ ...parsed.data, branchId: b.id, sortOrder: 1000 }).returning({ id: labTest.id });
-      // A hand-added test gets one result line with its own name (a free-text result).
-      await tx.insert(labTestParameter).values({ branchId: b.id, testId: t.id, name: parsed.data.name, valueType: 'text' });
+      const [t] = await tx.insert(labTest).values({ ...test, branchId: b.id, sortOrder: 1000 }).returning({ id: labTest.id });
+      // Its own result lines (a group test: CBC with Haemoglobin, Basophils, ...); without any, one line with the test's name (a free-text result).
+      if (parameters) await tx.insert(labTestParameter).values(parameters.map((p, i) => ({ ...newLine(p), branchId: b.id, testId: t.id, sortOrder: i })));
+      else await tx.insert(labTestParameter).values({ branchId: b.id, testId: t.id, name: parsed.data.name, valueType: 'text' });
       await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'lab_test', entityId: t.id, detail: parsed.data });
       return t;
     });
@@ -195,9 +208,40 @@ export function createLabRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const t = await testOfBranch(b.id, Number(c.req.param('id')));
-    await db.update(labTest).set({ ...parsed.data, updatedAt: new Date().toISOString() }).where(eq(labTest.id, t.id));
-    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'lab_test', entityId: t.id, detail: parsed.data });
+    const { parameters, ...test } = parsed.data;
+    const now = new Date().toISOString();
+    await db.transaction(async (tx) => {
+      await tx.update(labTest).set({ ...test, updatedAt: now }).where(eq(labTest.id, t.id));
+      if (parameters) {
+        const have = (await tx.select({ id: labTestParameter.id }).from(labTestParameter).where(and(eq(labTestParameter.branchId, b.id), eq(labTestParameter.testId, t.id), isNull(labTestParameter.deletedAt)))).map((r) => r.id);
+        if (parameters.some((p) => p.id != null && !have.includes(p.id))) throw new AppError(400, 'validation', 'A result line belongs to a different test. Refresh and try again.');
+        // Lines left out are removed (kept in the database: results already entered for them stay on record).
+        const gone = have.filter((id) => !parameters.some((p) => p.id === id));
+        if (gone.length) await tx.update(labTestParameter).set({ deletedAt: now }).where(inArray(labTestParameter.id, gone));
+        for (const [i, p] of parameters.entries()) {
+          const { id, ...line } = p;
+          // An existing line keeps how its result is typed (number / text, quick picks); only what is on the form changes.
+          if (id != null) await tx.update(labTestParameter).set({ ...line, sortOrder: i }).where(eq(labTestParameter.id, id));
+          else await tx.insert(labTestParameter).values({ ...newLine(p), branchId: b.id, testId: t.id, sortOrder: i });
+        }
+      }
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'lab_test', entityId: t.id, detail: parsed.data });
+    });
     return c.json({ ok: true });
+  });
+
+  /** One test with its result lines, for the edit form. */
+  app.get('/lab/tests/:id', requirePermission('settings.manage'), async (c) => {
+    const b = c.get('branch');
+    const t = await testOfBranch(b.id, Number(c.req.param('id')));
+    const [row] = await db.select({ id: labTest.id, name: labTest.name, pricePaise: labTest.pricePaise, department: labTest.department, kind: labTest.kind }).from(labTest).where(eq(labTest.id, t.id));
+    const parameters = await db
+      .select({ id: labTestParameter.id, name: labTestParameter.name, method: labTestParameter.method, unit: labTestParameter.unit, refRange: labTestParameter.refRange })
+      .from(labTestParameter)
+      .where(and(eq(labTestParameter.branchId, b.id), eq(labTestParameter.testId, t.id), isNull(labTestParameter.deletedAt)))
+      .orderBy(asc(labTestParameter.sortOrder), asc(labTestParameter.id));
+    const test: LabTestDetail = { ...row!, parameters };
+    return c.json({ test });
   });
 
   app.delete('/lab/tests/:id', requirePermission('settings.manage'), async (c) => {
@@ -272,14 +316,17 @@ export function createLabRoutes(db: Db) {
     const status = c.req.query('status');
     const statuses = (LAB_ORDER_STATUSES as readonly string[]).includes(status ?? '') ? [status as LabOrder['status']] : (['ordered', 'sample_collected'] as const);
     const orders: LabQueueEntry[] = await db
-      .select({ ...orderColumns, opNo: opVisit.opNo, patientId: patient.id, patientName: patient.name, patientUhid: patient.uhid, doctorName: doctor.name })
+      .select({ ...orderColumns, opNo: opVisit.opNo, patientId: patient.id, patientName: patient.name, patientUhid: patient.uhid, doctorName: doctor.name, labNote: opVisit.labNote })
       .from(labOrder)
       .innerJoin(labTest, eq(labTest.id, labOrder.testId))
       .innerJoin(opVisit, eq(opVisit.id, labOrder.visitId))
       .innerJoin(patient, eq(patient.id, labOrder.patientId))
       .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
-      .where(and(eq(labOrder.branchId, b.id), inArray(labOrder.status, [...statuses])))
-      .orderBy(asc(labOrder.id));
+      // A deleted visit's tests are gone with it; a cancelled visit has nothing waiting at the lab.
+      .where(and(eq(labOrder.branchId, b.id), inArray(labOrder.status, [...statuses]), isNull(opVisit.deletedAt), status === 'completed' ? undefined : sql`${opVisit.status} <> 'cancelled'`))
+      // The queue in the order the tests came in; finished ones newest first, and only the latest (the rest are on the patient's page).
+      .orderBy(status === 'completed' ? desc(labOrder.id) : asc(labOrder.id))
+      .limit(status === 'completed' ? 300 : 1000);
     return c.json({ orders });
   });
 
@@ -305,6 +352,9 @@ export function createLabRoutes(db: Db) {
     const [o] = await db.select({ id: labOrder.id, testId: labOrder.testId, status: labOrder.status }).from(labOrder).where(and(eq(labOrder.branchId, b.id), eq(labOrder.id, id)));
     if (!o) throw notFound('Lab order not found');
     if (o.status === 'cancelled') throw new AppError(409, 'bad_state', 'This test was cancelled');
+    const amending = o.status === 'completed';
+    // A final report stays whole: a value can be corrected, not emptied.
+    if (amending && parsed.data.results.some((r) => r.value === '')) throw new AppError(400, 'validation', 'This test is completed. A value can be corrected, but not left empty.');
     const params = await db
       .select({ id: labTestParameter.id, refRange: labTestParameter.refRange, noFlag: labTestParameter.noFlag })
       .from(labTestParameter)
@@ -325,7 +375,10 @@ export function createLabRoutes(db: Db) {
           .values({ branchId: b.id, orderId: id, parameterId: r.parameterId, value: r.value, flag, enteredBy: u.id })
           .onConflictDoUpdate({ target: [labResult.orderId, labResult.parameterId], set: { value: r.value, flag, enteredBy: u.id, updatedAt: now } });
       }
-      if (parsed.data.complete) {
+      if (amending) {
+        // A correction after the report was final: when and by whom it was completed stays as it was.
+        await tx.update(labOrder).set({ updatedAt: now }).where(eq(labOrder.id, id));
+      } else if (parsed.data.complete) {
         await tx
           .update(labOrder)
           .set({ status: 'completed', completedAt: now, completedBy: u.id, sampleCollectedAt: sql`coalesce(${labOrder.sampleCollectedAt}, ${now})`, updatedAt: now })
@@ -333,12 +386,12 @@ export function createLabRoutes(db: Db) {
       } else if (o.status === 'ordered') {
         await tx.update(labOrder).set({ status: 'sample_collected', sampleCollectedAt: now, updatedAt: now }).where(eq(labOrder.id, id));
       }
-      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: parsed.data.complete ? 'complete' : 'results', entity: 'lab_order', entityId: id });
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: amending ? 'amend' : parsed.data.complete ? 'complete' : 'results', entity: 'lab_order', entityId: id, detail: amending ? { results: parsed.data.results } : undefined });
     });
     return c.json({ ok: true });
   });
 
-  /** Sample collected, or cancel an order that hasn't been collected yet. */
+  /** Sample collected, or cancel an order that has no results yet. */
   app.patch('/lab/orders/:id', requireAnyPermission('lab.view', 'lab.order'), async (c) => {
     const b = c.get('branch');
     const u = c.get('user');
@@ -351,7 +404,10 @@ export function createLabRoutes(db: Db) {
       if (o.status !== 'ordered') throw new AppError(409, 'bad_state', 'Only a new order can be marked as collected');
       await db.update(labOrder).set({ status: 'sample_collected', sampleCollectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).where(eq(labOrder.id, id));
     } else if (body.status === 'cancelled') {
-      if (o.status !== 'ordered') throw new AppError(409, 'bad_state', 'The sample is already collected; it can no longer be cancelled');
+      // The patient may change their mind even after the sample is taken; once results exist the test stays on record.
+      if (o.status === 'cancelled') throw new AppError(409, 'bad_state', 'This test is already cancelled');
+      const [entered] = await db.select({ id: labResult.id }).from(labResult).where(eq(labResult.orderId, id)).limit(1);
+      if (o.status === 'completed' || entered) throw new AppError(409, 'bad_state', 'Results are already entered for this test; it can no longer be cancelled');
       await db.transaction(async (tx) => {
         await onLabOrderCancel(tx, id); // off its bill (refused if that bill has payments)
         await tx.update(labOrder).set({ status: 'cancelled', updatedAt: new Date().toISOString() }).where(eq(labOrder.id, id));

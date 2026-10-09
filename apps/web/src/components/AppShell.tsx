@@ -1,16 +1,17 @@
 import { useState, type FormEvent } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router';
-import { Check, ChevronRight, ChevronsUpDown, KeyRound, LogOut, Monitor, Moon, MoreHorizontal, Search, Sun } from 'lucide-react';
+import { Check, ChevronRight, ChevronsUpDown, Keyboard, KeyRound, LogOut, Moon, MoreHorizontal, Search, Sun, SunMoon } from 'lucide-react';
 import { Avatar, cn, ErrorBoundary, Menu, MenuCheckItem, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '@platform/ui';
 import { NAV, NAV_GROUPS, type NavItem } from '@/nav';
 import { useLogout, useMe } from '@/state/auth';
 import { useTheme, type Theme } from '@/state/theme';
 import { ChangePasswordDialog } from './ChangePassword';
+import { Shortcuts } from './Shortcuts';
 
 const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
+  { value: 'auto', label: 'Auto (day light, night dark)', icon: SunMoon },
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
-  { value: 'system', label: 'System', icon: Monitor },
 ];
 
 export function AppShell() {
@@ -23,6 +24,7 @@ export function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
+  const [shortcutHelp, setShortcutHelp] = useState(false);
 
   if (!me) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (me.user.isPlatformAdmin) return <Navigate to="/platform" replace />;
@@ -104,6 +106,9 @@ export function AppShell() {
         </MenuCheckItem>
       ))}
       <MenuSeparator />
+      <MenuItem onSelect={() => setShortcutHelp(true)}>
+        <Keyboard /> Keyboard shortcuts
+      </MenuItem>
       <MenuItem onSelect={() => setChangingPassword(true)}>
         <KeyRound /> Change password
       </MenuItem>
@@ -129,6 +134,8 @@ export function AppShell() {
       <n.icon className="size-4" />
       <span className="flex-1">{n.label}</span>
       {n.soon && <span className="rounded border border-border px-1 text-[10px] text-muted">Soon</span>}
+      {/* Alt + this number opens the page. */}
+      {items.indexOf(n) < 9 && <span className="hidden text-[10px] text-muted/70 tabular-nums md:inline" title={`Alt + ${items.indexOf(n) + 1}`}>{items.indexOf(n) + 1}</span>}
     </NavLink>
   );
 
@@ -145,7 +152,9 @@ export function AppShell() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search patients…"
+            placeholder="Search patients…  ( / )"
+            aria-label="Search patients"
+            data-shortcut="/"
             className="h-9 w-full rounded-lg border border-border bg-background pr-3 pl-8 text-sm outline-none placeholder:text-muted/70 focus-visible:border-ring"
           />
         </form>
@@ -242,6 +251,7 @@ export function AppShell() {
       </nav>
 
       <ChangePasswordDialog open={changingPassword} onOpenChange={setChangingPassword} />
+      <Shortcuts pages={items.map((n) => to(n.path))} newPatientPath={current.permissions.includes('patient.create') ? `${to('patients')}?add=1` : undefined} help={shortcutHelp} onHelp={setShortcutHelp} />
 
       {moreOpen && (
         <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={() => setMoreOpen(false)}>

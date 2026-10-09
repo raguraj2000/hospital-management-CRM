@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import {
   cancelSchema,
   purchaseBillSchema,
+  purchaseLineTotals,
   vendorInputSchema,
   vendorPaymentSchema,
   type PurchaseBillDetail,
@@ -12,7 +13,7 @@ import {
 } from '@platform/shared';
 import { AppError, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { medicine, medicineBatch, purchaseBill, purchaseLine, user, vendor, vendorPayment } from '../db/schema.js';
-import { localToday } from '../lib/clinic.js';
+import { exclusively, localToday } from '../lib/clinic.js';
 
 const addDays = (iso: string, days: number) => {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -87,6 +88,13 @@ export function createVendorRoutes(db: Db) {
         quantity: purchaseLine.quantity,
         unitCostPaise: purchaseLine.unitCostPaise,
         amountPaise: purchaseLine.amountPaise,
+        packSize: purchaseLine.packSize,
+        // Lines from before the invoice columns existed: one unit per pack, the unit cost as the rate.
+        packQty: sql<number>`coalesce(${purchaseLine.packQty}, ${purchaseLine.quantity})`,
+        freeQty: purchaseLine.freeQty,
+        ratePaise: sql<number>`coalesce(${purchaseLine.ratePaise}, ${purchaseLine.unitCostPaise})`,
+        mrpPaise: purchaseLine.mrpPaise,
+        gstPercent: purchaseLine.gstPercent,
         soldQty: sql<number>`${medicineBatch.receivedQty} - ${medicineBatch.quantity}`,
       })
       .from(purchaseLine)
@@ -187,18 +195,35 @@ export function createVendorRoutes(db: Db) {
     const expired = input.lines.findIndex((l) => l.expiryDate < today);
     if (expired >= 0) throw new AppError(400, 'validation', `Line ${expired + 1} has already expired`, { [`lines.${expired}.expiryDate`]: ['Already expired'] });
 
-    const totalPaise = input.lines.reduce((s, l) => s + l.quantity * l.unitCostPaise, 0);
+    const totalPaise = input.lines.reduce((s, l) => s + purchaseLineTotals(l).amountPaise, 0);
     const id = await db.transaction(async (tx) => {
       const [bill] = await tx
         .insert(purchaseBill)
         .values({ branchId: b.id, vendorId: v.id, vendorBillNo: input.vendorBillNo, billDate: input.billDate, dueDate: addDays(input.billDate, v.creditDays), totalPaise, notes: input.notes, createdBy: u.id })
         .returning({ id: purchaseBill.id });
       for (const l of input.lines) {
+        const t = purchaseLineTotals(l);
         const [batch] = await tx
           .insert(medicineBatch)
-          .values({ branchId: b.id, medicineId: l.medicineId, batchNo: l.batchNo, expiryDate: l.expiryDate, quantity: l.quantity, receivedQty: l.quantity, createdBy: u.id })
+          .values({ branchId: b.id, medicineId: l.medicineId, batchNo: l.batchNo, expiryDate: l.expiryDate, quantity: t.units, receivedQty: t.units, createdBy: u.id })
           .returning({ id: medicineBatch.id });
-        await tx.insert(purchaseLine).values({ branchId: b.id, billId: bill.id, medicineId: l.medicineId, batchId: batch.id, quantity: l.quantity, unitCostPaise: l.unitCostPaise, amountPaise: l.quantity * l.unitCostPaise });
+        await tx.insert(purchaseLine).values({
+          branchId: b.id,
+          billId: bill.id,
+          medicineId: l.medicineId,
+          batchId: batch.id,
+          quantity: t.units,
+          unitCostPaise: t.unitCostPaise,
+          amountPaise: t.amountPaise,
+          packSize: l.packSize,
+          packQty: l.quantity,
+          freeQty: l.freeQty,
+          ratePaise: l.unitCostPaise,
+          mrpPaise: l.mrpPaise ?? null,
+          gstPercent: l.gstPercent,
+        });
+        // The selling price follows the invoice only where the pharmacist asked for it on this line.
+        if (l.sellingPricePaise != null) await tx.update(medicine).set({ pricePaise: l.sellingPricePaise, updatedAt: new Date().toISOString() }).where(eq(medicine.id, l.medicineId));
       }
       await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'purchase_bill', entityId: bill.id, detail: { vendorId: v.id, vendorBillNo: input.vendorBillNo, totalPaise, lines: input.lines.length } });
       return bill.id;
@@ -213,12 +238,16 @@ export function createVendorRoutes(db: Db) {
     const u = c.get('user');
     const bill = await billDetail(b.id, Number(c.req.param('id')));
     if (bill.status === 'cancelled') throw new AppError(409, 'cancelled', 'This bill was cancelled');
-    const balance = bill.totalPaise - bill.paidPaise;
-    if (parsed.data.amountPaise > balance) {
-      throw new AppError(400, 'validation', `Only ₹${(balance / 100).toFixed(2)} is due on this bill`, { amountPaise: [`Only ₹${(balance / 100).toFixed(2)} is due`] });
-    }
-    await db.insert(vendorPayment).values({ ...parsed.data, branchId: b.id, billId: bill.id, paidBy: u.id });
-    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'pay', entity: 'purchase_bill', entityId: bill.id, detail: parsed.data });
+    // What is paid is read again inside the transaction: two payments at the same moment can't pay more than is due.
+    await exclusively(db, async (tx) => {
+        const [{ paid }] = await tx.select({ paid: sql<number>`coalesce(sum(${vendorPayment.amountPaise}), 0)` }).from(vendorPayment).where(eq(vendorPayment.billId, bill.id));
+        const balance = bill.totalPaise - paid;
+        if (parsed.data.amountPaise > balance) {
+          throw new AppError(400, 'validation', `Only ₹${(balance / 100).toFixed(2)} is due on this bill`, { amountPaise: [`Only ₹${(balance / 100).toFixed(2)} is due`] });
+        }
+        await tx.insert(vendorPayment).values({ ...parsed.data, branchId: b.id, billId: bill.id, paidBy: u.id });
+        await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'pay', entity: 'purchase_bill', entityId: bill.id, detail: parsed.data });
+    });
     return c.json({ bill: await billDetail(b.id, bill.id) }, 201);
   });
 

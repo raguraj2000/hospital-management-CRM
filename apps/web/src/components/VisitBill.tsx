@@ -5,9 +5,8 @@ import { formatRupees, type OpBill } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
+import { billLabel, billTone } from '@/components/format';
 
-const tone = { unpaid: 'warning', part_paid: 'brand', paid: 'positive' } as const;
-const label = { unpaid: 'Unpaid', part_paid: 'Part paid', paid: 'Paid' } as const;
 
 /** Bill box on the consultation screen: create the bill, see its status. */
 export function VisitBill({ branch, visitId }: { branch: string; visitId: number }) {
@@ -35,7 +34,7 @@ export function VisitBill({ branch, visitId }: { branch: string; visitId: number
 
   return (
     <Card>
-      <CardHeader title="Bill" description="Consultation + lab tests. Medicines are paid at the pharmacy." icon={ReceiptText} iconTone="positive" />
+      <CardHeader title="Bill" description="Consultation + lab tests. Medicines are paid at the pharmacy." icon={ReceiptText} iconTone="positive" action={bills.length > 0 && <Link to={`/${branch}/visits/${visitId}/bill/print`} className="text-sm font-medium text-brand hover:underline">Print bill</Link>} />
       {isLoading ? (
         <Skeleton className="m-4 h-12" />
       ) : (
@@ -45,8 +44,8 @@ export function VisitBill({ branch, visitId }: { branch: string; visitId: number
               <span className="font-mono text-xs font-medium">{b.billNo}</span>
               <span className="flex items-center gap-2">
                 <span className="tabular-nums">{formatRupees(b.totalPaise)}</span>
-                <Badge tone={tone[b.status]} dot>
-                  {label[b.status]}
+                <Badge tone={billTone[b.status]} dot>
+                  {billLabel[b.status]}
                 </Badge>
                 <ChevronRight className="size-5 text-muted" />
               </span>

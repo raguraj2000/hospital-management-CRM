@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { patientInputSchema, type Patient } from '@platform/shared';
 import { AppError, idPrefixFor, notFound, nextOrgNumber, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { organization, patient } from '../db/schema.js';
+import { opBill, organization, patient, pharmacySale } from '../db/schema.js';
 
 const columns = {
   id: patient.id,
@@ -16,6 +16,7 @@ const columns = {
   bloodGroup: patient.bloodGroup,
   weightKg: patient.weightKg,
   address: patient.address,
+  conditions: patient.conditions,
   emergencyContactName: patient.emergencyContactName,
   emergencyContactPhone: patient.emergencyContactPhone,
   createdAt: patient.createdAt,
@@ -41,8 +42,11 @@ export function createPatientRoutes(db: Db) {
     const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 200);
     const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
     // instr() instead of LIKE so typed % or _ are just characters.
+    // The phone is searched only when a phone number was typed ("98765 43210", "+91 98765"): a digit in a name
+    // or a UHID ("kumar 2") must not match every phone that has that digit.
+    const digits = /^[\d\s+()-]+$/.test(q) ? q.replace(/\D/g, '') : '';
     const match = q
-      ? sql`(instr(lower(${patient.name}), ${q}) > 0 OR instr(lower(${patient.uhid}), ${q}) > 0 OR instr(coalesce(${patient.phone}, ''), ${q.replace(/\D/g, '') || q}) > 0)`
+      ? sql`(instr(lower(${patient.name}), ${q}) > 0 OR instr(lower(${patient.uhid}), ${q}) > 0${digits ? sql` OR instr(coalesce(${patient.phone}, ''), ${digits}) > 0` : sql``})`
       : undefined;
     const gender = c.req.query('gender');
     const genderMatch = gender === 'female' || gender === 'male' || gender === 'other' ? eq(patient.gender, gender) : undefined;
@@ -101,6 +105,10 @@ export function createPatientRoutes(db: Db) {
     const u = c.get('user');
     const id = Number(c.req.param('id'));
     await findOne(b.id, id);
+    // Their bills and sales would stay in Billing and the day report, pointing at a patient who is gone.
+    const [bill] = await db.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, b.id), eq(opBill.patientId, id))).limit(1);
+    const [sale] = await db.select({ id: pharmacySale.id }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), eq(pharmacySale.patientId, id))).limit(1);
+    if (bill || sale) throw new AppError(409, 'has_bills', 'This patient has bills, so the record cannot be deleted.');
     await db.update(patient).set({ deletedAt: new Date().toISOString() }).where(and(inBranch(b.id), eq(patient.id, id)));
     await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'delete', entity: 'patient', entityId: id });
     return c.json({ ok: true });

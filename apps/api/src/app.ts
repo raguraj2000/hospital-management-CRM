@@ -19,12 +19,15 @@ import {
 import type { Permission } from '@platform/shared';
 import { billPayment, labOrder, medicine, medicineBatch, opVisit, patient, pharmacySale } from './db/schema.js';
 import { createPatientRoutes } from './routes/patients.js';
+import { createTreatmentRoutes } from './routes/treatments.js';
 import { createVisitRoutes } from './routes/visits.js';
 import { createDoctorRoutes } from './routes/doctors.js';
 import { createPharmacyRoutes, medicinesWithStock } from './routes/pharmacy.js';
 import { createLabRoutes } from './routes/lab.js';
 import { createVendorRoutes } from './routes/vendors.js';
 import { createBillingRoutes } from './routes/billing.js';
+import { createCheckoutRoutes } from './routes/checkout.js';
+import { createBackupRoutes } from './routes/backup.js';
 import { createPlatformRoutes } from './routes/platform.js';
 
 /** Dashboard: a batch is "near expiry" when it expires within this many days. */
@@ -117,7 +120,8 @@ export function createApp(db: Db) {
       const [r] = await db
         .select({ n: sql<number>`count(*)` })
         .from(labOrder)
-        .where(and(eq(labOrder.branchId, branchId), inArray(labOrder.status, ['ordered', 'sample_collected'])));
+        .innerJoin(opVisit, eq(opVisit.id, labOrder.visitId))
+        .where(and(eq(labOrder.branchId, branchId), inArray(labOrder.status, ['ordered', 'sample_collected']), isNull(opVisit.deletedAt), sql`${opVisit.status} <> 'cancelled'`));
       labPending = r!.n;
     }
 
@@ -156,7 +160,8 @@ export function createApp(db: Db) {
     return c.json({
       patients: total,
       newPatientsToday: byDay.get(today) ?? 0,
-      opVisitsToday: (opToday.waiting ?? 0) + (opToday.completed ?? 0),
+      // Everyone who came today, wherever they are now (with the doctor, at the lab, at the counter...): all but cancelled.
+      opVisitsToday: Object.entries(opToday).reduce((sum, [status, count]) => (status === 'cancelled' ? sum : sum + count), 0),
       opWaiting: opToday.waiting ?? 0,
       last14Days,
       recent,
@@ -173,6 +178,9 @@ export function createApp(db: Db) {
   b.route('/', createLabRoutes(db));
   b.route('/', createVendorRoutes(db));
   b.route('/', createBillingRoutes(db));
+  b.route('/', createCheckoutRoutes(db));
+  b.route('/', createTreatmentRoutes(db));
+  b.route('/', createBackupRoutes(db));
   b.route('/patients', createPatientRoutes(db));
 
   api.route('/b/:branch', b);

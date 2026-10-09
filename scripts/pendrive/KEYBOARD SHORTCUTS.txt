@@ -1,0 +1,52 @@
+HMS - KEYBOARD SHORTCUTS
+========================
+
+Press  ?  on any screen to see this list inside the app.
+The key is also written on the button or inside the search box.
+
+
+EVERYWHERE
+  /               Search patients
+  Alt + 1 ... 9   Open a page of the side menu
+                  (the number is shown next to each page)
+  Alt + N         Register a new patient
+  Esc             Close a window
+  ?               Show the shortcut list
+
+
+OP VISITS
+  Alt + V         Search a patient to start an OP visit
+  Alt + C         Call the next patient in
+
+
+A VISIT (DOCTOR)
+  Alt + C         Start the consultation
+  Alt + M         Add a medicine
+  Alt + L         Send to lab
+  Alt + S         Send to pharmacy & billing
+
+
+PHARMACY - DIRECT SALE
+  Alt + M         Search a medicine to add
+  Alt + R         Add what the patient bought last time
+  Alt + S         Sell
+
+
+LAB RESULTS
+  Alt + S         Save & complete
+
+
+BILLING AND PHARMACY CHECKOUT
+  Enter           In the amount box: collect the payment
+
+
+IN ANY SEARCH LIST
+  Up / Down       Move in the list
+  Enter           Pick
+  Esc             Close the list
+
+
+NOTES
+  - "/" and "?" work only while you are not typing in a box.
+  - Alt keys work even while you are typing.
+  - Use Google Chrome or Microsoft Edge.

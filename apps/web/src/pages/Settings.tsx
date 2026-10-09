@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
-import { Building2, CircleUserRound, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users } from 'lucide-react';
+import { Building2, CircleUserRound, DatabaseBackup, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users } from 'lucide-react';
 import {
   ADMIN_ONLY_PERMISSIONS,
   ADMIN_ROLE_KEY,
@@ -59,6 +59,7 @@ import { ME_KEY, useBranch, useCan, useMe } from '@/state/auth';
 import { PrintHeaderForm } from '@/components/PrintHeaderForm';
 import { BillingSettings } from '@/components/BillingSettings';
 import { DoctorSettings } from '@/components/DoctorSettings';
+import { BackupRestore } from '@/components/BackupRestore';
 
 export function Settings() {
   const { data: me } = useMe();
@@ -88,6 +89,11 @@ export function Settings() {
                 <SlidersHorizontal className="size-4" /> Branch settings
               </TabsTrigger>
             )}
+            {canHeader && (
+              <TabsTrigger value="backup">
+                <DatabaseBackup className="size-4" /> Backup
+              </TabsTrigger>
+            )}
             {isOwner && (
               <TabsTrigger value="branches">
                 <Building2 className="size-4" /> Branches
@@ -114,6 +120,11 @@ export function Settings() {
               <BillingSettings branch={current.slug} />
               <DoctorSettings branch={current.slug} branchName={current.name} />
               <PrintHeaderForm branch={current.slug} branchName={current.name} />
+            </TabsContent>
+          )}
+          {canHeader && current && (
+            <TabsContent value="backup">
+              <BackupRestore branch={current.slug} />
             </TabsContent>
           )}
           {isOwner && (
@@ -367,13 +378,13 @@ function AddStaffForm({ roles, onSubmit, onCancel }: { roles: RoleInfo[]; onSubm
   } = useForm<NewStaffInput>({ resolver: zodResolver(newStaffSchema) });
   return (
     <form noValidate className="grid gap-4 sm:grid-cols-2" onSubmit={handleSubmit((v) => onSubmit(v).catch((e) => applyServerError(e, setError as never)))}>
-      <Field label="Full name" htmlFor="staff-name" error={errors.name?.message} className="sm:col-span-2">
+      <Field required label="Full name" htmlFor="staff-name" error={errors.name?.message} className="sm:col-span-2">
         <Input id="staff-name" autoFocus placeholder="e.g. Dr. Priya Sharma" {...register('name')} />
       </Field>
-      <Field label="Mobile number" htmlFor="staff-mobile" error={errors.mobile?.message} hint="Their own number — used to sign in">
+      <Field required label="Mobile number" htmlFor="staff-mobile" error={errors.mobile?.message} hint="Their own number — used to sign in">
         <Input id="staff-mobile" type="tel" inputMode="tel" placeholder="98765 43210" {...register('mobile')} />
       </Field>
-      <Field label="Role" htmlFor="staff-role" error={errors.roleId?.message}>
+      <Field required label="Role" htmlFor="staff-role" error={errors.roleId?.message}>
         <NativeSelect id="staff-role" defaultValue="" {...register('roleId', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}>
           <option value="" disabled>
             Choose a role
@@ -385,7 +396,7 @@ function AddStaffForm({ roles, onSubmit, onCancel }: { roles: RoleInfo[]; onSubm
           ))}
         </NativeSelect>
       </Field>
-      <Field label="Temporary password" htmlFor="staff-password" error={errors.password?.message} hint="At least 8 characters. They can change it after signing in." className="sm:col-span-2">
+      <Field required label="Temporary password" htmlFor="staff-password" error={errors.password?.message} hint="At least 8 characters. They can change it after signing in." className="sm:col-span-2">
         <Input id="staff-password" type="text" autoComplete="off" {...register('password')} />
       </Field>
       {errors.root && <p className="text-sm text-critical sm:col-span-2">{errors.root.message}</p>}
@@ -411,7 +422,7 @@ function ChangeRoleForm({ member, roles, onSubmit, onCancel }: { member: StaffMe
         setPending(false);
       }}
     >
-      <Field label="Role" htmlFor="change-role">
+      <Field required label="Role" htmlFor="change-role">
         <NativeSelect id="change-role" value={roleId} onChange={(e) => setRoleId(Number(e.target.value))}>
           {roles.map((r) => (
             <option key={r.id} value={r.id}>
@@ -435,7 +446,7 @@ function ResetPasswordForm({ onSubmit, onCancel }: { onSubmit: (password: string
   } = useForm<{ password: string }>({ resolver: zodResolver(resetPasswordSchema) });
   return (
     <form noValidate className="flex flex-col gap-4" onSubmit={handleSubmit((v) => onSubmit(v.password).catch((e) => applyServerError(e, setError as never)))}>
-      <Field label="New password" htmlFor="reset-password" error={errors.password?.message} hint="At least 8 characters. Tell them in person.">
+      <Field required label="New password" htmlFor="reset-password" error={errors.password?.message} hint="At least 8 characters. Tell them in person.">
         <Input id="reset-password" type="text" autoComplete="off" autoFocus {...register('password')} />
       </Field>
       {errors.root && <p className="text-sm text-critical">{errors.root.message}</p>}
@@ -562,7 +573,7 @@ function BranchForm({ initial, onSubmit, onCancel }: { initial?: BranchInfo; onS
   });
   return (
     <form noValidate className="grid gap-4 sm:grid-cols-2" onSubmit={handleSubmit((v) => onSubmit(v).catch((e) => applyServerError(e, setError as never)))}>
-      <Field label="Branch name" htmlFor="branch-name" error={errors.name?.message}>
+      <Field required label="Branch name" htmlFor="branch-name" error={errors.name?.message}>
         <Input
           id="branch-name"
           autoFocus
@@ -574,7 +585,7 @@ function BranchForm({ initial, onSubmit, onCancel }: { initial?: BranchInfo; onS
           })}
         />
       </Field>
-      <Field label="Web address" htmlFor="branch-slug" error={errors.slug?.message} hint={initial ? "Can't be changed later" : 'Short name used in links'}>
+      <Field required label="Web address" htmlFor="branch-slug" error={errors.slug?.message} hint={initial ? "Can't be changed later" : 'Short name used in links'}>
         <Input id="branch-slug" disabled={!!initial} className="font-mono" {...register('slug')} />
       </Field>
       <Field label="Address" htmlFor="branch-address" error={errors.address?.message} className="sm:col-span-2">
@@ -734,13 +745,13 @@ function OwnerTab({ me }: { me: MeResponse }) {
     <Card>
       <CardHeader title="Owner details" description="Your own name and sign-in number, and the name of your organization." />
       <form noValidate className="grid gap-4 p-4 sm:grid-cols-2" onSubmit={handleSubmit((v) => save(v).catch((e) => applyServerError(e, setError as never)))}>
-        <Field label="Organization name" htmlFor="owner-org" error={errors.organizationName?.message} className="sm:col-span-2">
+        <Field required label="Organization name" htmlFor="owner-org" error={errors.organizationName?.message} className="sm:col-span-2">
           <Input id="owner-org" {...register('organizationName')} />
         </Field>
-        <Field label="Your name" htmlFor="owner-name" error={errors.name?.message}>
+        <Field required label="Your name" htmlFor="owner-name" error={errors.name?.message}>
           <Input id="owner-name" autoComplete="name" {...register('name')} />
         </Field>
-        <Field label="Mobile number (login)" htmlFor="owner-mobile" error={errors.mobile?.message} hint="This is the number you use to sign in">
+        <Field required label="Mobile number (login)" htmlFor="owner-mobile" error={errors.mobile?.message} hint="This is the number you use to sign in">
           <Input id="owner-mobile" type="tel" inputMode="tel" placeholder="98765 43210" {...register('mobile')} />
         </Field>
         {errors.root && <p className="text-sm text-critical sm:col-span-2">{errors.root.message}</p>}

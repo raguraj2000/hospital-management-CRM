@@ -82,10 +82,19 @@ export function Label({ className, ...props }: LabelHTMLAttributes<HTMLLabelElem
 }
 
 /** Label + control + hint/error: the one way every form field is laid out. */
-export function Field({ label, htmlFor, error, hint, children, className }: { label: string; htmlFor: string; error?: string; hint?: string; children: ReactNode; className?: string }) {
+/** `required`: a red star after the label -- the box must be filled. Optional boxes carry no mark. */
+export function Field({ label, htmlFor, error, hint, required, children, className }: { label: string; htmlFor: string; error?: string; hint?: string; required?: boolean; children: ReactNode; className?: string }) {
   return (
     <div className={cn('flex flex-col gap-2', className)}>
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <Label htmlFor={htmlFor}>
+        {label}
+        {required && (
+          <span aria-hidden className="text-critical">
+            {' '}
+            *
+          </span>
+        )}
+      </Label>
       {children}
       {error ? <p className="text-xs font-medium text-critical">{error}</p> : hint ? <p className="text-xs text-muted">{hint}</p> : null}
     </div>

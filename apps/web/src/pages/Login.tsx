@@ -68,10 +68,10 @@ export function Login() {
             className="mt-8 flex flex-col gap-5"
             onSubmit={handleSubmit((v) => login.mutate(v, { onSuccess: (m) => navigate(m.user.isPlatformAdmin ? '/platform' : target(m.branches[0]?.slug), { replace: true }) }))}
           >
-            <Field label="Mobile number" htmlFor="mobile" error={errors.mobile?.message}>
+            <Field required label="Mobile number" htmlFor="mobile" error={errors.mobile?.message}>
               <Input id="mobile" type="tel" inputMode="tel" autoComplete="username" autoFocus placeholder="98765 43210" aria-invalid={!!errors.mobile} {...register('mobile')} />
             </Field>
-            <Field label="Password" htmlFor="password" error={errors.password?.message}>
+            <Field required label="Password" htmlFor="password" error={errors.password?.message}>
               <Input id="password" type="password" autoComplete="current-password" aria-invalid={!!errors.password} {...register('password')} />
             </Field>
             {login.error && (
