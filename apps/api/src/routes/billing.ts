@@ -337,11 +337,12 @@ export function createBillingRoutes(db: Db) {
 
   // ---------------------------------------------------------------- lists
 
-  /** Bills (default: with a balance). ?status=all for every bill of a day (?date=). */
+  /** Bills (default: with a balance). ?status=all for every bill of a day (?date=). ?status=paid: the fully paid bills of a day (default today). */
   app.get('/bills', receive, async (c) => {
     const b = c.get('branch');
     const status = c.req.query('status') ?? 'due';
-    const date = c.req.query('date');
+    const asked = c.req.query('date');
+    const date = status === 'paid' && !(asked && /^\d{4}-\d{2}-\d{2}$/.test(asked)) ? await localToday(db) : asked;
     const paid = db
       .select({ billId: billPayment.billId, paid: sql<number>`sum(${billPayment.amountPaise})`.as('paid') })
       .from(billPayment)
@@ -367,14 +368,14 @@ export function createBillingRoutes(db: Db) {
       .where(
         and(
           eq(opBill.branchId, b.id),
-          status === 'due' ? sql`coalesce(${paid.paid}, 0) < ${opBill.totalPaise}` : undefined,
+          status === 'due' ? sql`coalesce(${paid.paid}, 0) < ${opBill.totalPaise}` : status === 'paid' ? sql`coalesce(${paid.paid}, 0) >= ${opBill.totalPaise}` : undefined,
           date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? sql`date(${opBill.createdAt}, 'localtime') = ${date}` : undefined,
         ),
       )
       .orderBy(desc(opBill.id))
       .limit(200);
     const bills: BillListRow[] = rows.map((r) => ({ ...withToken(r), status: billStatus(r.totalPaise, r.paidPaise) }));
-    return c.json({ bills });
+    return c.json({ bills, date: date ?? null });
   });
 
   /**

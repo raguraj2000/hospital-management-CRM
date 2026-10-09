@@ -1,15 +1,16 @@
 import { useDeferredValue, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
-import { AlertTriangle, PackageCheck, Pill, Printer, ReceiptText, Search, ShoppingCart, Trash2, X } from 'lucide-react';
-import { FORM_UNIT, formatRupees, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
+import { AlertTriangle, PackageCheck, Pill, Printer, ReceiptText, RotateCcw, Search, ShoppingCart, Trash2, X } from 'lucide-react';
+import { FORM_UNIT, formatRupees, type LastPurchase, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
 import { Avatar, Badge, Button, Card, CardHeader, EmptyState, Field, Input, PageHeader, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, Pager, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { visitLabel } from '@/components/Visits';
 import { CheckoutList, useCheckoutQueue } from '@/components/Checkout';
-import { fmtDay, modeLabel } from '@/components/format';
+import { fmtDate, fmtDay, modeLabel } from '@/components/format';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
+import { KeyHint } from '@/components/Shortcuts';
 
 const printUrl = (branch: string, saleId: number) => `/${branch}/pharmacy/sales/${saleId}/print`;
 /** Same limit as the server (directSaleSchema). */
@@ -253,6 +254,16 @@ function DirectSale({ branch }: { branch: string }) {
   const [mode, setMode] = useState<PaymentMode>('cash');
   const [lastSale, setLastSale] = useState<{ id: number; saleNo: string; totalPaise: number } | null>(null);
   const meds = useQuery({ queryKey: ['medicines', branch], queryFn: () => api.get<{ medicines: Medicine[] }>(`/b/${branch}/medicines`) });
+  // A regular customer (heart, sugar, BP tablets every month): what they bought last time, to sell the same again.
+  const last = useQuery({ queryKey: ['last-purchase', branch, patient?.id], queryFn: () => api.get<{ purchase: LastPurchase | null }>(`/b/${branch}/patients/${patient!.id}/last-purchase`), enabled: !!patient, staleTime: 0 });
+
+  /** Puts last time's medicines and quantities in the sale; the price, batch and stock are today's. */
+  function repeatLast(p: LastPurchase) {
+    const known = p.items.filter((i) => i.available && meds.data?.medicines.some((m) => m.id === i.medicineId));
+    const gone = p.items.filter((i) => !known.includes(i));
+    setCart((c) => [...c.filter((x) => !known.some((i) => i.medicineId === x.medicineId)), ...known.map((i) => ({ medicineId: i.medicineId, qty: String(i.quantity) }))]);
+    toast.success(`${known.length} medicine${known.length === 1 ? '' : 's'} added from the last purchase`, { description: gone.length ? `No longer in the medicine list: ${gone.map((i) => i.medicineName).join(', ')}.` : 'Check the quantities, then sell.' });
+  }
 
   const q = search.trim().toLowerCase();
   const matches = q ? (meds.data?.medicines ?? []).filter((m) => m.name.toLowerCase().includes(q)).slice(0, 8) : [];
@@ -295,7 +306,7 @@ function DirectSale({ branch }: { branch: string }) {
       setLastSale(sale);
       setCart([]);
       setPatient(null);
-      for (const k of ['pharmacy-sales', 'pharmacy-queue', 'medicines', 'batches', 'dashboard', 'collection', 'patient-bills']) qc.invalidateQueries({ queryKey: [k, branch] });
+      for (const k of ['pharmacy-sales', 'pharmacy-queue', 'medicines', 'batches', 'dashboard', 'collection', 'patient-bills', 'last-purchase']) qc.invalidateQueries({ queryKey: [k, branch] });
     },
     onError: (e) => {
       toast.error(errorMessage(e));
@@ -322,10 +333,34 @@ function DirectSale({ branch }: { branch: string }) {
         </div>
       )}
 
+      {/* Who is buying comes first: a regular customer's last purchase is offered right away. */}
+      <div className="border-b border-border p-3">
+        <div className="sm:max-w-md">
+          <PatientPicker branch={branch} value={patient} onChange={setPatient} />
+        </div>
+        {patient &&
+          last.data &&
+          (last.data.purchase ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand/30 bg-brand-soft px-3 py-2.5 text-sm">
+              <div className="min-w-0">
+                <div className="font-medium">
+                  Last bought on {fmtDate(last.data.purchase.createdAt)} <span className="font-mono text-xs font-normal text-muted">{last.data.purchase.saleNo}</span>
+                </div>
+                <div className="text-muted">{last.data.purchase.items.map((i) => `${i.medicineName}${i.strength ? ` ${i.strength}` : ''} ×${i.quantity}`).join(', ')}</div>
+              </div>
+              <Button variant="brand" data-shortcut="alt+r" onClick={() => repeatLast(last.data!.purchase!)}>
+                <RotateCcw /> Add the same again <KeyHint>Alt+R</KeyHint>
+              </Button>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-muted">{patient.name} has not bought at this pharmacy before.</p>
+          ))}
+      </div>
+
       <div className="border-b border-border p-3">
         <div className="relative w-full sm:max-w-md">
           <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted" />
-          <Input type="search" aria-label="Search medicine to add" placeholder="Search medicine to add…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          <Input type="search" aria-label="Search medicine to add" data-shortcut="alt+m" placeholder="Search medicine to add…   (Alt+M)" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
         {meds.isLoading ? (
           <Skeleton className="mt-3 h-10" />
@@ -438,8 +473,7 @@ function DirectSale({ branch }: { branch: string }) {
         </>
       )}
 
-      <div className="grid gap-4 border-t border-border p-4 md:grid-cols-2 md:items-end">
-        <PatientPicker branch={branch} value={patient} onChange={setPatient} />
+      <div className="border-t border-border p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between md:justify-end md:gap-6">
           <div>
             <div className="text-xs text-muted">
@@ -449,8 +483,8 @@ function DirectSale({ branch }: { branch: string }) {
           </div>
           <div className="flex items-center gap-2">
             <PaymentModeSelect aria-label="Paid by" value={mode} onChange={setMode} className="w-28" />
-            <Button size="lg" disabled={!rows.length || invalid || sell.isPending} onClick={() => sell.mutate()}>
-              <PackageCheck /> {sell.isPending ? 'Selling…' : `Sell ${formatRupees(total)}`}
+            <Button size="lg" data-shortcut="alt+s" disabled={!rows.length || invalid || sell.isPending} onClick={() => sell.mutate()}>
+              <PackageCheck /> {sell.isPending ? 'Selling…' : `Sell ${formatRupees(total)}`} <KeyHint>Alt+S</KeyHint>
             </Button>
           </div>
         </div>
@@ -495,7 +529,7 @@ function PatientPicker({ branch, value, onChange }: { branch: string; value: Pic
     );
   }
   return (
-    <Field label="Patient (optional)" htmlFor="sale-patient" hint={q.length >= 2 ? undefined : 'Walk-in customer. Search to attach a registered patient.'}>
+    <Field label="Patient" htmlFor="sale-patient" hint={q.length >= 2 ? undefined : 'Walk-in customer. Search a registered patient by name or phone to see what they bought last time.'}>
       <Input id="sale-patient" type="search" placeholder="Search name, UHID or phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
       {q.length >= 2 &&
         (found.error ? (

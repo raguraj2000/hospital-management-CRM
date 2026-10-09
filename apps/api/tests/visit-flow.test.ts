@@ -240,6 +240,7 @@ describe('what the OP list shows', () => {
     expect(await both()).toMatchObject({ lab: { ordered: 0, sampleCollected: 0, completed: 2 }, labReady: true });
 
     const { id: med } = await json(post(owner, '/api/b/main/medicines', { name: 'Paracetamol', form: 'tablet', pricePaise: 200 }));
+    await post(owner, `/api/b/main/medicines/${med}/batches`, { batchNo: 'B1', expiryDate: new Date(Date.now() + 200 * 86_400_000).toISOString().slice(0, 10), quantity: 50 }); // only a medicine in stock can be prescribed
     const item = await json(post(doc, `/api/b/main/visits/${v.id}/prescription`, { medicineId: med, dose: '1-0-1', days: 2 }));
     await post(doc, `/api/b/main/visits/${v.id}/prescription`, { medicineId: med, dose: '1-1-1', days: 1 });
     expect((await both()).medicineCount).toBe(2);

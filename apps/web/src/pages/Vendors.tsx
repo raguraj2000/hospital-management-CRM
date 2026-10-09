@@ -269,7 +269,7 @@ function VendorForm({ initial, onSubmit, onCancel }: { initial?: Vendor; onSubmi
         }),
       )}
     >
-      <Field label="Vendor name" htmlFor="v-name" error={errors.name?.message} className="sm:col-span-2">
+      <Field required label="Vendor name" htmlFor="v-name" error={errors.name?.message} className="sm:col-span-2">
         <Input id="v-name" autoFocus {...register('name')} />
       </Field>
       <Field label="Phone" htmlFor="v-phone">

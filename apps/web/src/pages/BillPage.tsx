@@ -161,10 +161,10 @@ export function BillPage() {
                 pay.mutate();
               }}
             >
-              <Field label="Amount (₹)" htmlFor="pay-amount">
+              <Field required label="Amount (₹)" htmlFor="pay-amount">
                 <Input id="pay-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
               </Field>
-              <Field label="Paid by" htmlFor="pay-mode">
+              <Field required label="Paid by" htmlFor="pay-mode">
                 <PaymentModeSelect id="pay-mode" value={mode} onChange={setMode} />
               </Field>
               <Button type="submit" className="col-span-2" size="lg" disabled={pay.isPending}>

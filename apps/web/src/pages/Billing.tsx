@@ -25,7 +25,7 @@ interface ToBill {
   unbilledLabCount: number;
 }
 
-const TABS = ['todo', 'pending', 'report'] as const;
+const TABS = ['todo', 'pending', 'completed', 'report'] as const;
 
 export function Billing() {
   const { branch } = useParams();
@@ -49,11 +49,15 @@ export function Billing() {
         <TabsList className="mb-4">
           <TabsTrigger value="todo">To collect {waiting > 0 && <Badge tone="warning">{waiting}</Badge>}</TabsTrigger>
           <TabsTrigger value="pending">Pending payments {!!due.data?.bills.length && <Badge tone="critical">{due.data.bills.length}</Badge>}</TabsTrigger>
+          <TabsTrigger value="completed">Completed payments</TabsTrigger>
           <TabsTrigger value="report">Daily report</TabsTrigger>
         </TabsList>
         <TabsContent value="todo">{fullCheckout ? <CheckoutList branch={branch!} /> : <ToBillCard branch={branch!} data={toBill.data?.visits} today={toBill.data?.today} loading={toBill.isLoading} />}</TabsContent>
         <TabsContent value="pending">
           <PendingPayments branch={branch!} data={due.data?.bills} loading={due.isLoading} error={due.error} />
+        </TabsContent>
+        <TabsContent value="completed">
+          <CompletedPayments branch={branch!} />
         </TabsContent>
         <TabsContent value="report">
           <DayReportView branch={branch!} />
@@ -204,6 +208,85 @@ function PendingPayments({ branch, data, loading, error }: { branch: string; dat
   );
 }
 
+/** The fully paid bills of a day (today unless another day is picked), each with its bill to print again. */
+function CompletedPayments({ branch }: { branch: string }) {
+  const navigate = useNavigate();
+  const [date, setDate] = useState('');
+  // Keyed under "bills-due": every payment already refreshes that.
+  const { data, isLoading, error } = useQuery({ queryKey: ['bills-due', branch, 'paid', date], queryFn: () => api.get<{ bills: BillListRow[]; date: string }>(`/b/${branch}/bills?status=paid${date ? `&date=${date}` : ''}`), refetchInterval: 20_000 });
+  const bills = data?.bills ?? [];
+  const { rows, pager } = usePaged(bills, data?.date);
+  return (
+    <Card>
+      <CardHeader
+        title="Completed payments"
+        description={data ? `Fully paid bills of ${fmtDay(data.date)}, newest first.` : 'Fully paid bills, newest first.'}
+        icon={ReceiptText}
+        iconTone="positive"
+        action={
+          <div className="flex items-center gap-3">
+            {bills.length > 0 && <span className="hidden text-base font-semibold tabular-nums sm:inline">{formatRupees(bills.reduce((s, b) => s + b.paidPaise, 0))}</span>}
+            <Input type="date" aria-label="Day" className="w-auto" value={data?.date ?? date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+        }
+      />
+      {isLoading ? (
+        <Skeleton className="m-4 h-16" />
+      ) : error ? (
+        <p className="p-4 text-sm text-critical">{errorMessage(error)}</p>
+      ) : !bills.length ? (
+        <EmptyState icon={ReceiptText} title="No completed payments on this day" description="Bills show here once they are paid in full." />
+      ) : (
+        <Table>
+          <THead>
+            <tr>
+              <TH>Bill</TH>
+              <TH>Patient</TH>
+              <TH className="text-right">Paid</TH>
+              <TH />
+            </tr>
+          </THead>
+          <TBody>
+            {rows.map((b) => (
+              <TR key={b.id} onOpen={() => navigate(`/${branch}/billing/${b.id}`)}>
+                <TD>
+                  <Link to={`/${branch}/billing/${b.id}`} className="font-mono text-xs font-medium text-brand hover:underline">
+                    {b.billNo}
+                  </Link>
+                  <div className="text-[11px] text-muted">
+                    {fmtTime(b.createdAt)} · {b.token != null && `Token ${b.token} · `}
+                    {b.opNo}
+                  </div>
+                </TD>
+                <TD>
+                  <div className="font-medium">{b.patientName}</div>
+                  <div className="text-[11px] text-muted">
+                    <span className="font-mono">{b.patientUhid}</span>
+                    {b.patientPhone && ` · ${formatPhone(b.patientPhone)}`}
+                  </div>
+                </TD>
+                <TD className="text-right">
+                  <div className="text-base font-semibold tabular-nums">{formatRupees(b.paidPaise)}</div>
+                  <Badge tone="positive" dot>
+                    Paid
+                  </Badge>
+                </TD>
+                <TD className="text-right">
+                  {/* The whole visit on one paper: consultation, lab and (for the pharmacy counter) medicines. */}
+                  <PrintLink href={`/${branch}/visits/${b.visitId}/bill/print`} aria-label={`Print bill ${b.billNo}`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
+                    <Printer /> Print
+                  </PrintLink>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      )}
+      <Pager {...pager} />
+    </Card>
+  );
+}
+
 /** Take money on one bill; the receipt prints as soon as it is recorded. */
 function ReceiveDialog({ branch, bill, onClose }: { branch: string; bill: BillListRow; onClose: () => void }) {
   const qc = useQueryClient();
@@ -229,10 +312,10 @@ function ReceiveDialog({ branch, bill, onClose }: { branch: string; bill: BillLi
           pay.mutate();
         }}
       >
-        <Field label="Amount (₹)" htmlFor="receive-amount" error={pay.error ? errorMessage(pay.error) : undefined}>
+        <Field required label="Amount (₹)" htmlFor="receive-amount" error={pay.error ? errorMessage(pay.error) : undefined}>
           <Input id="receive-amount" autoFocus inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
         </Field>
-        <Field label="Paid by" htmlFor="receive-mode">
+        <Field required label="Paid by" htmlFor="receive-mode">
           <PaymentModeSelect id="receive-mode" value={mode} onChange={setMode} />
         </Field>
         <div className="col-span-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

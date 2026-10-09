@@ -18,7 +18,7 @@ export function BillingSettings({ branch }: { branch: string }) {
       <CardHeader title="Consultation fee" description="Put on every new OP bill. Can be changed on a bill." />
       {/* Input and button share one row; the button lines up with the input, not with a hint under it. */}
       <div className="flex items-end gap-3 p-4">
-        <Field label="Fee (₹)" htmlFor="consult-fee" className="w-40">
+        <Field required label="Fee (₹)" htmlFor="consult-fee" className="w-40">
           <Input id="consult-fee" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
         </Field>
         <Button

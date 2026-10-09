@@ -174,10 +174,10 @@ export function PurchaseBillPage() {
             pay.mutate({ amountPaise: toPaise(Number(f.get('amount')) || 0), mode: f.get('mode') as VendorPaymentMode, reference: String(f.get('reference') ?? '') });
           }}
         >
-          <Field label="Amount (₹)" htmlFor="vp-amount">
+          <Field required label="Amount (₹)" htmlFor="vp-amount">
             <Input id="vp-amount" name="amount" inputMode="decimal" autoFocus defaultValue={String(balance / 100)} />
           </Field>
-          <Field label="Paid by" htmlFor="vp-mode">
+          <Field required label="Paid by" htmlFor="vp-mode">
             <NativeSelect id="vp-mode" name="mode" defaultValue="bank">
               {VENDOR_PAYMENT_MODES.map((m) => (
                 <option key={m} value={m}>
@@ -208,7 +208,7 @@ export function PurchaseBillPage() {
             cancel.mutate(String(new FormData(e.currentTarget).get('reason') ?? ''));
           }}
         >
-          <Field label="Reason" htmlFor="pb-cancel">
+          <Field required label="Reason" htmlFor="pb-cancel">
             <Textarea id="pb-cancel" name="reason" rows={2} autoFocus placeholder="e.g. Entered twice" />
           </Field>
           <div className="flex justify-end gap-2">

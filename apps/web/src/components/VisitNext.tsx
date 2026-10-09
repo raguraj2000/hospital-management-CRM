@@ -9,6 +9,7 @@ import { api, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
 import { useVisitLab } from './VisitLab';
 import { tokenName, useCallNext, useVisitInvalidate } from './Visits';
+import { KeyHint } from './Shortcuts';
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const SENT: Record<VisitSendTo, string> = { lab: 'sent to the lab', counter: 'sent to pharmacy & billing', waiting: 'moved back to waiting' };
@@ -80,8 +81,8 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
           <span className="font-semibold">{atLab ? (resultReady ? `${who} is back from the lab — result ready` : `${who} is at the lab`) : `${who} is waiting`}</span>
           {atLab && !resultReady && <span className="text-muted"> · {tests - testsToDo} of {tests} results ready</span>}
         </div>
-        <Button disabled={start.isPending} onClick={() => start.mutate({ visitId: visit.id })}>
-          <Stethoscope /> {start.isPending ? 'Starting…' : 'Start consultation'}
+        <Button data-shortcut="alt+c" disabled={start.isPending} onClick={() => start.mutate({ visitId: visit.id })}>
+          <Stethoscope /> {start.isPending ? 'Starting…' : 'Start consultation'} <KeyHint>Alt+C</KeyHint>
         </Button>
       </div>
     );
@@ -103,11 +104,11 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
         <Button variant="ghost" disabled={busy} onClick={() => send.mutate('waiting')} title="Not finished. The patient keeps the token and waits outside.">
           <Hourglass /> Back to waiting
         </Button>
-        <Button variant={labFirst ? 'default' : 'outline'} disabled={busy || testsToDo === 0} onClick={() => send.mutate('lab')} title={testsToDo > 0 ? 'The patient comes back in when the result is ready.' : 'Order a test first (Lab tab)'}>
-          <FlaskConical /> Send to lab{testsToDo > 0 ? ` (${plural(testsToDo, 'test')})` : ''}
+        <Button data-shortcut="alt+l" variant={labFirst ? 'default' : 'outline'} disabled={busy || testsToDo === 0} onClick={() => send.mutate('lab')} title={testsToDo > 0 ? 'The patient comes back in when the result is ready.' : 'Order a test first (Lab tab)'}>
+          <FlaskConical /> Send to lab{testsToDo > 0 ? ` (${plural(testsToDo, 'test')})` : ''} <KeyHint>Alt+L</KeyHint>
         </Button>
-        <Button variant={labFirst ? 'outline' : 'default'} disabled={busy} onClick={() => send.mutate('counter')} title="The patient pays and collects medicines at the counter.">
-          <Pill /> Send to pharmacy &amp; billing
+        <Button data-shortcut="alt+s" variant={labFirst ? 'outline' : 'default'} disabled={busy} onClick={() => send.mutate('counter')} title="The patient pays and collects medicines at the counter.">
+          <Pill /> Send to pharmacy &amp; billing <KeyHint>Alt+S</KeyHint>
         </Button>
       </div>
     </div>

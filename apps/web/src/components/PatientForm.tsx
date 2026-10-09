@@ -61,7 +61,7 @@ export function PatientForm({
   return (
     <form onSubmit={handleSubmit(submit)} noValidate className="grid gap-4 sm:grid-cols-2">
       <div className="sm:col-span-2">
-        <Field label="Full name" htmlFor="name" error={errors.name?.message}>
+        <Field required label="Full name" htmlFor="name" error={errors.name?.message}>
           <Input id="name" autoFocus aria-invalid={!!errors.name} {...register('name')} />
         </Field>
       </div>

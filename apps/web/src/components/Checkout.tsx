@@ -398,10 +398,10 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
-          <Field label="Amount received (₹)" htmlFor={amountId} className="sm:w-44">
+          <Field required label="Amount received (₹)" htmlFor={amountId} className="sm:w-44">
             <Input id={amountId} inputMode="decimal" className="h-12 text-right text-lg font-semibold tabular-nums" value={amount ?? rupeesOf(totalPaise)} onChange={(e) => setAmount(e.target.value)} aria-invalid={!!problem} />
           </Field>
-          <Field label="Paid by" htmlFor={modeId} className="sm:w-32">
+          <Field required label="Paid by" htmlFor={modeId} className="sm:w-32">
             <PaymentModeSelect id={modeId} className="h-12 text-base" value={mode} onChange={setMode} />
           </Field>
           <Button type="submit" className="col-span-2 h-12 px-6 text-lg font-semibold" disabled={!!problem || nothingToDo || collect.isPending}>

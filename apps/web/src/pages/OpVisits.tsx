@@ -9,6 +9,7 @@ import { useBranch, useCan } from '@/state/auth';
 import { ConditionBadges } from '@/components/Conditions';
 import { NewVisitForm, tokenName, useCallNext, useDoctors, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
 import { ageOf, formatPhone } from './Patients';
+import { KeyHint } from '@/components/Shortcuts';
 
 /** The day's visits in four lists, so 100+ patients never mean scrolling past the finished ones. */
 const SHOW: { key: 'queue' | 'counter' | 'done' | 'all'; label: string; tone: string; has: (v: OpVisitRow) => boolean }[] = [
@@ -194,7 +195,8 @@ function StartVisitSearch({ branch }: { branch: string }) {
         <Input
           type="search"
           aria-label="Search patient to start an OP visit"
-          placeholder="Search patient by name, UHID or phone to start an OP visit…"
+          data-shortcut="alt+v"
+          placeholder="Search patient by name, UHID or phone to start an OP visit…   (Alt+V)"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="pl-9"
@@ -336,15 +338,15 @@ function QueueBanner({ branch, queue, doctorName }: { branch: string; queue: Vis
           <div className="md:text-right">
             {inside ? (
               <>
-                <Link to={`/${branch}/visits/${inside.id}`} className={cn(buttonVariants(), big)}>
-                  Open Token {inside.token ?? inside.opNo} — choose what next
+                <Link to={`/${branch}/visits/${inside.id}`} data-shortcut="alt+c" className={cn(buttonVariants(), big)}>
+                  Open Token {inside.token ?? inside.opNo} — choose what next <KeyHint>Alt+C</KeyHint>
                 </Link>
                 <p className="mt-1.5 text-sm text-muted">Finish with this patient first; that calls the next one in.</p>
               </>
             ) : (
               <>
-                <Button className={big} disabled={!next || call.isPending} onClick={() => call.mutate({ doctorUserId: queue.doctorUserId })}>
-                  <DoorOpen /> {next ? `Call next (Token ${next.visit.token ?? next.visit.opNo})` : 'Call next'}
+                <Button className={big} data-shortcut="alt+c" disabled={!next || call.isPending} onClick={() => call.mutate({ doctorUserId: queue.doctorUserId })}>
+                  <DoorOpen /> {next ? `Call next (Token ${next.visit.token ?? next.visit.opNo})` : 'Call next'} <KeyHint>Alt+C</KeyHint>
                 </Button>
                 {!next && <p className="mt-1.5 text-sm text-muted">Nobody is waiting right now.</p>}
               </>

@@ -161,7 +161,7 @@ function NewCustomerForm({ onSubmit, onCancel }: { onSubmit: (v: NewCustomerInpu
         }),
       )}
     >
-      <Field label="Hospital / clinic name" htmlFor="c-name" error={errors.name?.message} className="sm:col-span-2">
+      <Field required label="Hospital / clinic name" htmlFor="c-name" error={errors.name?.message} className="sm:col-span-2">
         <Input
           id="c-name"
           autoFocus
@@ -184,20 +184,20 @@ function NewCustomerForm({ onSubmit, onCancel }: { onSubmit: (v: NewCustomerInpu
       <Field label="UHID prefix" htmlFor="c-prefix" error={errors.idPrefix?.message} hint="Patient IDs start with it, e.g. CH000001">
         <Input id="c-prefix" className="font-mono uppercase" {...register('idPrefix')} />
       </Field>
-      <Field label="First branch name" htmlFor="c-branch" error={errors.branchName?.message}>
+      <Field required label="First branch name" htmlFor="c-branch" error={errors.branchName?.message}>
         <Input id="c-branch" {...register('branchName')} />
       </Field>
-      <Field label="Branch web address" htmlFor="c-slug" error={errors.branchSlug?.message}>
+      <Field required label="Branch web address" htmlFor="c-slug" error={errors.branchSlug?.message}>
         <Input id="c-slug" className="font-mono" {...register('branchSlug')} />
       </Field>
       <div className="border-t border-border pt-4 text-sm font-semibold sm:col-span-2">Owner login</div>
-      <Field label="Owner name" htmlFor="c-owner" error={errors.ownerName?.message}>
+      <Field required label="Owner name" htmlFor="c-owner" error={errors.ownerName?.message}>
         <Input id="c-owner" {...register('ownerName')} />
       </Field>
-      <Field label="Owner mobile" htmlFor="c-mobile" error={errors.ownerMobile?.message}>
+      <Field required label="Owner mobile" htmlFor="c-mobile" error={errors.ownerMobile?.message}>
         <Input id="c-mobile" type="tel" inputMode="tel" placeholder="98765 43210" {...register('ownerMobile')} />
       </Field>
-      <Field label="Temporary password" htmlFor="c-password" error={errors.ownerPassword?.message} hint="At least 8 characters. They can change it after signing in." className="sm:col-span-2">
+      <Field required label="Temporary password" htmlFor="c-password" error={errors.ownerPassword?.message} hint="At least 8 characters. They can change it after signing in." className="sm:col-span-2">
         <Input id="c-password" autoComplete="off" {...register('ownerPassword')} />
       </Field>
       {errors.root && <p className="text-sm text-critical sm:col-span-2">{errors.root.message}</p>}

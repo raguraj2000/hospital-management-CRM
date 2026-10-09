@@ -226,7 +226,7 @@ function GiveDialog({ branch, dose, onClose, onGiven }: { branch: string; dose: 
           give.mutate();
         }}
       >
-        <Field label="Note (optional)" htmlFor="dose-note" error={give.error ? errorMessage(give.error) : undefined}>
+        <Field label="Note" htmlFor="dose-note" error={give.error ? errorMessage(give.error) : undefined}>
           <Input id="dose-note" autoFocus maxLength={200} placeholder="e.g. Left arm. No reaction." value={note} onChange={(e) => setNote(e.target.value)} />
         </Field>
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

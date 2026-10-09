@@ -494,6 +494,14 @@ export interface PharmacySale {
   lines: { medicineName: string; batchNo: string; quantity: number; unitPricePaise: number; amountPaise: number }[];
 }
 
+/** What a patient bought last time at the pharmacy (their most recent sale, one line per medicine), to sell the same again. */
+export interface LastPurchase {
+  saleId: number;
+  saleNo: string;
+  createdAt: string;
+  items: { medicineId: number; medicineName: string; strength: string | null; quantity: number; /** false = no longer in the medicine list. */ available: boolean }[];
+}
+
 /** One sale as printed on the pharmacy bill. */
 export interface PharmacySaleDetail {
   id: number;
@@ -515,11 +523,36 @@ export interface PharmacySaleDetail {
 // Clinic: lab (tests catalog + orders)
 // ---------------------------------------------------------------------------
 
+/** One result line of a test (e.g. "Basophils" of a CBC): what is measured, how, in what unit, and the normal range. */
+export const labTestLineSchema = z.object({
+  /** An existing line of the test being edited; without it the line is new. */
+  id: z.number().int().positive().optional(),
+  name: z.string().trim().min(1, 'Enter the name').max(120),
+  method: z.string().trim().max(120).default(''),
+  unit: z.string().trim().max(40).default(''),
+  refRange: z.string().trim().max(120).default(''),
+});
+export type LabTestLine = z.infer<typeof labTestLineSchema>;
+
 export const labTestInputSchema = z.object({
   name: z.string().trim().min(2, 'Enter the test name').max(120),
   pricePaise: z.number({ error: 'Enter the price' }).int().min(0).max(10_000_000),
+  /** The heading it prints under, e.g. "DEPARTMENT OF HEMATOLOGY". */
+  department: z.string().trim().min(1).max(120).optional(),
+  /** The result lines. Given on an edit, it is the whole list: lines left out are removed. */
+  parameters: z.array(labTestLineSchema).min(1, 'Add at least one result line').max(60).optional(),
 });
 export type LabTestInput = z.infer<typeof labTestInputSchema>;
+
+/** A test with its result lines, for the edit form. */
+export interface LabTestDetail {
+  id: number;
+  name: string;
+  pricePaise: number;
+  department: string;
+  kind: 'panel' | 'card';
+  parameters: Required<LabTestLine>[];
+}
 
 export interface LabTest {
   id: number;

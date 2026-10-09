@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gt, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import {
+  type LastPurchase,
   batchInputSchema,
   directSaleSchema,
   dispenseSchema,
@@ -452,11 +453,14 @@ export function createPharmacyRoutes(db: Db) {
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
     if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
-    await medicineOfBranch(b.id, parsed.data.medicineId);
+    const med = await medicineOfBranch(b.id, parsed.data.medicineId);
+    const today = await localToday(db);
+    // Nothing in stock (expired batches do not count): the pharmacy could not give it.
+    const [inStock] = await medicinesWithStock(db, b.id, today, and(eq(medicine.id, med.id)));
+    if (!inStock || inStock.stock === 0) throw new AppError(409, 'out_of_stock', `${med.name} is out of stock. Choose another medicine, or add stock in Inventory first.`, { medicineId: ['Out of stock'] });
     // Quantity: what the doctor typed, else dose x days (1-0-1 for 5 days = 10).
     const quantity = parsed.data.quantity ?? suggestedQuantity(parsed.data.dose, parsed.data.days);
     if (!quantity) throw new AppError(400, 'validation', 'Enter the quantity for this dose', { quantity: ['Enter the quantity for this dose'] });
-    const today = await localToday(db);
     const row = await db.transaction(async (tx) => {
       const [created] = await tx
         .insert(prescriptionItem)
@@ -585,6 +589,32 @@ export function createPharmacyRoutes(db: Db) {
     const b = c.get('branch');
     const sale = await saleDetail(db, b.id, Number(c.req.param('id')));
     return c.json({ sale, header: await printHeaderOf(db, b.id) });
+  });
+
+  /** What this patient bought last time (regular medicines: the same again). null when they never bought here. */
+  app.get('/patients/:id/last-purchase', requirePermission('pharmacy.sell'), async (c) => {
+    const b = c.get('branch');
+    const patientId = Number(c.req.param('id'));
+    if (!Number.isInteger(patientId)) throw notFound('Patient not found');
+    const [p] = await db.select({ id: patient.id }).from(patient).where(and(eq(patient.branchId, b.id), eq(patient.id, patientId), isNull(patient.deletedAt)));
+    if (!p) throw notFound('Patient not found');
+    const [last] = await db
+      .select({ saleId: pharmacySale.id, saleNo: pharmacySale.saleNo, createdAt: pharmacySale.createdAt })
+      .from(pharmacySale)
+      .where(and(eq(pharmacySale.branchId, b.id), eq(pharmacySale.patientId, p.id)))
+      .orderBy(desc(pharmacySale.id))
+      .limit(1);
+    if (!last) return c.json({ purchase: null });
+    // A sale line is one batch; the same medicine from two batches is one line here.
+    const items = await db
+      .select({ medicineId: medicine.id, medicineName: medicine.name, strength: medicine.strength, quantity: sql<number>`sum(${pharmacySaleLine.quantity})`, deletedAt: medicine.deletedAt })
+      .from(pharmacySaleLine)
+      .innerJoin(medicine, eq(medicine.id, pharmacySaleLine.medicineId))
+      .where(and(eq(pharmacySaleLine.branchId, b.id), eq(pharmacySaleLine.saleId, last.saleId)))
+      .groupBy(medicine.id)
+      .orderBy(asc(medicine.name));
+    const purchase: LastPurchase = { ...last, items: items.map(({ deletedAt, ...i }) => ({ ...i, available: deletedAt == null })) };
+    return c.json({ purchase });
   });
 
   /** Sales of a day (default today) with their lines. */

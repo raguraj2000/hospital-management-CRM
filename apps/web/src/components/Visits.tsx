@@ -6,7 +6,6 @@ import { useNavigate } from 'react-router';
 import { CheckCircle2, DoorOpen, MoreHorizontal, Pencil, Trash2, XCircle } from 'lucide-react';
 import {
   opToken,
-  toPaise,
   visitInputSchema,
   type Doctor,
   type DoctorsResponse,
@@ -222,17 +221,11 @@ export function VisitActions({ branch, visit, label, callIn = true }: { branch: 
  */
 export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: string; patientId: number; onDone: (v: OpVisit, seenNow: boolean) => void; onCancel: () => void }) {
   const invalidate = useVisitInvalidate(branch);
-  const canSetFee = useCan('billing.receive'); // reading the standard fee needs it
   const canCallIn = useCan('patient.edit');
-  const standard = useQuery({ queryKey: ['billing-settings', branch], queryFn: () => api.get<{ consultationFeePaise: number }>(`/b/${branch}/billing/settings`), enabled: canSetFee });
-  // null = not touched: the visit follows the standard fee.
-  const [fee, setFee] = useState<string | null>(null);
 
   async function create(values: VisitInput, seeNow: boolean) {
     const { visit } = await api.post<{ visit: OpVisit }>(`/b/${branch}/patients/${patientId}/visits`, values);
     try {
-      const paise = fee == null || fee.trim() === '' ? null : toPaise(Number(fee));
-      if (paise != null && Number.isFinite(paise) && paise >= 0 && paise !== standard.data?.consultationFeePaise) await api.put(`/b/${branch}/visits/${visit.id}/consultation-fee`, { consultationFeePaise: paise });
       if (seeNow) await api.post(`/b/${branch}/visits/call-next`, { visitId: visit.id });
     } catch (e) {
       // The visit exists; only the extra step failed. Say so instead of losing the visit.
@@ -253,13 +246,6 @@ export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: 
       onCancel={onCancel}
       onSubmit={(values) => create(values, false)}
       onSeeNow={canCallIn ? (values) => create(values, true) : undefined}
-      extra={
-        canSetFee && (
-          <Field label="Consultation fee (₹)" htmlFor="visit-fee-new" hint="Standard fee from Settings. Change it for this visit only.">
-            <Input id="visit-fee-new" inputMode="decimal" className="max-w-40" value={fee ?? (standard.data ? String(standard.data.consultationFeePaise / 100) : '')} onChange={(e) => setFee(e.target.value)} />
-          </Field>
-        )
-      }
     />
   );
 }

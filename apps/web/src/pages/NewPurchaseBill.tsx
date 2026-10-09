@@ -208,7 +208,7 @@ export function NewPurchaseBill() {
         }
       />
       <Card className="mb-4 grid gap-4 p-4 sm:grid-cols-3">
-        <Field label="Vendor" htmlFor="pb-vendor" error={errors.vendorId}>
+        <Field required label="Vendor" htmlFor="pb-vendor" error={errors.vendorId}>
           <NativeSelect id="pb-vendor" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
             <option value="">{vendors.data?.vendors.length === 0 ? 'Add a vendor first' : 'Choose vendor'}</option>
             {vendors.data?.vendors.map((v) => (
@@ -222,7 +222,7 @@ export function NewPurchaseBill() {
         <Field label="Vendor's bill no." htmlFor="pb-no">
           <Input id="pb-no" className="font-mono" value={vendorBillNo} onChange={(e) => setVendorBillNo(e.target.value)} />
         </Field>
-        <Field label="Bill date" htmlFor="pb-date" error={errors.billDate}>
+        <Field required label="Bill date" htmlFor="pb-date" error={errors.billDate}>
           <Input id="pb-date" type="date" value={billDate} max={today()} onChange={(e) => setBillDate(e.target.value)} />
         </Field>
       </Card>
@@ -400,7 +400,7 @@ function ImportDialog({ rows, onClose, onRead }: { rows: ImportCell[][]; onClose
         </Field>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {IMPORT_FIELDS.map((f) => (
-            <Field key={f.key} label={`${f.label}${f.required ? '' : ' (optional)'}`} htmlFor={`import-${f.key}`}>
+            <Field key={f.key} required={f.required} label={f.label} htmlFor={`import-${f.key}`}>
               <NativeSelect id={`import-${f.key}`} value={columns[f.key] ?? ''} aria-invalid={f.required && columns[f.key] == null} onChange={(e) => setColumns((c) => ({ ...c, [f.key as ImportField]: e.target.value === '' ? null : Number(e.target.value) }))}>
                 <option value="">Not in the file</option>
                 {Array.from({ length: width }, (_, i) => (
@@ -470,10 +470,10 @@ function CreateMedicineDialog({ branch, line, pricePaise, onClose, onCreated }: 
           }
         }}
       >
-        <Field label="Name" htmlFor="new-med-name" error={error || undefined}>
+        <Field required label="Name" htmlFor="new-med-name" error={error || undefined}>
           <Input id="new-med-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Form" htmlFor="new-med-form">
+        <Field required label="Form" htmlFor="new-med-form">
           <NativeSelect id="new-med-form" value={form} onChange={(e) => setForm(e.target.value as MedicineForm)}>
             {MEDICINE_FORMS.map((f) => (
               <option key={f} value={f}>

@@ -53,7 +53,7 @@ describe('OP visits', () => {
     expect((await (await owner(`/api/b/main/visits/${v2.id}`)).json()).visit.token).toBe(2);
     expect((await (await owner(`/api/b/main/patients/${a2.id}/visits`)).json()).visits.map((v: any) => v.token)).toEqual([2]);
     const toBill = await (await owner('/api/b/main/billing/to-bill')).json();
-    expect(toBill.visits.map((v: any) => v.token)).toEqual([1, 2]);
+    expect(toBill.visits.map((v: any) => v.token)).toEqual([1]); // the second patient is still waiting for the doctor: not at the counter yet
     const { bill } = await (await owner(`/api/b/main/visits/${v2.id}/bills`, { method: 'POST' })).json();
     expect(bill.token).toBe(2);
     expect((await (await owner('/api/b/main/bills?status=all')).json()).bills.map((x: any) => x.token)).toEqual([2]);

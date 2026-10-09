@@ -13,6 +13,7 @@ import {
   type LabQueueEntry,
   type LabReport,
   type LabReportTest,
+  type LabTestDetail,
   type PatientLabOrder,
 } from '@platform/shared';
 import { AppError, notFound, printHeaderOf, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
@@ -32,6 +33,15 @@ const orderColumns = {
   createdAt: labOrder.createdAt,
   sampleCollectedAt: labOrder.sampleCollectedAt,
   completedAt: labOrder.completedAt,
+};
+
+/**
+ * A result line added by hand. With a range that has a number in it ("12 - 15", "< 200") the result is a number
+ * and is flagged high / low; otherwise it is free text, with no quick picks.
+ */
+const newLine = (p: { name: string; method: string; unit: string; refRange: string }) => {
+  const number = /\d/.test(p.refRange);
+  return { name: p.name, method: p.method, unit: p.unit, refRange: p.refRange, valueType: number ? ('number' as const) : ('text' as const), options: number ? null : '[]' };
 };
 
 export function createLabRoutes(db: Db) {
@@ -144,10 +154,12 @@ export function createLabRoutes(db: Db) {
     if (!parsed.success) throw validationError(parsed.error);
     const b = c.get('branch');
     const u = c.get('user');
+    const { parameters, ...test } = parsed.data;
     const row = await db.transaction(async (tx) => {
-      const [t] = await tx.insert(labTest).values({ ...parsed.data, branchId: b.id, sortOrder: 1000 }).returning({ id: labTest.id });
-      // A hand-added test gets one result line with its own name (a free-text result).
-      await tx.insert(labTestParameter).values({ branchId: b.id, testId: t.id, name: parsed.data.name, valueType: 'text' });
+      const [t] = await tx.insert(labTest).values({ ...test, branchId: b.id, sortOrder: 1000 }).returning({ id: labTest.id });
+      // Its own result lines (a group test: CBC with Haemoglobin, Basophils, ...); without any, one line with the test's name (a free-text result).
+      if (parameters) await tx.insert(labTestParameter).values(parameters.map((p, i) => ({ ...newLine(p), branchId: b.id, testId: t.id, sortOrder: i })));
+      else await tx.insert(labTestParameter).values({ branchId: b.id, testId: t.id, name: parsed.data.name, valueType: 'text' });
       await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'lab_test', entityId: t.id, detail: parsed.data });
       return t;
     });
@@ -196,9 +208,40 @@ export function createLabRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const t = await testOfBranch(b.id, Number(c.req.param('id')));
-    await db.update(labTest).set({ ...parsed.data, updatedAt: new Date().toISOString() }).where(eq(labTest.id, t.id));
-    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'lab_test', entityId: t.id, detail: parsed.data });
+    const { parameters, ...test } = parsed.data;
+    const now = new Date().toISOString();
+    await db.transaction(async (tx) => {
+      await tx.update(labTest).set({ ...test, updatedAt: now }).where(eq(labTest.id, t.id));
+      if (parameters) {
+        const have = (await tx.select({ id: labTestParameter.id }).from(labTestParameter).where(and(eq(labTestParameter.branchId, b.id), eq(labTestParameter.testId, t.id), isNull(labTestParameter.deletedAt)))).map((r) => r.id);
+        if (parameters.some((p) => p.id != null && !have.includes(p.id))) throw new AppError(400, 'validation', 'A result line belongs to a different test. Refresh and try again.');
+        // Lines left out are removed (kept in the database: results already entered for them stay on record).
+        const gone = have.filter((id) => !parameters.some((p) => p.id === id));
+        if (gone.length) await tx.update(labTestParameter).set({ deletedAt: now }).where(inArray(labTestParameter.id, gone));
+        for (const [i, p] of parameters.entries()) {
+          const { id, ...line } = p;
+          // An existing line keeps how its result is typed (number / text, quick picks); only what is on the form changes.
+          if (id != null) await tx.update(labTestParameter).set({ ...line, sortOrder: i }).where(eq(labTestParameter.id, id));
+          else await tx.insert(labTestParameter).values({ ...newLine(p), branchId: b.id, testId: t.id, sortOrder: i });
+        }
+      }
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'lab_test', entityId: t.id, detail: parsed.data });
+    });
     return c.json({ ok: true });
+  });
+
+  /** One test with its result lines, for the edit form. */
+  app.get('/lab/tests/:id', requirePermission('settings.manage'), async (c) => {
+    const b = c.get('branch');
+    const t = await testOfBranch(b.id, Number(c.req.param('id')));
+    const [row] = await db.select({ id: labTest.id, name: labTest.name, pricePaise: labTest.pricePaise, department: labTest.department, kind: labTest.kind }).from(labTest).where(eq(labTest.id, t.id));
+    const parameters = await db
+      .select({ id: labTestParameter.id, name: labTestParameter.name, method: labTestParameter.method, unit: labTestParameter.unit, refRange: labTestParameter.refRange })
+      .from(labTestParameter)
+      .where(and(eq(labTestParameter.branchId, b.id), eq(labTestParameter.testId, t.id), isNull(labTestParameter.deletedAt)))
+      .orderBy(asc(labTestParameter.sortOrder), asc(labTestParameter.id));
+    const test: LabTestDetail = { ...row!, parameters };
+    return c.json({ test });
   });
 
   app.delete('/lab/tests/:id', requirePermission('settings.manage'), async (c) => {

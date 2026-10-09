@@ -153,6 +153,49 @@ describe('extra charges on a bill', () => {
   });
 });
 
+describe('prescribing', () => {
+  it('a medicine with no stock cannot be prescribed; once stock is added it can', async () => {
+    const { id: empty } = await json(pharm('/api/b/main/medicines', { method: 'POST', body: { name: 'Out Of Stock Tablet', form: 'tablet', pricePaise: 500 } }));
+    const v = await visit('Prescription Patient');
+    const add = () => doc(`/api/b/main/visits/${v.id}/prescription`, { method: 'POST', body: { medicineId: empty, dose: '1-0-1', days: 2 } });
+    const refused = await add();
+    expect([refused.status, (await refused.json()).code]).toEqual([409, 'out_of_stock']);
+    await pharm(`/api/b/main/medicines/${empty}/batches`, { method: 'POST', body: { batchNo: 'N1', expiryDate: inDays(100), quantity: 10 } });
+    expect((await add()).status).toBe(201);
+  });
+});
+
+describe('last purchase', () => {
+  it("returns the patient's most recent sale by medicine, for this branch's pharmacy only", async () => {
+    const p = (await json(desk('/api/b/main/patients', { method: 'POST', body: { name: 'Regular Customer', phone: '9000012345' } }))).patient;
+    expect((await json(pharm(`/api/b/main/patients/${p.id}/last-purchase`))).purchase).toBeNull();
+    await pharm('/api/b/main/pharmacy/sales', { method: 'POST', body: { items: [{ medicineId: para, quantity: 4 }], paymentMode: 'cash', patientId: p.id } });
+    const second = await json(pharm('/api/b/main/pharmacy/sales', { method: 'POST', body: { items: [{ medicineId: para, quantity: 30 }], paymentMode: 'upi', patientId: p.id } }));
+    const { purchase } = await json(pharm(`/api/b/main/patients/${p.id}/last-purchase`));
+    expect(purchase).toMatchObject({ saleId: second.sale.id, saleNo: second.sale.saleNo, items: [{ medicineId: para, medicineName: 'Paracetamol', quantity: 30, available: true }] });
+    expect((await doc(`/api/b/main/patients/${p.id}/last-purchase`)).status).toBe(403); // not the pharmacy counter
+    expect((await owner(`/api/b/east/patients/${p.id}/last-purchase`)).status).toBe(404); // another branch: like a missing patient
+  });
+});
+
+describe('completed payments', () => {
+  it("lists the day's fully paid bills only, for this branch only", async () => {
+    const paid = await visit('Paid In Full');
+    await pay(paid.id, 20000);
+    const part = await visit('Part Paid');
+    await pay(part.id, 5000);
+    const list = await json(desk('/api/b/main/bills?status=paid'));
+    expect(list.date).toBe(new Date().toLocaleDateString('en-CA'));
+    const names = list.bills.map((b: any) => b.patientName);
+    expect(names).toContain('Paid In Full');
+    expect(names).not.toContain('Part Paid');
+    expect(list.bills.every((b: any) => b.status === 'paid' && b.paidPaise >= b.totalPaise)).toBe(true);
+    expect((await json(desk('/api/b/main/bills?status=paid&date=2020-01-01'))).bills).toEqual([]);
+    expect((await json(eastdesk('/api/b/east/bills?status=paid'))).bills).toEqual([]);
+    expect((await doc('/api/b/main/bills?status=paid')).status).toBe(403);
+  });
+});
+
 describe('payments', () => {
   it('two payments at the same moment never take more than is due', async () => {
     const v = await visit('Double Click');
@@ -176,6 +219,46 @@ describe('lab results', () => {
     expect((await put('')).status).toBe(400); // a final report is not emptied
     const again = (await json(lab(`/api/b/main/visits/${v.id}/lab-report`))).tests[0];
     expect([again.status, again.completedAt, again.parameters[0].value]).toEqual(['completed', '2026-01-01T00:00:00.000Z', 'POSITIVE']);
+  });
+});
+
+describe('a lab test with its own result lines', () => {
+  it('is added as a group, edited as a whole by an admin only, and another branch gets 404', async () => {
+    const lines = [
+      { name: 'Neutrophils', method: 'Microscopy', unit: '%', refRange: '40 - 75' },
+      { name: 'Basophils', method: 'Microscopy', unit: '%', refRange: '0 - 1' },
+      { name: 'Remarks', method: '', unit: '', refRange: '' },
+    ];
+    const made = await owner('/api/b/main/lab/tests', { method: 'POST', body: { name: 'Differential Count', pricePaise: 15000, department: 'DEPARTMENT OF HEMATOLOGY', parameters: lines } });
+    expect(made.status).toBe(201);
+    const { id } = await made.json();
+    const first = (await json(owner(`/api/b/main/lab/tests/${id}`))).test;
+    expect(first).toMatchObject({ name: 'Differential Count', pricePaise: 15000, department: 'DEPARTMENT OF HEMATOLOGY' });
+    expect(first.parameters.map((p: any) => [p.name, p.method, p.unit, p.refRange])).toEqual(lines.map((l) => [l.name, l.method, l.unit, l.refRange]));
+
+    // On the results screen: a line with a range is a number (flagged), a line without is free text with no quick picks.
+    const v = await visit('Group Test Patient');
+    await doc(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [id] } });
+    const report = (await json(lab(`/api/b/main/visits/${v.id}/lab-report`))).tests[0];
+    expect(report.parameters.map((p: any) => [p.name, p.type, p.options])).toEqual([['Neutrophils', 'number', []], ['Basophils', 'number', []], ['Remarks', 'text', []]]);
+
+    // Edit: rename one line, drop one, add one, change the price.
+    const [n, b] = first.parameters;
+    const edited = await owner(`/api/b/main/lab/tests/${id}`, { method: 'PATCH', body: { pricePaise: 18000, parameters: [{ ...b, refRange: '0 - 2' }, { ...n, name: 'Neutrophils (Polymorphs)' }, { name: 'Eosinophils', method: 'Microscopy', unit: '%', refRange: '1 - 6' }] } });
+    expect(edited.status).toBe(200);
+    const second = (await json(owner(`/api/b/main/lab/tests/${id}`))).test;
+    expect(second.pricePaise).toBe(18000);
+    expect(second.parameters.map((p: any) => [p.id === b.id || p.id === n.id, p.name, p.refRange])).toEqual([[true, 'Basophils', '0 - 2'], [true, 'Neutrophils (Polymorphs)', '40 - 75'], [false, 'Eosinophils', '1 - 6']]);
+    expect((await json(owner('/api/b/main/lab/tests'))).tests.find((t: any) => t.id === id).parameterCount).toBe(3);
+
+    // Only whoever manages settings; never another branch; never a line of another test.
+    expect((await lab(`/api/b/main/lab/tests/${id}`)).status).toBe(403);
+    expect((await lab(`/api/b/main/lab/tests/${id}`, { method: 'PATCH', body: { pricePaise: 1 } })).status).toBe(403);
+    expect((await owner(`/api/b/east/lab/tests/${id}`)).status).toBe(404);
+    expect((await owner(`/api/b/east/lab/tests/${id}`, { method: 'PATCH', body: { pricePaise: 1 } })).status).toBe(404);
+    const other = (await json(owner(`/api/b/main/lab/tests/${cbc}`))).test.parameters[0];
+    expect((await owner(`/api/b/main/lab/tests/${id}`, { method: 'PATCH', body: { parameters: [{ ...other }] } })).status).toBe(400);
+    expect((await owner(`/api/b/main/lab/tests/${id}`, { method: 'PATCH', body: { parameters: [] } })).status).toBe(400);
   });
 });
 

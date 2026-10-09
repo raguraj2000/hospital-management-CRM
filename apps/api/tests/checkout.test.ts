@@ -210,7 +210,7 @@ describe('checkout: one payment for the whole visit', () => {
 
   it('a lab test ordered after the bill was paid goes on a new bill, collected with the old balance', async () => {
     const w = await world();
-    const v = await visit(w, 'Ravi Kumar', { labs: false, rx: false });
+    const v = await visit(w, 'Ravi Kumar', { labs: false, rx: false, sent: true });
     await checkout(w.desk, v.id, { paymentMode: 'cash', amountPaise: 5000 }); // ₹150 of the fee stays due
     await w.doc(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [w.sugar] } });
     const before = await json(w.desk(`/api/b/main/visits/${v.id}/checkout`));
@@ -224,12 +224,12 @@ describe('checkout: one payment for the whole visit', () => {
 
   it('short stock on one ticked medicine changes nothing at all', async () => {
     const w = await world();
-    const v = await visit(w, 'Ravi Kumar');
+    const v = await visit(w, 'Ravi Kumar', { sent: true });
     await t.db.update(prescriptionItem).set({ quantity: 30 }).where(eq(prescriptionItem.id, v.items[0]!)); // 25 in stock
     const res = await checkout(w.pharm, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise: 58000 + 6000 + 9000 });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: 'out_of_stock', error: expect.stringContaining('Paracetamol (need 30, have 25)') });
-    await expectUntouched(w, v);
+    await expectUntouched(w, v, 'at_counter');
     expect((await queueOf(w.pharm)).map((q) => q.visitId)).toEqual([v.id]);
   });
 
@@ -249,7 +249,7 @@ describe('checkout: permissions', () => {
   it('only pharmacy.sell: it is the dispense of today; the bill part is refused and hidden', async () => {
     const w = await world();
     await setRole(w.owner, 'pharmacist', PHARMACIST_OLD);
-    const v = await visit(w, 'Ravi Kumar');
+    const v = await visit(w, 'Ravi Kumar', { sent: true });
 
     const seen = await json(w.pharm(`/api/b/main/visits/${v.id}/checkout`));
     expect(seen.bill).toBeNull();
@@ -263,10 +263,10 @@ describe('checkout: permissions', () => {
     }
     expect((await checkout(w.pharm, v.id, { itemIds: [], paymentMode: 'cash', amountPaise: 0 })).status).toBe(400); // nothing it may do
     expect((await checkout(w.pharm, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise: 69000 })).status).toBe(400); // cannot take the bill's money
-    await expectUntouched(w, v);
+    await expectUntouched(w, v, 'at_counter');
 
     const done = await json(checkout(w.pharm, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise: 11000 }));
-    expect(done).toMatchObject({ bill: null, paidBills: [], sale: { totalPaise: 11000 }, totals: { balancePaise: null }, visitStatus: 'waiting' }); // not billed yet: front desk still has to
+    expect(done).toMatchObject({ bill: null, paidBills: [], sale: { totalPaise: 11000 }, totals: { balancePaise: null }, visitStatus: 'at_counter' }); // not billed yet: front desk still has to
     expect(await t.db.select().from(opBill)).toEqual([]);
     expect(await queueOf(w.pharm)).toEqual([]);
     expect((await queueOf(w.desk)).map((q) => [q.visitId, q.toBillPaise])).toEqual([[v.id, 58000]]);
@@ -277,7 +277,7 @@ describe('checkout: permissions', () => {
   it('only billing.receive: it is create bill + payment of today; it cannot dispense and sees no medicines', async () => {
     const w = await world();
     await setRole(w.owner, 'front_desk', FRONT_DESK_OLD);
-    const v = await visit(w, 'Ravi Kumar');
+    const v = await visit(w, 'Ravi Kumar', { sent: true });
 
     const seen = await json(w.desk(`/api/b/main/visits/${v.id}/checkout`));
     expect(seen.medicines).toBeNull();
@@ -285,9 +285,9 @@ describe('checkout: permissions', () => {
     expect((await queueOf(w.desk)).map((q) => [q.medicinesWaiting, q.medicinesPaise, q.toBillPaise, q.grandTotalPaise])).toEqual([[null, null, 58000, 58000]]);
 
     expect((await checkout(w.desk, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise: 69000 })).status).toBe(403);
-    await expectUntouched(w, v);
+    await expectUntouched(w, v, 'at_counter');
     const done = await json(checkout(w.desk, v.id, { itemIds: [], paymentMode: 'cash', amountPaise: 58000 }));
-    expect(done).toMatchObject({ bill: { totalPaise: 58000, status: 'paid' }, sale: null, visitStatus: 'waiting' }); // medicines still to be given
+    expect(done).toMatchObject({ bill: { totalPaise: 58000, status: 'paid' }, sale: null, visitStatus: 'at_counter' }); // medicines still to be given
     expect((await t.db.select({ status: prescriptionItem.status }).from(prescriptionItem)).map((i) => i.status)).toEqual(['pending', 'pending']); // not declined
     expect(await queueOf(w.desk)).toEqual([]);
     expect((await queueOf(w.pharm)).map((q) => [q.visitId, q.medicinesWaiting])).toEqual([[v.id, 2]]);
@@ -330,10 +330,11 @@ describe('checkout: nothing owed may disappear', () => {
     await setStatus(today3.id, 'at_counter');
     expect((await checkout(w.desk, paidYesterday.id, { paymentMode: 'cash', amountPaise: 20000 })).status).toBe(201);
 
-    const expected = [atCounterOld.id, today3.id, today1.id, today2.id, edge.id, yesterday.id]; // sent by the doctor, then today, then older oldest first
+    const expected = [atCounterOld.id, today3.id, edge.id, yesterday.id]; // sent by the doctor, then older days oldest first
+    for (const stillWithDoctor of [today1, today2]) expect((await queueOf(w.pharm)).map((q) => q.visitId)).not.toContain(stillWithDoctor.id); // today's patients are listed once the doctor sends them
     const queue = await queueOf(w.pharm);
     expect(queue.map((q) => q.visitId)).toEqual(expected);
-    expect(queue.map((q) => q.status)).toEqual(['at_counter', 'at_counter', 'waiting', 'waiting', 'waiting', 'waiting']);
+    expect(queue.map((q) => q.status)).toEqual(['at_counter', 'at_counter', 'waiting', 'waiting']);
     expect(queue.find((q) => q.visitId === yesterday.id)).toMatchObject({ visitDate: inDays(-1), toBillPaise: 20000, medicinesWaiting: 0, summary: 'Consultation + lab due ₹200 · Total ₹200' });
     expect(queue.map((q) => q.visitId)).not.toContain(tooOld.id);
     expect(queue.map((q) => q.visitId)).not.toContain(paidYesterday.id);
@@ -369,7 +370,7 @@ describe('checkout: nothing owed may disappear', () => {
 
   it("another branch's visit is 404 on every new route and never in its lists", async () => {
     const w = await world();
-    const v = await visit(w, 'Ravi Kumar');
+    const v = await visit(w, 'Ravi Kumar', { sent: true });
     expect((await w.owner(`/api/b/east/visits/${v.id}/checkout`)).status).toBe(404);
     expect((await checkout(w.owner, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise: 69000 }, 'east')).status).toBe(404);
     expect((await w.owner(`/api/b/east/visits/${v.id}/combined-bill`)).status).toBe(404);
@@ -378,7 +379,7 @@ describe('checkout: nothing owed may disappear', () => {
     expect(await queueOf(w.owner, 'east')).toEqual([]);
     expect(await toBillOf(w.owner, 'east')).toEqual([]);
     expect((await w.pharm(`/api/b/east/visits/${v.id}/checkout`)).status).toBe(404); // not a member of east: the branch itself answers like a missing one
-    await expectUntouched(w, v);
+    await expectUntouched(w, v, 'at_counter');
     expect((await queueOf(w.owner)).map((q) => q.visitId)).toEqual([v.id]);
   });
 });

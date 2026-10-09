@@ -1,16 +1,14 @@
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { z } from 'zod';
 import { ClipboardEdit, FlaskConical, ListPlus, Pencil, Plus, Printer, TestTube, Trash2, X } from 'lucide-react';
-import { formatRupees, opToken, toPaise, type LabQueueEntry, type LabTest } from '@platform/shared';
+import { formatRupees, LAB_CATALOG, opToken, type LabQueueEntry, type LabTest } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, ConfirmDelete, ConfirmDialog, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { PrintHeaderForm } from '@/components/PrintHeaderForm';
 import { useBranch, useCan } from '@/state/auth';
 import { PrintLink } from '@/components/print';
+import { departmentLabel, LabTestForm } from '@/components/LabTestForm';
 
 export function Lab() {
   const current = useBranch();
@@ -170,14 +168,12 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
   );
 }
 
-const testFormSchema = z.object({ name: z.string().trim().min(2, 'Enter the test name').max(120), price: z.number({ error: 'Enter the price' }).min(0).max(100_000) });
-
 function LabTests({ canManage }: { canManage: boolean }) {
   const { branch } = useParams();
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<LabTest | null>(null);
   const [deleting, setDeleting] = useState<LabTest | null>(null);
-  const [pricing, setPricing] = useState<LabTest | null>(null);
   const [confirmLoad, setConfirmLoad] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ['lab-tests', branch], queryFn: () => api.get<{ tests: LabTest[] }>(`/b/${branch}/lab/tests`) });
   const loadStandard = useMutation({
@@ -185,15 +181,6 @@ function LabTests({ canManage }: { canManage: boolean }) {
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['lab-tests', branch] });
       toast.success(r.added ? `${r.added} standard tests added` : 'All standard tests are already in the list', { description: r.added ? 'Prices start at ₹0 — set them with the pencil.' : undefined });
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const setPrice = useMutation({
-    mutationFn: ({ t, price }: { t: LabTest; price: number }) => api.patch(`/b/${branch}/lab/tests/${t.id}`, { pricePaise: toPaise(price) }),
-    onSuccess: (_d, { t }) => {
-      qc.invalidateQueries({ queryKey: ['lab-tests', branch] });
-      setPricing(null);
-      toast.success(`Price of ${t.name} saved`);
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -205,13 +192,10 @@ function LabTests({ canManage }: { canManage: boolean }) {
       toast.success(`${t.name} deleted`);
     },
   });
-  const {
-    register,
-    handleSubmit,
-    reset,
-    setError,
-    formState: { errors, isSubmitting },
-  } = useForm<z.infer<typeof testFormSchema>>({ resolver: zodResolver(testFormSchema) });
+  // "Load standard tests" is offered only while a standard test is missing from the list: once loaded, it is gone.
+  const have = new Set((data?.tests ?? []).map((t) => t.name.toLowerCase()));
+  const canLoad = canManage && !!data && LAB_CATALOG.some((t) => !have.has(t.name.toLowerCase()));
+  const departments = [...new Set((data?.tests ?? []).map((t) => t.department))].sort();
 
   return (
     <Card>
@@ -231,9 +215,11 @@ function LabTests({ canManage }: { canManage: boolean }) {
         </div>
         {canManage && (
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" disabled={loadStandard.isPending} onClick={() => setConfirmLoad(true)}>
-              <ListPlus /> Load standard tests
-            </Button>
+            {canLoad && (
+              <Button size="sm" variant="outline" disabled={loadStandard.isPending} onClick={() => setConfirmLoad(true)}>
+                <ListPlus /> Load standard tests
+              </Button>
+            )}
             <Button size="sm" onClick={() => setAdding(true)}>
               <Plus /> Add test
             </Button>
@@ -269,11 +255,11 @@ function LabTests({ canManage }: { canManage: boolean }) {
                     {t.kind === 'card' && ' · card test'}
                   </div>
                 </TD>
-                <TD className="hidden text-xs text-muted md:table-cell">{t.department.replace('DEPARTMENT OF ', '')}</TD>
+                <TD className="hidden text-xs text-muted md:table-cell">{departmentLabel(t.department)}</TD>
                 <TD className={`text-right tabular-nums ${t.pricePaise === 0 ? 'text-warning' : ''}`}>{formatRupees(t.pricePaise)}</TD>
                 {canManage && (
                   <TD className="text-right whitespace-nowrap">
-                    <Button size="icon-sm" variant="ghost" aria-label={`Edit price of ${t.name}`} onClick={() => setPricing(t)}>
+                    <Button size="icon-sm" variant="ghost" aria-label={`Edit ${t.name}`} onClick={() => setEditing(t)}>
                       <Pencil />
                     </Button>
                     <Button size="icon-sm" variant="ghost" aria-label={`Delete ${t.name}`} onClick={() => setDeleting(t)}>
@@ -286,62 +272,11 @@ function LabTests({ canManage }: { canManage: boolean }) {
           </TBody>
         </Table>
       )}
-      <Dialog open={adding} onOpenChange={setAdding} title="Add lab test">
-        <form
-          noValidate
-          className="grid gap-4 sm:grid-cols-3"
-          onSubmit={handleSubmit(async ({ name, price }) => {
-            try {
-              await api.post(`/b/${branch}/lab/tests`, { name, pricePaise: toPaise(price) });
-              qc.invalidateQueries({ queryKey: ['lab-tests', branch] });
-              toast.success(`${name} added`);
-              reset();
-              setAdding(false);
-            } catch (e) {
-              setError('root', { message: errorMessage(e) });
-            }
-          })}
-        >
-          <Field label="Test name" htmlFor="test-name" error={errors.name?.message} className="sm:col-span-2">
-            <Input id="test-name" autoFocus placeholder="e.g. CBC" {...register('name')} />
-          </Field>
-          <Field label="Price (₹)" htmlFor="test-price" error={errors.price?.message}>
-            <Input id="test-price" inputMode="decimal" {...register('price', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })} />
-          </Field>
-          {errors.root && <p className="text-sm text-critical sm:col-span-3">{errors.root.message}</p>}
-          <div className="flex flex-col-reverse gap-2 pt-2 sm:col-span-3 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setAdding(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              Add test
-            </Button>
-          </div>
-        </form>
+      <Dialog wide open={adding} onOpenChange={setAdding} title="Add lab test" description="A single test, or a group test with its own result lines (e.g. CBC: Haemoglobin, Basophils …).">
+        {adding && <LabTestForm branch={branch!} departments={departments} onDone={() => setAdding(false)} onCancel={() => setAdding(false)} />}
       </Dialog>
-      <Dialog open={!!pricing} onOpenChange={(o) => !o && setPricing(null)} title={`Price · ${pricing?.name ?? ''}`}>
-        {pricing && (
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const price = Number(new FormData(e.currentTarget).get('price'));
-              if (Number.isFinite(price) && price >= 0) setPrice.mutate({ t: pricing, price });
-            }}
-          >
-            <Field label="Price (₹)" htmlFor="edit-price">
-              <Input id="edit-price" name="price" inputMode="decimal" autoFocus defaultValue={String(pricing.pricePaise / 100)} />
-            </Field>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setPricing(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={setPrice.isPending}>
-                Save price
-              </Button>
-            </div>
-          </form>
-        )}
+      <Dialog wide open={!!editing} onOpenChange={(o) => !o && setEditing(null)} title={`Edit · ${editing?.name ?? ''}`} description="Name, price and result lines. Reports already printed are not changed; a reprint shows the lines as they are now.">
+        {editing && <LabTestForm branch={branch!} testId={editing.id} departments={departments} onDone={() => setEditing(null)} onCancel={() => setEditing(null)} />}
       </Dialog>
       <ConfirmDelete
         open={!!deleting}

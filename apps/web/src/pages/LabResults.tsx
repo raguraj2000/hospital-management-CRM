@@ -9,6 +9,7 @@ import { labTone } from '@/components/format';
 import { PrintLink } from '@/components/print';
 import { useCan } from '@/state/auth';
 import { TokenBadge } from '@/components/Visits';
+import { KeyHint } from '@/components/Shortcuts';
 
 const statusLabel = { ordered: 'Waiting for sample', sample_collected: 'In progress', completed: 'Completed', cancelled: 'Cancelled' } as const;
 
@@ -162,6 +163,7 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
             <Save /> Save
           </Button>
           <Button
+            data-shortcut="alt+s"
             disabled={saving}
             onClick={() => {
               // A report must be whole: every value entered before the test can be completed.
@@ -169,7 +171,7 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
               setConfirming(true);
             }}
           >
-            <CheckCircle2 /> {test.status === 'completed' ? 'Save (completed)' : 'Save & complete'}
+            <CheckCircle2 /> {test.status === 'completed' ? 'Save (completed)' : 'Save & complete'} <KeyHint>Alt+S</KeyHint>
           </Button>
         </div>
       )}

@@ -88,6 +88,8 @@ export async function balanceDueOf(db: Db | Tx, branchId: number, visitId: numbe
  * and the checkout queue: a visit (not cancelled, not deleted) that has no bill yet, or lab tests not on a bill,
  * or a bill with a balance due, or prescription lines still pending.
  * Earlier days stay listed until settled, but only CHECKOUT_LOOKBACK_DAYS back.
+ * Today's patients are listed only once the doctor has sent them to the counter (or the visit is completed with
+ * something still owed): while they wait, are with the doctor or at the lab, the counter does not see them yet.
  * Order: sent to the counter by the doctor first (token order), then today's other visits, then older ones oldest first.
  */
 export async function visitsToCollect(db: Db, branchId: number, today: string) {
@@ -126,5 +128,6 @@ export async function visitsToCollect(db: Db, branchId: number, today: string) {
       ),
     )
     .orderBy(sql`case when ${opVisit.status} = 'at_counter' then 0 when ${opVisit.visitDate} = ${today} then 1 else 2 end`, asc(opVisit.visitDate), asc(opVisit.id));
-  return rows.filter((r) => r.billCount === 0 || r.unbilledLabCount > 0 || r.balancePaise > 0 || r.medicinesWaiting > 0).map(withToken);
+  const stillWithDoctor = (r: (typeof rows)[number]) => r.visitDate === today && (r.status === 'waiting' || r.status === 'with_doctor' || r.status === 'at_lab');
+  return rows.filter((r) => !stillWithDoctor(r) && (r.billCount === 0 || r.unbilledLabCount > 0 || r.balancePaise > 0 || r.medicinesWaiting > 0)).map(withToken);
 }

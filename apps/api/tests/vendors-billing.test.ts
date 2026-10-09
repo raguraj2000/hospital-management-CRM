@@ -86,6 +86,8 @@ describe('patient billing', () => {
     const doc = await t.as('doc');
     const desk = await t.as('desk');
     const { visit } = await visitWithLab(owner, doc);
+    // The counter sees today's patient once the doctor has sent them.
+    await doc(`/api/b/main/visits/${visit.id}/send`, { method: 'POST', body: { to: 'counter' } });
 
     const todo = (await json(desk('/api/b/main/billing/to-bill'))).visits;
     expect(todo.map((v: any) => [v.opNo, v.hasBill, v.unbilledLabPaise])).toEqual([[visit.opNo, false, 30000]]);

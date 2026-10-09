@@ -16,7 +16,7 @@ import {
   type PrescriptionItemInput,
   type PrescriptionSuggestions,
 } from '@platform/shared';
-import { Badge, Button, Card, CardHeader, Chips, Combobox, EmptyState, Field, Input, NativeSelect, Skeleton, Table, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+import { Badge, Button, Card, CardHeader, Combobox, EmptyState, Field, Input, NativeSelect, Skeleton, Table, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
 import { CounterNote } from './CounterNote';
@@ -151,7 +151,7 @@ function DoseInput({ value, onChange, choices, error }: { value: string; onChang
   // Custom stays open while the typed text happens to match a listed dose, until a listed one is picked.
   const [custom, setCustom] = useState(!choices.includes(value));
   return (
-    <Field label="Dose" htmlFor="rx-dose" error={error} className="col-span-2 sm:col-span-4">
+    <Field required label="Dose" htmlFor="rx-dose" error={error} className="col-span-2">
       <div className="flex gap-2">
         <NativeSelect
           id="rx-dose"
@@ -170,6 +170,35 @@ function DoseInput({ value, onChange, choices, error }: { value: string; onChang
           <option value={CUSTOM}>Custom…</option>
         </NativeSelect>
         {custom && <Input aria-label="Custom dose" autoFocus placeholder="Type the dose, e.g. 5 ml twice" maxLength={40} value={value} onChange={(e) => onChange(e.target.value)} />}
+      </div>
+    </Field>
+  );
+}
+
+/** How to take it: "After food" and "Before food" first, then the other usual ones and what this branch has typed before. */
+function InstructionInput({ value, onChange, choices }: { value: string; onChange: (text: string) => void; choices: string[] }) {
+  const [custom, setCustom] = useState(value !== '' && !choices.includes(value));
+  return (
+    <Field label="Instructions" htmlFor="rx-instructions" className="col-span-2">
+      <div className="flex gap-2">
+        <NativeSelect
+          id="rx-instructions"
+          value={custom ? CUSTOM : value}
+          onChange={(e) => {
+            const picked = e.target.value;
+            setCustom(picked === CUSTOM);
+            onChange(picked === CUSTOM ? '' : picked);
+          }}
+        >
+          {choices.map((x) => (
+            <option key={x} value={x}>
+              {x}
+            </option>
+          ))}
+          <option value="">No instruction</option>
+          <option value={CUSTOM}>Other…</option>
+        </NativeSelect>
+        {custom && <Input aria-label="Other instruction" autoFocus placeholder="Type it, e.g. With warm water" maxLength={200} value={value} onChange={(e) => onChange(e.target.value)} />}
       </div>
     </Field>
   );
@@ -221,8 +250,10 @@ function AddMedicineForm({ branch, visitId, onAdded }: { branch: string; visitId
         }
       })}
     >
-      <div className="col-span-2 sm:col-span-6">
-        <div className="mb-2 text-sm font-medium">Add medicine</div>
+      <div className="col-span-2 sm:col-span-6" data-shortcut="alt+m">
+        <div className="mb-2 text-sm font-medium">
+          Add medicine <span aria-hidden className="text-critical">*</span>
+        </div>
         <Combobox
           aria-label="Medicine"
           aria-invalid={!!errors.medicineId}
@@ -231,7 +262,9 @@ function AddMedicineForm({ branch, visitId, onAdded }: { branch: string; visitId
           onChange={(id) => setValue('medicineId', (id ?? undefined) as number, { shouldValidate: id != null })}
           getKey={medicineKey}
           getLabel={medicineLabel}
-          placeholder={meds.data?.medicines.length === 0 ? 'No medicines — add them in Inventory' : 'Search medicine…'}
+          placeholder={meds.data?.medicines.length === 0 ? 'No medicines — add them in Inventory' : 'Search medicine…   (Alt+M)'}
+          // No stock at all: the pharmacy could not give it, so it cannot be prescribed.
+          isDisabled={(m) => m.stock === 0}
           emptyText="No medicine with that name"
           renderOption={(m) => (
             <span className="flex items-center justify-between gap-3">
@@ -249,25 +282,13 @@ function AddMedicineForm({ branch, visitId, onAdded }: { branch: string; visitId
       </div>
 
       <DoseInput value={dose} onChange={(d) => setValue('dose', d, { shouldValidate: d !== '' })} choices={withRemembered(START_DOSES, used.data?.doses)} error={errors.dose?.message} />
-      <Field label="Days" htmlFor="rx-days" error={errors.days?.message}>
+      <InstructionInput value={instructions} onChange={(x) => setValue('instructions', x)} choices={withRemembered(INSTRUCTIONS, used.data?.instructions)} />
+      <Field required label="Days" htmlFor="rx-days" error={errors.days?.message}>
         <Input id="rx-days" inputMode="numeric" {...register('days', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })} />
       </Field>
       <Field label="Qty" htmlFor="rx-qty" error={errors.quantity?.message} hint={auto != null ? `Auto: ${auto}` : 'Type it'}>
         <Input id="rx-qty" inputMode="numeric" placeholder={auto != null ? String(auto) : ''} {...register('quantity', { setValueAs: (v) => (v === '' || v == null ? null : Number(v)) })} />
       </Field>
-
-      <div className="col-span-2 sm:col-span-6">
-        <Field label="Instructions" htmlFor="rx-instructions" hint="Pick one or type your own">
-          <Input id="rx-instructions" maxLength={200} placeholder="e.g. After food" {...register('instructions')} />
-        </Field>
-        <Chips
-          aria-label="Instruction choices"
-          className="mt-2"
-          options={withRemembered(INSTRUCTIONS, used.data?.instructions)}
-          isOn={(x) => x === instructions}
-          onPick={(x) => setValue('instructions', x === instructions ? '' : x)}
-        />
-      </div>
 
       <label className="col-span-2 flex min-h-10 items-center gap-2.5 text-sm sm:col-span-6">
         <input type="checkbox" className="size-5 accent-[var(--color-primary)]" {...register('givenHere')} />

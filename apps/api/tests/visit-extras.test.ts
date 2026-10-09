@@ -45,6 +45,7 @@ describe("the doctor's fee for one visit", () => {
     expect((await setFee(w.doc, v.id, 50000)).status).toBe(200);
     expect(await feeOf(w.doc, v.id)).toEqual({ consultationFeePaise: 50000, standardFeePaise: 20000, locked: false });
     expect((await checkoutOf(w.desk, v.id)).bill.consultationFeePaise).toBe(50000);
+    await w.doc(`/api/b/main/visits/${v.id}/send`, { method: 'POST', body: { to: 'counter' } }); // the counter's list shows the patient once sent
     expect((await json(w.desk('/api/b/main/checkout-queue'))).queue.find((q: any) => q.visitId === v.id).toBillPaise).toBe(50000);
 
     const paid = await w.desk(`/api/b/main/visits/${v.id}/checkout`, { method: 'POST', body: { itemIds: [], paymentMode: 'cash', amountPaise: 50000 } });
