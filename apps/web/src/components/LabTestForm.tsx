@@ -13,6 +13,8 @@ interface Line {
   method: string;
   unit: string;
   refRange: string;
+  /** May be left empty when the test is completed. */
+  optional?: boolean;
 }
 const EMPTY: Line = { name: '', method: '', unit: '', refRange: '' };
 const blank = (l: Line) => !l.name.trim() && !l.method.trim() && !l.unit.trim() && !l.refRange.trim();
@@ -69,7 +71,7 @@ export function LabTestForm({ branch, testId, departments, onDone, onCancel }: {
       pricePaise: toPaise(rupees),
       department: departmentOf(department),
       // A new test with no lines gets one line with its own name (a free-text result).
-      parameters: kept.length ? kept.map((l) => ({ id: l.id, name: l.name.trim(), method: l.method.trim(), unit: l.unit.trim(), refRange: l.refRange.trim() })) : undefined,
+      parameters: kept.length ? kept.map((l) => ({ id: l.id, name: l.name.trim(), method: l.method.trim(), unit: l.unit.trim(), refRange: l.refRange.trim(), optional: !!l.optional })) : undefined,
     };
     setSaving(true);
     try {
@@ -127,9 +129,15 @@ export function LabTestForm({ branch, testId, departments, onDone, onCancel }: {
               <Input aria-label={`Line ${i + 1}: method`} placeholder="e.g. Microscopy" value={l.method} onChange={(e) => setLine(i, { method: e.target.value })} />
               <Input aria-label={`Line ${i + 1}: unit`} placeholder="e.g. %" value={l.unit} onChange={(e) => setLine(i, { unit: e.target.value })} />
               <Input aria-label={`Line ${i + 1}: normal range`} placeholder="e.g. 0 - 1" value={l.refRange} onChange={(e) => setLine(i, { refRange: e.target.value })} />
-              <Button variant="ghost" size="icon" aria-label={`Remove line ${i + 1}`} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>
-                <X />
-              </Button>
+              <div className="flex items-center gap-1">
+                <label className="flex items-center gap-1 text-xs whitespace-nowrap text-muted" title="Ticked: the test cannot be completed while this line is empty. Unticked: the line may stay empty.">
+                  <input type="checkbox" aria-label={`Line ${i + 1}: required`} className="size-4 accent-[var(--color-primary)]" checked={!l.optional} onChange={(e) => setLine(i, { optional: !e.target.checked })} />
+                  Required
+                </label>
+                <Button variant="ghost" size="icon" aria-label={`Remove line ${i + 1}`} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>
+                  <X />
+                </Button>
+              </div>
             </div>
           ))}
         </div>

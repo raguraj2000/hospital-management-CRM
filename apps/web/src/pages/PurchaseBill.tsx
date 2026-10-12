@@ -153,7 +153,7 @@ export function PurchaseBillPage() {
                     {modeLabel[p.mode]}
                     {p.reference && <span className="text-muted"> · {p.reference}</span>}
                     <span className="block text-xs text-muted">
-                      {new Date(p.paidAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                      {new Date(p.paidAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
                       {p.paidByName && ` · ${p.paidByName}`}
                     </span>
                   </span>

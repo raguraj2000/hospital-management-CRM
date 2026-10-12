@@ -222,10 +222,17 @@ export function VisitActions({ branch, visit, label, callIn = true }: { branch: 
 export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: string; patientId: number; onDone: (v: OpVisit, seenNow: boolean) => void; onCancel: () => void }) {
   const invalidate = useVisitInvalidate(branch);
   const canCallIn = useCan('patient.edit');
+  const canSetFee = [useCan('billing.receive'), useCan('prescription.write')].some(Boolean);
+  // Already here today? Coming back the same day is usually not charged again: ask.
+  const earlier = useQuery({ queryKey: ['patient-visits', branch, patientId, 'same-day'], queryFn: () => api.get<{ visits: OpVisit[] }>(`/b/${branch}/patients/${patientId}/visits`), staleTime: 0 });
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const sameDay = (earlier.data?.visits ?? []).filter((x) => x.visitDate === today && x.status !== 'cancelled');
+  const [noFee, setNoFee] = useState(true);
 
   async function create(values: VisitInput, seeNow: boolean) {
     const { visit } = await api.post<{ visit: OpVisit }>(`/b/${branch}/patients/${patientId}/visits`, values);
     try {
+      if (sameDay.length && noFee && canSetFee) await api.put(`/b/${branch}/visits/${visit.id}/consultation-fee`, { consultationFeePaise: 0 });
       if (seeNow) await api.post(`/b/${branch}/visits/call-next`, { visitId: visit.id });
     } catch (e) {
       // The visit exists; only the extra step failed. Say so instead of losing the visit.
@@ -244,6 +251,23 @@ export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: 
       branch={branch}
       submitLabel="Start OP visit"
       onCancel={onCancel}
+      extra={
+        sameDay.length > 0 && (
+          <div role="alert" className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm sm:col-span-2">
+            <div className="font-semibold">
+              This patient already has an OP visit today ({sameDay.map((x) => `${visitLabel(x)}, ${new Date(x.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })}${x.complaint ? `, ${x.complaint}` : ''}`).join(' · ')})
+            </div>
+            {canSetFee ? (
+              <label className="mt-1.5 flex items-center gap-2">
+                <input type="checkbox" className="size-5 accent-[var(--color-primary)]" checked={noFee} onChange={(e) => setNoFee(e.target.checked)} />
+                No consultation fee for this second visit
+              </label>
+            ) : (
+              <p className="text-xs text-muted">The doctor or the counter can set the fee of this visit to ₹0.</p>
+            )}
+          </div>
+        )
+      }
       onSubmit={(values) => create(values, false)}
       onSeeNow={canCallIn ? (values) => create(values, true) : undefined}
     />
@@ -254,11 +278,11 @@ const num = (v: unknown) => (v === '' || v == null ? null : Number(v));
 
 type VitalName = 'bpSystolic' | 'bpDiastolic' | 'pulse' | 'temperatureF' | 'spo2' | 'weightKg';
 const VITALS: { name: VitalName; label: string; placeholder: string; decimal?: boolean }[] = [
-  { name: 'bpSystolic', label: 'BP upper (mmHg)', placeholder: '120' },
-  { name: 'bpDiastolic', label: 'BP lower (mmHg)', placeholder: '80' },
   { name: 'pulse', label: 'Pulse (/min)', placeholder: '72' },
   { name: 'temperatureF', label: 'Temp (°F)', placeholder: '98.6', decimal: true },
   { name: 'spo2', label: 'SpO₂ (%)', placeholder: '98' },
+  { name: 'bpSystolic', label: 'BP upper (mmHg)', placeholder: '120' },
+  { name: 'bpDiastolic', label: 'BP lower (mmHg)', placeholder: '80' },
   { name: 'weightKg', label: 'Weight (kg)', placeholder: '62.5', decimal: true },
 ];
 

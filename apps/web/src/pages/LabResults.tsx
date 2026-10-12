@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowLeft, CheckCircle2, Printer, Save } from 'lucide-react';
@@ -70,16 +70,66 @@ export function LabResults() {
 }
 
 /** `othersPending`: the visit's other tests that are not completed yet. */
+type Param = { id: number; name: string };
+const num = (v: string | undefined) => (v != null && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+
+/**
+ * The red-cell indices of a CBC from haemoglobin (g/dl), RBC (million/cumm) and PCV (%):
+ * MCV = PCV / RBC x 10, MCH = Hb / RBC x 10, MCHC = Hb / PCV x 100. A box that was typed by hand is left alone.
+ */
+function withIndices(params: Param[], values: Record<number, string>, auto: Set<number>): Record<number, string> {
+  const find = (re: RegExp) => params.find((p) => re.test(p.name));
+  const hb = num(values[find(/^h(a)?emoglobin\b/i)?.id ?? -1]);
+  const rbc = num(values[find(/\bRBC\b/i)?.id ?? -1]);
+  const pcv = num(values[find(/\bPCV\b|hematocrit/i)?.id ?? -1]);
+  const out = { ...values };
+  const put = (target: Param | undefined, value: number | null) => {
+    if (!target) return;
+    const typed = (out[target.id] ?? '').trim() !== '' && !auto.has(target.id);
+    if (typed) return;
+    if (value == null || !Number.isFinite(value)) {
+      if (auto.has(target.id)) out[target.id] = '';
+      return;
+    }
+    out[target.id] = value.toFixed(1);
+    auto.add(target.id);
+  };
+  put(find(/\bMCV\b/), pcv != null && rbc ? (pcv / rbc) * 10 : null);
+  put(find(/\bMCH\b/), hb != null && rbc ? (hb / rbc) * 10 : null);
+  put(find(/\bMCHC\b/), hb != null && pcv ? (hb / pcv) * 100 : null);
+  return out;
+}
+
+/** What neutrophils + lymphocytes + monocytes + eosinophils + basophils add up to; null when the test has none of them. */
+function differentialTotal(params: Param[], values: Record<number, string>) {
+  const cells = params.filter((p) => /^(neutrophils|lymphocytes|monocytes|eosinophils|basophils)\b/i.test(p.name));
+  if (cells.length < 5) return null;
+  const typed = cells.map((p) => num(values[p.id]));
+  if (typed.every((x) => x == null)) return null;
+  return { total: Math.round(typed.reduce<number>((s, x) => s + (x ?? 0), 0) * 10) / 10, complete: typed.every((x) => x != null) };
+}
+
 function TestCard({ branch, visitId, test, othersPending }: { branch: string; visitId: string; test: LabReportTest; othersPending: number }) {
   const canEnter = useCan('lab.view');
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [values, setValues] = useState<Record<number, string>>(() => Object.fromEntries(test.parameters.map((p) => [p.id, p.value])));
+  const [values, setRaw] = useState<Record<number, string>>(() => Object.fromEntries(test.parameters.map((p) => [p.id, p.value])));
+  // Boxes filled by the calculation (not typed): they follow their source values until someone types in them.
+  const auto = useRef(new Set<number>());
+  /** Every change goes through here: a typed box stops being calculated, then the CBC indices are worked out. */
+  const setValues = (change: (s: Record<number, string>) => Record<number, string>) =>
+    setRaw((s) => {
+      const next = change(s);
+      for (const p of test.parameters) if (next[p.id] !== s[p.id]) auto.current.delete(p.id);
+      return withIndices(test.parameters, next, auto.current);
+    });
+  const diff = differentialTotal(test.parameters, values);
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   // Set when "Save & complete" was pressed with empty values: those boxes are marked until they are filled.
   const [showMissing, setShowMissing] = useState(false);
-  const missing = test.parameters.filter((p) => !(values[p.id] ?? '').trim());
+  // Lines the test cannot be completed without (optional ones may stay empty).
+  const missing = test.parameters.filter((p) => !p.optional && !(values[p.id] ?? '').trim());
   const dirty = test.parameters.some((p) => (values[p.id] ?? '') !== p.value);
   const filled = test.parameters.filter((p) => (values[p.id] ?? '').trim()).length;
 
@@ -125,7 +175,9 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
           return (
             <div key={p.id} className="grid gap-2 px-4 py-2.5 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_minmax(0,0.8fr)] sm:items-center">
               <div className="min-w-0">
-                <div className="text-sm font-medium">{p.name}</div>
+                <div className="text-sm font-medium">
+                  {p.name} {p.optional ? <span className="text-xs font-normal text-muted">(optional)</span> : <span className="text-critical" title="Required">*</span>}
+                </div>
                 {p.method && <div className="truncate text-xs text-muted">{p.method}</div>}
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -135,7 +187,7 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
                   disabled={!canEnter}
                   inputMode={p.type === 'number' ? 'decimal' : 'text'}
                   onChange={(e) => setValues((s) => ({ ...s, [p.id]: e.target.value }))}
-                  aria-invalid={showMissing && !v.trim()}
+                  aria-invalid={showMissing && !p.optional && !v.trim()}
                   className={`w-28 tabular-nums ${flag ? 'border-critical font-semibold text-critical' : ''}`}
                 />
                 {p.unit && <span className="text-xs text-muted">{p.unit}</span>}
@@ -156,6 +208,14 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
             </div>
           );
         })}
+        {diff && (
+          <div className={`flex items-center justify-between px-4 py-2 text-sm font-medium ${diff.complete && diff.total !== 100 ? 'bg-warning-soft text-warning' : 'text-muted'}`}>
+            <span>Differential count total</span>
+            <span className="tabular-nums">
+              {diff.total}%{diff.complete ? (diff.total === 100 ? ' ✓' : ' — should be 100%') : ' so far'}
+            </span>
+          </div>
+        )}
       </div>
       {canEnter && (
         <div className="flex flex-wrap justify-end gap-2 border-t border-border p-3">

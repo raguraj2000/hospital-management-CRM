@@ -74,3 +74,10 @@ export async function setup() {
       }
     } };
 }
+
+/** A value for every result line of a lab order: what "Save & complete" needs now that required lines must be filled. */
+export async function allResults(db: { all: (q: any) => Promise<any> }, orderId: number, value = '1'): Promise<{ parameterId: number; value: string }[]> {
+  const { sql } = await import('drizzle-orm');
+  const rows = (await db.all(sql`select p.id as id from lab_test_parameter p inner join lab_order o on o.test_id = p.test_id where o.id = ${orderId} and p.deleted_at is null`)) as { id: number }[];
+  return rows.map((r) => ({ parameterId: r.id, value }));
+}

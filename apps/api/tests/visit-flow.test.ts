@@ -1,6 +1,6 @@
 // The patient journey: waiting -> with_doctor -> (at_lab -> with_doctor)* -> at_counter -> completed.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { setup } from './helpers.js';
+import { setup, allResults } from './helpers.js';
 
 let t: Awaited<ReturnType<typeof setup>>;
 beforeEach(async () => (t = await setup()));
@@ -39,7 +39,7 @@ async function order(caller: Caller, visitId: number, testIds: number[]) {
   const { orders } = await json(caller(`/api/b/main/visits/${visitId}/lab-orders`));
   return (orders as { id: number; testId: number }[]).filter((o) => testIds.includes(o.testId)).map((o) => o.id);
 }
-const complete = async (lab: Caller, orderId: number) => expect((await lab(`/api/b/main/lab/orders/${orderId}/results`, { method: 'PUT', body: { results: [], complete: true } })).status).toBe(200);
+const complete = async (lab: Caller, orderId: number) => expect((await lab(`/api/b/main/lab/orders/${orderId}/results`, { method: 'PUT', body: { results: await allResults(t.db, orderId), complete: true } })).status).toBe(200);
 
 describe('call next', () => {
   it('takes tokens in order per doctor; one patient inside per doctor, and two doctors can each have one', async () => {

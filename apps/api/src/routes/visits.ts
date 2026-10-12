@@ -39,6 +39,8 @@ const columns = {
   spo2: opVisit.spo2,
   weightKg: opVisit.weightKg,
   createdAt: opVisit.createdAt,
+  // Who started the visit (front desk, or the doctor themselves).
+  createdByName: sql<string | null>`(select ${user.name} from ${user} where ${user.id} = ${opVisit.createdBy})`,
   patientName: patient.name,
   patientUhid: patient.uhid,
   patientConditions: patient.conditions,
@@ -75,9 +77,9 @@ function queueOf(rows: OpVisitRow[], doctorUserId: number | null): VisitQueue {
   };
 }
 
-/** Today's date on the server (the clinic PC's local time), YYYY-MM-DD. */
+/** Today's date in India (IST), YYYY-MM-DD. */
 async function localToday(db: Db): Promise<string> {
-  return (await db.get<{ d: string }>(sql`select date('now', 'localtime') as d`))!.d;
+  return (await db.get<{ d: string }>(sql`select date('now', '+330 minutes') as d`))!.d;
 }
 
 /** OP-YYMMDD-NNN: the day's running number in this branch (doubles as the queue token). */

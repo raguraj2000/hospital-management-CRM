@@ -6,6 +6,8 @@ import { Hono } from 'hono';
 import type { z } from 'zod';
 import {
   billingSettingsSchema,
+  billChargeSchema,
+  billCharges,
   billPaymentSchema,
   billStatus,
   billUpdateSchema,
@@ -13,6 +15,8 @@ import {
   receiptNo,
   visitFeeSchema,
   type BillLine,
+  type ChargePreset,
+  type VisitCharges,
   type BillListRow,
   type Collection,
   type DayReceipt,
@@ -22,7 +26,7 @@ import {
   type VisitFee,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, user, vendorPayment } from '../db/schema.js';
+import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, user, vendorPayment, visitCharge } from '../db/schema.js';
 import { dayStamp, exclusively, localToday, patientOfBranch, visitOfBranch, visitsToCollect, withToken } from '../lib/clinic.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -57,6 +61,25 @@ async function recomputeTotal(db: Db | Tx, billId: number) {
   const total = Math.max(0, b!.consultationFeePaise + b!.otherChargesPaise + l!.sum - b!.discountPaise);
   await db.update(opBill).set({ totalPaise: total, updatedAt: new Date().toISOString() }).where(eq(opBill.id, billId));
   return total;
+}
+
+/** Extra charges put on a visit (dressing, IV...) that are on no bill yet: the visit's first bill takes them. */
+export async function pendingVisitCharges(db: Db | Tx, branchId: number, visitId: number) {
+  return db
+    .select({ id: visitCharge.id, description: visitCharge.description, amountPaise: visitCharge.amountPaise })
+    .from(visitCharge)
+    .where(and(eq(visitCharge.branchId, branchId), eq(visitCharge.visitId, visitId), isNull(visitCharge.deletedAt), isNull(visitCharge.billId)))
+    .orderBy(asc(visitCharge.id));
+}
+
+/** The branch's ready-made extra charges (Settings). */
+export async function chargePresets(db: Db | Tx, branchId: number): Promise<ChargePreset[]> {
+  const [s] = await db.select({ json: clinicSetting.chargePresets }).from(clinicSetting).where(eq(clinicSetting.branchId, branchId));
+  try {
+    return s?.json ? (JSON.parse(s.json) as ChargePreset[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Lab orders of a visit that aren't cancelled and aren't on any bill yet. */
@@ -110,7 +133,7 @@ export async function billOf(db: Db | Tx, branchId: number, id: number): Promise
       billNo: opBill.billNo,
       visitId: opBill.visitId,
       opNo: opVisit.opNo,
-      billDate: sql<string>`date(${opBill.createdAt}, 'localtime')`,
+      billDate: sql<string>`date(${opBill.createdAt}, '+330 minutes')`,
       createdAt: opBill.createdAt,
       patientId: patient.id,
       patientName: patient.name,
@@ -153,7 +176,7 @@ export async function createBill(tx: Tx, branchId: number, u: Who, v: { id: numb
   const unbilled = await unbilledLabOrders(tx, branchId, v.id);
   if (existing.length) {
     for (const e of existing) if ((await paidOf(tx, e.id)) === 0) throw new AppError(409, 'open_bill', 'This visit already has an unpaid bill. Open it instead.');
-    if (!unbilled.length) throw new AppError(409, 'nothing_to_bill', 'Everything on this visit is already billed');
+    if (!unbilled.length && !(await pendingVisitCharges(tx, branchId, v.id)).length) throw new AppError(409, 'nothing_to_bill', 'Everything on this visit is already billed');
   }
   const n = await nextNumber(tx, branchId, `bill:${today}`);
   const [bill] = await tx
@@ -168,6 +191,12 @@ export async function createBill(tx: Tx, branchId: number, u: Who, v: { id: numb
     })
     .returning({ id: opBill.id });
   if (unbilled.length) await tx.insert(opBillLine).values(labLines(branchId, bill.id, unbilled));
+  // The extra charges put on the visit before it had a bill become lines of this one.
+  const pending = await pendingVisitCharges(tx, branchId, v.id);
+  if (pending.length) {
+    await tx.insert(opBillLine).values(pending.map((p) => ({ branchId, billId: bill.id, labOrderId: null, description: p.description, amountPaise: p.amountPaise })));
+    await tx.update(visitCharge).set({ billId: bill.id, updatedAt: new Date().toISOString() }).where(and(eq(visitCharge.branchId, branchId), eq(visitCharge.visitId, v.id), isNull(visitCharge.deletedAt), isNull(visitCharge.billId)));
+  }
   await recomputeTotal(tx, bill.id);
   await writeAudit(tx, { organizationId: u.organizationId, branchId, userId: u.id, action: 'create', entity: 'op_bill', entityId: bill.id, detail: { visitId: v.id } });
   return bill.id;
@@ -213,17 +242,19 @@ export function createBillingRoutes(db: Db) {
 
   // ---------------------------------------------------------------- settings
 
-  app.get('/billing/settings', requireAnyPermission('billing.receive', 'settings.manage'), async (c) => c.json({ consultationFeePaise: await consultationFee(db, c.get('branch').id) }));
+  app.get('/billing/settings', requireAnyPermission('billing.receive', 'settings.manage'), async (c) => c.json({ consultationFeePaise: await consultationFee(db, c.get('branch').id), chargePresets: await chargePresets(db, c.get('branch').id) }));
 
   app.put('/billing/settings', requirePermission('settings.manage'), async (c) => {
     const parsed = billingSettingsSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) throw validationError(parsed.error);
     const b = c.get('branch');
     const u = c.get('user');
+    // Not sent = the list stays as it is.
+    const presets = parsed.data.chargePresets === undefined ? undefined : JSON.stringify(parsed.data.chargePresets);
     await db
       .insert(clinicSetting)
-      .values({ branchId: b.id, consultationFeePaise: parsed.data.consultationFeePaise })
-      .onConflictDoUpdate({ target: clinicSetting.branchId, set: { consultationFeePaise: parsed.data.consultationFeePaise, updatedAt: new Date().toISOString() } });
+      .values({ branchId: b.id, consultationFeePaise: parsed.data.consultationFeePaise, chargePresets: presets })
+      .onConflictDoUpdate({ target: clinicSetting.branchId, set: { consultationFeePaise: parsed.data.consultationFeePaise, ...(presets === undefined ? {} : { chargePresets: presets }), updatedAt: new Date().toISOString() } });
     await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'billing_settings', entityId: b.id, detail: parsed.data });
     return c.json({ ok: true });
   });
@@ -237,6 +268,84 @@ export function createBillingRoutes(db: Db) {
     const bills = await Promise.all(ids.map((r) => billOfBranch(b.id, r.id)));
     const unbilled = await unbilledLabOrders(db, b.id, v.id);
     return c.json({ bills, unbilledLab: unbilled, labPayment: await labPaymentState(db, b.id, v.id) });
+  });
+
+  // ---------------------------------------------------------------- extra charges of a visit (dressing, IV...)
+  // The doctor adds them while seeing the patient, the counter while collecting. Before the visit has a bill they
+  // wait on the visit; once it has an unpaid bill they are lines of that bill. Added after the bill was paid, they
+  // wait again and the counter collects them on a new bill.
+
+  const chargeWriters = requireAnyPermission('prescription.write', 'billing.receive');
+
+  /** The note the pharmacy counter reads for this visit. Only who prescribes (the doctor) writes or corrects it, also from the billing screen. */
+  app.put('/visits/:visitId/pharmacy-note', requirePermission('prescription.write'), async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { note?: unknown } | null;
+    const note = typeof body?.note === 'string' ? body.note.trim() : null;
+    if (note == null || note.length > 500) throw new AppError(400, 'validation', 'The note can be up to 500 letters', { note: ['The note can be up to 500 letters'] });
+    const b = c.get('branch');
+    const u = c.get('user');
+    const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    await db.update(opVisit).set({ pharmacyNote: note || null, updatedAt: new Date().toISOString() }).where(and(eq(opVisit.branchId, b.id), eq(opVisit.id, v.id)));
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: v.id, detail: { pharmacyNote: note } });
+    return c.json({ pharmacyNote: note || null });
+  });
+
+  async function chargesOfVisit(branchId: number, visitId: number): Promise<VisitCharges & { open: OpBill | null }> {
+    const ids = await db.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, branchId), eq(opBill.visitId, visitId))).orderBy(asc(opBill.id));
+    const bills = await Promise.all(ids.map((r) => billOfBranch(branchId, r.id)));
+    const open = bills.find((x) => x.editable) ?? null;
+    const presets = await chargePresets(db, branchId);
+    if (open) return { open, presets, locked: null, charges: billCharges(open).map((x, i) => ({ ...x, key: `b${i}`, pending: false })) };
+    return { open, presets, locked: null, charges: (await pendingVisitCharges(db, branchId, visitId)).map((p) => ({ description: p.description, amountPaise: p.amountPaise, key: `v${p.id}`, pending: true })) };
+  }
+
+  app.get('/visits/:visitId/charges', requireAnyPermission('prescription.write', 'billing.receive', 'patient.view'), async (c) => {
+    const b = c.get('branch');
+    const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    const { open: _open, ...result } = await chargesOfVisit(b.id, v.id);
+    return c.json(result);
+  });
+
+  app.post('/visits/:visitId/charges', chargeWriters, async (c) => {
+    const parsed = billChargeSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    const now = await chargesOfVisit(b.id, v.id);
+    if (now.locked) throw new AppError(409, 'has_payments', now.locked);
+    if (now.charges.length >= 20) throw new AppError(400, 'validation', 'At most 20 extra charges on a bill');
+    if (now.open) {
+      const open = now.open;
+      await db.transaction((tx) => updateBill(tx, b.id, u, open, { charges: [...billCharges(open), parsed.data] }));
+    } else {
+      const [row] = await db.insert(visitCharge).values({ ...parsed.data, branchId: b.id, visitId: v.id, createdBy: u.id }).returning({ id: visitCharge.id });
+      await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'visit_charge', entityId: row!.id, detail: { visitId: v.id, ...parsed.data } });
+    }
+    const { open: _open, ...result } = await chargesOfVisit(b.id, v.id);
+    return c.json(result, 201);
+  });
+
+  app.delete('/visits/:visitId/charges/:key', chargeWriters, async (c) => {
+    const b = c.get('branch');
+    const u = c.get('user');
+    const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    const now = await chargesOfVisit(b.id, v.id);
+    if (now.locked) throw new AppError(409, 'has_payments', now.locked);
+    const key = c.req.param('key');
+    const at = now.charges.findIndex((x) => x.key === key);
+    if (at < 0) throw notFound('Charge not found');
+    if (now.open) {
+      const open = now.open;
+      await db.transaction((tx) => updateBill(tx, b.id, u, open, { charges: billCharges(open).filter((_x, i) => i !== at) }));
+    } else {
+      const id = Number(key.slice(1));
+      await db.update(visitCharge).set({ deletedAt: new Date().toISOString() }).where(and(eq(visitCharge.branchId, b.id), eq(visitCharge.visitId, v.id), eq(visitCharge.id, id)));
+      await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'delete', entity: 'visit_charge', entityId: id, detail: { visitId: v.id } });
+    }
+    const { open: _open, ...result } = await chargesOfVisit(b.id, v.id);
+    return c.json(result);
   });
 
   /**
@@ -369,7 +478,7 @@ export function createBillingRoutes(db: Db) {
         and(
           eq(opBill.branchId, b.id),
           status === 'due' ? sql`coalesce(${paid.paid}, 0) < ${opBill.totalPaise}` : status === 'paid' ? sql`coalesce(${paid.paid}, 0) >= ${opBill.totalPaise}` : undefined,
-          date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? sql`date(${opBill.createdAt}, 'localtime') = ${date}` : undefined,
+          date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? sql`date(${opBill.createdAt}, '+330 minutes') = ${date}` : undefined,
         ),
       )
       .orderBy(desc(opBill.id))
@@ -394,7 +503,7 @@ export function createBillingRoutes(db: Db) {
   /** Money received on a day: OP bills + pharmacy, by mode; and paid out to vendors. */
   async function collectionOf(branchId: number, day: string): Promise<Collection> {
     const b = { id: branchId };
-    const onDay = (col: AnyColumn) => sql`date(${col}, 'localtime') = ${day}`;
+    const onDay = (col: AnyColumn) => sql`date(${col}, '+330 minutes') = ${day}`;
     const billRows = await db.select({ mode: billPayment.mode, sum: sql<number>`sum(${billPayment.amountPaise})` }).from(billPayment).where(and(eq(billPayment.branchId, b.id), onDay(billPayment.receivedAt))).groupBy(billPayment.mode);
     const phRows = await db.select({ mode: pharmacySale.paymentMode, sum: sql<number>`sum(${pharmacySale.totalPaise})` }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt))).groupBy(pharmacySale.paymentMode);
     const [vendorOut] = await db.select({ sum: sql<number>`coalesce(sum(${vendorPayment.amountPaise}), 0)` }).from(vendorPayment).where(and(eq(vendorPayment.branchId, b.id), onDay(vendorPayment.paidAt)));
@@ -412,7 +521,7 @@ export function createBillingRoutes(db: Db) {
   app.get('/billing/day-report', receive, async (c) => {
     const b = c.get('branch');
     const day = await dayOf(c.req.query('date'));
-    const onDay = (col: AnyColumn) => sql`date(${col}, 'localtime') = ${day}`;
+    const onDay = (col: AnyColumn) => sql`date(${col}, '+330 minutes') = ${day}`;
     const n = sql<number>`count(*)`;
     const sum = (col: AnyColumn) => sql<number>`coalesce(sum(${col}), 0)`;
 

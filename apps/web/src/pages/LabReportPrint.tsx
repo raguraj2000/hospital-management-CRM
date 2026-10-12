@@ -4,7 +4,7 @@ import { Navigate, useParams } from 'react-router';
 import type { LabReport, LabReportTest } from '@platform/shared';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useMe } from '@/state/auth';
-import { ReportHeader } from '@/components/ReportHeader';
+import { ReportFooter, ReportHeader, ReportWatermark } from '@/components/ReportHeader';
 import { useAutoPrint } from '@/components/useAutoPrint';
 import { printDateTime } from '@/components/printFormat';
 
@@ -57,6 +57,7 @@ export function LabReportPrint() {
           .no-print { display: none !important; }
           .sheet { width: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; box-shadow: none !important; }
           .rt tr, .cgrp, .closing { break-inside: avoid; }
+          .report-watermark { position: fixed !important; }
         }
       `}</style>
 
@@ -84,7 +85,9 @@ function Sheet({ data, tests }: { data: LabReport; tests: LabReportTest[] }) {
   const sampleAt = data.tests.map((t) => t.sampleCollectedAt).filter(Boolean).sort()[0];
   const reportAt = data.tests.map((t) => t.completedAt).filter(Boolean).sort().at(-1);
   return (
-    <div className="sheet mx-auto my-6 min-h-[297mm] w-[210mm] bg-white px-[11mm] py-[9mm] shadow">
+    <div className="sheet relative mx-auto my-6 min-h-[297mm] w-[210mm] bg-white px-[11mm] py-[9mm] shadow">
+      <ReportWatermark header={h} />
+      <div className="relative z-[1]">
       <ReportHeader header={h} />
       <div className="mb-2 text-center text-[14px] font-semibold text-[#1f6b4f]">Laboratory Report</div>
 
@@ -114,6 +117,8 @@ function Sheet({ data, tests }: { data: LabReport; tests: LabReportTest[] }) {
           <Sign image={h.leftSignImage} name={h.leftSignName} title={h.leftSignTitle || 'Lab Technician'} align="left" />
           <Sign image={h.rightSignImage} name={h.rightSignName} title={h.rightSignTitle} align="right" />
         </div>
+        <ReportFooter header={h} />
+      </div>
       </div>
     </div>
   );

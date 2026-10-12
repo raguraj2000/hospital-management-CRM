@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImagePlus, Plus, Trash2, X } from 'lucide-react';
 import type { PrintHeader } from '@platform/shared';
-import { Button, Card, CardHeader, Field, Input, Skeleton, toast } from '@platform/ui';
+import { Button, Card, CardHeader, Field, Input, Skeleton, toast, Textarea } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
-import { ReportHeader } from './ReportHeader';
+import { ReportFooter, ReportHeader, ReportWatermark } from './ReportHeader';
 
 const MAX_IMAGE_BYTES = 300 * 1024;
 
@@ -99,6 +99,16 @@ export function PrintHeaderForm({ branch, branchName }: { branch: string; branch
             <Input id="ph-phone" value={h.phone} onChange={(e) => set('phone', e.target.value)} />
           </Field>
           <ImagePicker label="Logo" value={h.logo} onChange={(v) => set('logo', v)} />
+          <label className="flex items-start gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" className="mt-0.5 size-5 accent-[var(--color-primary)]" checked={h.watermark} disabled={!h.logo} onChange={(e) => set('watermark', e.target.checked)} />
+            <span>
+              Print the logo large and faint behind the lab results
+              <span className="block text-xs text-muted">{h.logo ? 'A background logo on every page of the lab report.' : 'Choose a logo first.'}</span>
+            </span>
+          </label>
+          <Field label="Lab report footer" htmlFor="ph-footer" className="sm:col-span-2" hint="Printed at the end of the report, under the signatures. Optional.">
+            <Textarea id="ph-footer" rows={2} maxLength={300} value={h.footer} onChange={(e) => set('footer', e.target.value)} placeholder="e.g. Lab timings 7 am - 9 pm · This report is for the treating doctor's use." />
+          </Field>
 
           <div className="border-t border-border pt-4 sm:col-span-2">
             <div className="mb-2 flex items-center justify-between">
@@ -150,11 +160,37 @@ export function PrintHeaderForm({ branch, branchName }: { branch: string; branch
       </Card>
 
       <Card className="h-fit">
-        <CardHeader title="Preview" description="How it prints on A4 (scaled)." />
+        <CardHeader title="Preview" description="The lab report as it prints: header, background logo, sample results, signatures and footer." />
         <div className="overflow-x-auto bg-[#dfe5e1] p-4">
-          <div className="mx-auto w-[190mm] origin-top-left bg-white p-[8mm] shadow max-xl:scale-[0.6] max-xl:mb-[-40%]">
-            <ReportHeader header={h} />
-            <div className="text-center text-[14px] font-semibold text-[#1f6b4f]">Laboratory Report</div>
+          <div className="relative mx-auto min-h-[150mm] w-[190mm] origin-top-left overflow-hidden bg-white p-[8mm] shadow max-xl:scale-[0.6] max-xl:mb-[-40%]">
+            <ReportWatermark header={h} />
+            <div className="relative z-[1]">
+              <ReportHeader header={h} />
+              <div className="mb-2 text-center text-[14px] font-semibold text-[#1f6b4f]">Laboratory Report</div>
+              {/* A made-up patient and two results, only to show the page as it prints. */}
+              <div className="mb-2.5 grid grid-cols-2 gap-x-6 gap-y-[3px] rounded-md border border-[#111] px-3 py-[7px] text-[12px]">
+                <span><b>Patient Name:</b> Sample Patient</span>
+                <span><b>UHID:</b> AH000001</span>
+                <span><b>Age / Sex:</b> 34 Y / Female</span>
+                <span><b>Report Date:</b> 12/10/2026, 10:30 am</span>
+              </div>
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="border-y border-[#111] text-left"><th className="py-1">Test</th><th>Result</th><th>Unit</th><th>Normal range</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td className="py-1">Haemoglobin</td><td>12.4</td><td>gm/dl</td><td>12 - 15</td></tr>
+                  <tr><td className="py-1">Total WBC Count</td><td>7800</td><td>cells/cumm</td><td>4000 - 11000</td></tr>
+                  <tr><td className="py-1">Platelet Count</td><td>2.6</td><td>lakhs/cumm</td><td>1.5 - 4.5</td></tr>
+                </tbody>
+              </table>
+              <div className="mt-6 text-center text-[12px] tracking-[.5px]">************ End of the Report ************</div>
+              <div className="mt-8 flex justify-between text-[12px]">
+                <span>{h.leftSignName || ' '}<br /><b>{h.leftSignTitle || 'Lab Technician'}</b></span>
+                <span className="text-right">{h.rightSignName || ' '}<br /><b>{h.rightSignTitle}</b></span>
+              </div>
+              <ReportFooter header={h} />
+            </div>
           </div>
         </div>
       </Card>

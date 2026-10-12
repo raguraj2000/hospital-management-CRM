@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, FlaskConical, Stethoscope } from 'lucide-react';
 import { formatRupees, type LabOrder, type LabReport, type LabTest, type OpVisit } from '@platform/shared';
-import { Badge, Button, Card, CardHeader, cn, ConfirmDialog, Skeleton, toast } from '@platform/ui';
+import { Badge, Button, Card, CardHeader, cn, ConfirmDialog, Skeleton, toast, ConfirmDelete } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
 import { CounterNote } from './CounterNote';
@@ -132,14 +132,13 @@ export function VisitLab({ branch, visit, onOrdered }: { branch: string; visit: 
           <Stethoscope className="size-3.5" /> Only doctors order tests.
         </p>
       )}
-      <ConfirmDialog
+      <ConfirmDelete
         open={!!cancelling}
         onOpenChange={(open) => !open && setCancelling(null)}
         title={`Cancel ${cancelling?.testName ?? 'test'}?`}
         description="It is removed from the lab queue and from the bill."
-        confirmLabel="Yes, cancel the test"
-        cancelLabel="Keep it"
-        onConfirm={() => cancelling && cancel.mutate(cancelling.id)}
+        pending={cancel.isPending}
+        onConfirm={() => cancelling && cancel.mutate(cancelling.id, { onSettled: () => setCancelling(null) })}
       />
     </Card>
   );

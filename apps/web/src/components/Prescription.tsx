@@ -14,9 +14,9 @@ import {
   type PrescriptionItem,
   type PrescriptionItemFormValues,
   type PrescriptionItemInput,
-  type PrescriptionSuggestions,
-} from '@platform/shared';
-import { Badge, Button, Card, CardHeader, Combobox, EmptyState, Field, Input, NativeSelect, Skeleton, Table, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+  type PrescriptionSuggestions, } from '@platform/shared';
+import { prettyDose } from '@platform/shared';
+import { Badge, Button, Card, CardHeader, Combobox, EmptyState, Field, Input, NativeSelect, Skeleton, Table, TBody, TD, TH, THead, toast, TR, ConfirmDelete } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
 import { CounterNote } from './CounterNote';
@@ -24,7 +24,7 @@ import { CounterNote } from './CounterNote';
 const rxTone = { pending: 'warning', dispensed: 'positive', declined: 'neutral' } as const;
 const rxLabel = { pending: 'At pharmacy', dispensed: 'Dispensed', declined: 'Not bought' } as const;
 
-export function Prescription({ branch, visit, onAdded }: { branch: string; visit: OpVisit; onAdded: () => void }) {
+export function Prescription({ branch, visit, onAdded, hideNote }: { branch: string; visit: OpVisit; onAdded: () => void; /** The note to the pharmacy is shown elsewhere (the doctor's steps). */ hideNote?: boolean }) {
   const canWrite = useCan('prescription.write');
   const qc = useQueryClient();
   const key = ['prescription', branch, visit.id];
@@ -38,6 +38,7 @@ export function Prescription({ branch, visit, onAdded }: { branch: string; visit
     qc.invalidateQueries({ queryKey: ['rx-suggestions', branch] });
     qc.invalidateQueries({ queryKey: ['treatments', branch] });
   };
+  const [removing, setRemoving] = useState<PrescriptionItem | null>(null);
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/b/${branch}/prescription-items/${id}`),
     onSuccess: () => {
@@ -103,7 +104,7 @@ export function Prescription({ branch, visit, onAdded }: { branch: string; visit
                 {canWrite && (
                   <TD className="text-right">
                     {i.status === 'pending' && (
-                      <Button size="icon-sm" variant="ghost" aria-label={`Remove ${i.medicineName}`} onClick={() => remove.mutate(i.id)}>
+                      <Button size="icon-sm" variant="ghost" aria-label={`Remove ${i.medicineName}`} onClick={() => setRemoving(i)}>
                         <Trash2 className="text-critical" />
                       </Button>
                     )}
@@ -126,13 +127,33 @@ export function Prescription({ branch, visit, onAdded }: { branch: string; visit
           />
         </div>
       )}
-      <CounterNote branch={branch} visit={visit} field="pharmacyNote" label="Note to pharmacy" placeholder="e.g. Give the generic brand. Explain the inhaler to the patient." canEdit={canWrite} />
+      {!hideNote && <CounterNote branch={branch} visit={visit} field="pharmacyNote" label="Note to pharmacy" placeholder="e.g. Give the generic brand. Explain the inhaler to the patient." canEdit={canWrite} />}
+      <ConfirmDelete
+        open={!!removing}
+        onOpenChange={(o) => !o && setRemoving(null)}
+        title={`Remove ${removing?.medicineName ?? 'this medicine'}?`}
+        description="It is taken off this patient's prescription. The pharmacy will no longer see it."
+        pending={remove.isPending}
+        onConfirm={() => removing && remove.mutate(removing.id, { onSettled: () => setRemoving(null) })}
+      />
     </Card>
   );
 }
 
 const medicineKey = (m: Medicine) => m.id;
-const medicineLabel = (m: Medicine) => `${m.name}${m.strength ? ` ${m.strength}` : ''}`;
+export const medicineLabel = (m: Medicine) => `${m.name}${m.strength ? ` ${m.strength}` : ''}`;
+/** A medicine in the search list: name and strength, then the rate and what is in stock. */
+export const medicineOption = (m: Medicine) => (
+  <span className="flex items-center justify-between gap-3">
+    <span className="min-w-0 truncate">
+      <span className="font-medium">{m.name}</span>
+      {m.strength && <span className="text-muted"> {m.strength}</span>}
+    </span>
+    <span className="shrink-0 text-xs text-muted">
+      {formatRupees(m.pricePaise)}/{FORM_UNIT[m.form]} · <span className={m.stock > 0 ? '' : 'font-medium text-critical'}>{m.stock > 0 ? `${m.stock} in stock` : 'Out of stock'}</span>
+    </span>
+  </span>
+);
 
 // ---------------------------------------------------------------- dose: one dropdown, or typed
 
@@ -141,20 +162,22 @@ const CUSTOM = '__custom';
 /** "1-0-1" -> "1-0-1 — Morning, Night"; anything else (SOS, 1-1-1-1, 5 ml twice) as it is. */
 function doseLabel(dose: string): string {
   const parts = dose.split('-');
-  if (parts.length !== 3 || parts.some((x) => !/^\d+(\.5)?$/.test(x))) return dose;
+  if (parts.length !== 3 || parts.some((x) => !/^\d+(\.(?:25|5|75))?$/.test(x))) return dose;
   const when = TIMES.filter((_, i) => Number(parts[i]) > 0);
-  return when.length ? `${dose.replace(/0\.5/g, '½')} — ${when.join(', ')}` : dose;
+  // The short name doctors write: once, twice, three times a day.
+  const times = ['', 'OD', 'BD', 'TDS'][when.length];
+  return when.length ? `${prettyDose(dose)} — ${when.join(', ')} (${times})` : dose;
 }
 
 /** The usual doses (and the ones this branch has typed before) in one dropdown; "Custom…" opens a box to type any other. */
-function DoseInput({ value, onChange, choices, error }: { value: string; onChange: (dose: string) => void; choices: string[]; error?: string }) {
+export function DoseInput({ value, onChange, choices, error, id = 'rx-dose' }: { value: string; onChange: (dose: string) => void; choices: string[]; error?: string; id?: string }) {
   // Custom stays open while the typed text happens to match a listed dose, until a listed one is picked.
   const [custom, setCustom] = useState(!choices.includes(value));
   return (
-    <Field required label="Dose" htmlFor="rx-dose" error={error} className="col-span-2">
+    <Field required label="Dose" htmlFor={id} error={error} className="col-span-2">
       <div className="flex gap-2">
         <NativeSelect
-          id="rx-dose"
+          id={id}
           value={custom ? CUSTOM : value}
           onChange={(e) => {
             const picked = e.target.value;
@@ -176,13 +199,13 @@ function DoseInput({ value, onChange, choices, error }: { value: string; onChang
 }
 
 /** How to take it: "After food" and "Before food" first, then the other usual ones and what this branch has typed before. */
-function InstructionInput({ value, onChange, choices }: { value: string; onChange: (text: string) => void; choices: string[] }) {
+export function InstructionInput({ value, onChange, choices, id = 'rx-instructions' }: { value: string; onChange: (text: string) => void; choices: string[]; id?: string }) {
   const [custom, setCustom] = useState(value !== '' && !choices.includes(value));
   return (
-    <Field label="Instructions" htmlFor="rx-instructions" className="col-span-2">
+    <Field label="Instructions" htmlFor={id} className="col-span-2">
       <div className="flex gap-2">
         <NativeSelect
-          id="rx-instructions"
+          id={id}
           value={custom ? CUSTOM : value}
           onChange={(e) => {
             const picked = e.target.value;
@@ -207,9 +230,15 @@ function InstructionInput({ value, onChange, choices }: { value: string; onChang
 // ---------------------------------------------------------------- add a medicine
 
 const INSTRUCTIONS = ['After food', 'Before food', 'With food', 'Chew and swallow', 'Empty stomach', 'At bedtime'];
-const START_DOSES = ['1-0-1', '1-1-1', '1-0-0', '0-1-0', '0-0-1', '1-1-0', '0-1-1', '0.5-0-0.5', '2-0-2', '1-1-1-1', 'SOS'];
+const START_DOSES = ['1-0-1', '1-1-1', '1-0-0', '0-1-0', '0-0-1', '1-1-0', '0-1-1', '0.5-0-0.5', '0.5-0.5-0.5', '0.75-0-0.75', '0.75-0.75-0.75', '0.5-0-0', '2-0-2', '1-1-1-1', 'SOS'];
 /** The fixed choices first, then what this branch has used that is not among them. */
 const withRemembered = (fixed: string[], remembered: string[] = []) => [...fixed, ...remembered.filter((x) => !fixed.some((f) => f.toLowerCase() === x.toLowerCase()))];
+
+/** The dose and instruction choices of the prescription form: the usual ones, then what this branch has typed before. */
+export function useRxChoices(branch: string) {
+  const used = useQuery({ queryKey: ['rx-suggestions', branch], queryFn: () => api.get<PrescriptionSuggestions>(`/b/${branch}/prescription/suggestions`), staleTime: 60_000 });
+  return { doses: withRemembered(START_DOSES, used.data?.doses), instructions: withRemembered(INSTRUCTIONS, used.data?.instructions) };
+}
 
 function AddMedicineForm({ branch, visitId, onAdded }: { branch: string; visitId: number; onAdded: () => void }) {
   const meds = useQuery({ queryKey: ['medicines', branch], queryFn: () => api.get<{ medicines: Medicine[] }>(`/b/${branch}/medicines`), staleTime: 60_000 });
@@ -266,17 +295,7 @@ function AddMedicineForm({ branch, visitId, onAdded }: { branch: string; visitId
           // No stock at all: the pharmacy could not give it, so it cannot be prescribed.
           isDisabled={(m) => m.stock === 0}
           emptyText="No medicine with that name"
-          renderOption={(m) => (
-            <span className="flex items-center justify-between gap-3">
-              <span className="min-w-0 truncate">
-                <span className="font-medium">{m.name}</span>
-                {m.strength && <span className="text-muted"> {m.strength}</span>}
-              </span>
-              <span className="shrink-0 text-xs text-muted">
-                {formatRupees(m.pricePaise)}/{FORM_UNIT[m.form]} · <span className={m.stock > 0 ? '' : 'font-medium text-critical'}>{m.stock > 0 ? `${m.stock} in stock` : 'Out of stock'}</span>
-              </span>
-            </span>
-          )}
+          renderOption={medicineOption}
         />
         {errors.medicineId && <p className="mt-1 text-xs font-medium text-critical">{errors.medicineId.message}</p>}
       </div>
@@ -294,7 +313,7 @@ function AddMedicineForm({ branch, visitId, onAdded }: { branch: string; visitId
         <input type="checkbox" className="size-5 accent-[var(--color-primary)]" {...register('givenHere')} />
         <span>
           <span className="font-medium">Give here in the hospital</span>
-          <span className="text-muted"> — an injection or drip: the nurse gives each dose and ticks it on the Treatments page.</span>
+          <span className="text-muted"> — an injection or drip: the nurse gives each dose and ticks it on the “Doses to give” page.</span>
         </span>
       </label>
 

@@ -81,7 +81,34 @@ computer's disk fails and there is no backup, the data is lost.
 - Log files: C:\HMS\logs\server.log and C:\HMS\install-log.txt
 
 
-7. MOVING TO A NEW MAIN COMPUTER
+7. START FRESH (CLEAR THE PATIENT DATA)
+---------------------------------------
+Updating HMS from the pendrive NEVER clears anything: patients, bills and
+stock stay as they are. The data is cleared only when YOU run this tool.
+
+Use it whenever you want to begin again with empty lists, for example
+after some days of testing, before real use. On the main computer open
+C:\HMS and double-click   Start Fresh (delete test data).bat
+
+It removes: every patient, OP visit, prescription, lab order and result,
+bill, payment, pharmacy sale and the history log. UHID, token and bill
+numbers start again from 1.
+It keeps: staff and their passwords, lab tests and prices, medicines and
+prices, vendors, bookmarks, the consultation fee and the print header.
+It asks whether to KEEP or CLEAR the medicine stock and purchase bills.
+
+It asks you to type  START FRESH  before doing anything, and it saves a
+full backup first in  C:\HMS\backups\before-start-fresh-<date>.db
+Do it when nobody is using HMS: it stops the app for a few seconds and
+everyone has to sign in again.
+You can run it as often as you like. Remember that it removes ALL
+patients and bills, real ones too: to get them back, restore the backup.
+
+If this file is not in C:\HMS yet, run "1 - MAIN COMPUTER (install or
+update)" from the newest pendrive first.
+
+
+8. MOVING TO A NEW MAIN COMPUTER
 --------------------------------
 1. Old computer: run Backup.bat (to a pendrive).
 2. New computer: run  1 - MAIN COMPUTER (install or update).bat  and finish

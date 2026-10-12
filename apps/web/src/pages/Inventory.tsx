@@ -42,7 +42,7 @@ import { api, ApiError, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { fmtDay } from '@/components/format';
 
-const daysUntil = (iso: string) => Math.round((new Date(`${iso}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) / 86_400_000);
+const daysUntil = (iso: string) => Math.round((new Date(`${iso}T00:00:00`).getTime() - new Date(`${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })}T00:00:00`).getTime()) / 86_400_000);
 
 export function Inventory() {
   const { branch } = useParams();

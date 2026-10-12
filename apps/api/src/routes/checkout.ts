@@ -15,11 +15,12 @@ import {
   type OpBill,
   type VisitBillPrint,
   type VisitCheckout,
+  ROUND_OFF_LINE,
 } from '@platform/shared';
 import { AppError, forbidden, notFound, printHeaderOf, requireAnyPermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
 import { localToday, settledAtCounter, visitsToCollect, withToken } from '../lib/clinic.js';
-import { billOf, consultationFee, createBill, visitFee, labPaymentState, payBill, unbilledLabOrders, updateBill } from './billing.js';
+import { billOf, consultationFee, createBill, pendingVisitCharges, visitFee, labPaymentState, payBill, unbilledLabOrders, updateBill } from './billing.js';
 import { dispenseItems, prescriptionLines, saleDetail } from './pharmacy.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -64,7 +65,9 @@ async function billState(db: Db | Tx, branchId: number, visitId: number) {
   const bills = await billsOfVisit(db, branchId, visitId);
   const open = bills.find((b) => b.editable) ?? null;
   const unbilled = await unbilledLabOrders(db, branchId, visitId);
-  return { bills, open, unbilled, willCreate: !open && (bills.length === 0 || unbilled.length > 0) };
+  // Extra charges waiting on the visit (none once they are lines of the open bill).
+  const waiting = open ? [] : await pendingVisitCharges(db, branchId, visitId);
+  return { bills, open, unbilled, waiting, willCreate: !open && (bills.length === 0 || unbilled.length > 0 || waiting.length > 0) };
 }
 
 const pendingOf = (visitId: number) => and(eq(prescriptionItem.visitId, visitId), eq(prescriptionItem.status, 'pending'));
@@ -80,12 +83,13 @@ export function createCheckoutRoutes(db: Db) {
 
     let bill: CheckoutBill | null = null;
     if (b.permissions.includes('billing.receive')) {
-      const { bills, open, unbilled, willCreate } = await billState(db, b.id, v.id);
+      const { bills, open, unbilled, waiting, willCreate } = await billState(db, b.id, v.id);
       const editable = !!open || willCreate;
       // A later bill of the same visit carries no consultation fee.
       const fee = open ? open.consultationFeePaise : willCreate && bills.length === 0 ? (await visitFee(db, b.id, v.id)).consultationFeePaise : 0;
       const labLines = editable ? [...(open?.lines ?? []).filter((l) => l.labOrderId != null).map((l) => ({ description: l.description, amountPaise: l.amountPaise, billed: true })), ...unbilled.map((o) => ({ description: o.testName, amountPaise: o.pricePaise, billed: false }))] : [];
-      const charges = open ? billCharges(open) : [];
+      // Before the first bill: the extra charges waiting on the visit (the bill takes them when it is made).
+      const charges = open ? billCharges(open) : waiting.map((p) => ({ description: p.description, amountPaise: p.amountPaise }));
       const other = charges.reduce((s, x) => s + x.amountPaise, 0);
       const discount = open?.discountPaise ?? 0;
       const earlier = bills.filter((x) => x !== open);
@@ -136,7 +140,7 @@ export function createCheckoutRoutes(db: Db) {
     const u = c.get('user');
     const canBill = b.permissions.includes('billing.receive');
     const canSell = b.permissions.includes('pharmacy.sell');
-    const { itemIds, quantities, paymentMode, amountPaise, ...edits } = parsed.data;
+    const { itemIds, quantities, paymentMode, amountPaise, roundOffPaise, ...edits } = parsed.data;
     const hasEdits = Object.keys(edits).length > 0;
     if (hasEdits && !canBill) throw forbidden('Your role cannot change or collect the bill');
     if (itemIds.length && !canSell) throw forbidden('Your role cannot dispense medicines');
@@ -161,6 +165,15 @@ export function createCheckoutRoutes(db: Db) {
           if (hasEdits) await updateBill(tx, b.id, u, await billOf(tx, b.id, billId), edits);
         } else if (hasEdits) {
           throw new AppError(409, 'has_payments', 'This bill has payments and can no longer be changed');
+        }
+        // Round off: the bill that is still open carries it as one line (replacing an earlier one).
+        if (roundOffPaise != null && billId != null) {
+          const now = await billOf(tx, b.id, billId);
+          const had = billCharges(now).find((x) => x.description === ROUND_OFF_LINE)?.amountPaise ?? 0;
+          if (now.editable && had !== roundOffPaise) {
+            const rest = billCharges(now).filter((x) => x.description !== ROUND_OFF_LINE);
+            await updateBill(tx, b.id, u, now, { charges: roundOffPaise > 0 ? [...rest, { description: ROUND_OFF_LINE, amountPaise: roundOffPaise }] : rest });
+          }
         }
         bills = await billsOfVisit(tx, b.id, v.id);
       }
@@ -228,9 +241,10 @@ export function createCheckoutRoutes(db: Db) {
     for (const v of await visitsToCollect(db, b.id, today)) {
       const medicinesWaiting = canSell ? v.medicinesWaiting : null;
       const medicinesPaise = canSell ? v.medicinesPaise : null;
-      const toBillPaise = canBill ? (v.billCount === 0 ? (v.visitFeePaise ?? fee) : 0) + v.unbilledLabPaise : null;
+      // Not billed yet: the fee, the extra charges waiting on the visit, and the lab tests.
+      const toBillPaise = canBill ? (v.billCount === 0 ? (v.visitFeePaise ?? fee) : 0) + v.waitingChargePaise + v.unbilledLabPaise : null;
       const balancePaise = canBill ? v.balancePaise : null;
-      const billWaiting = canBill && (v.billCount === 0 || v.unbilledLabCount > 0 || v.balancePaise > 0);
+      const billWaiting = canBill && (v.billCount === 0 || v.unbilledLabCount > 0 || v.waitingChargeCount > 0 || v.balancePaise > 0);
       if (!billWaiting && !medicinesWaiting) continue; // nothing this caller can collect
       const grandTotalPaise = (medicinesPaise ?? 0) + (toBillPaise ?? 0) + (balancePaise ?? 0);
       const summary = [
@@ -242,7 +256,7 @@ export function createCheckoutRoutes(db: Db) {
         .filter(Boolean)
         .join(' · ');
       const { visitId, opNo, token, visitDate, status, patientId, patientName, patientUhid, doctorName } = v;
-      queue.push({ visitId, opNo, token, visitDate, status, patientId, patientName, patientUhid, doctorName, medicinesWaiting, medicinesPaise, toBillPaise, balancePaise, grandTotalPaise, summary });
+      queue.push({ visitId, opNo, token, visitDate, visitAt: v.visitAt, status, patientId, patientName, patientUhid, doctorName, medicinesWaiting, medicinesPaise, toBillPaise, balancePaise, grandTotalPaise, summary });
     }
     return c.json({ queue, today });
   });

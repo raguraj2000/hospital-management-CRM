@@ -17,9 +17,10 @@ import {
   type Db,
 } from '@platform/core';
 import type { Permission } from '@platform/shared';
-import { billPayment, labOrder, medicine, medicineBatch, opVisit, patient, pharmacySale } from './db/schema.js';
+import { billPayment, labOrder, medicine, medicineBatch, opBill, opVisit, patient, pharmacySale } from './db/schema.js';
 import { createPatientRoutes } from './routes/patients.js';
 import { createTreatmentRoutes } from './routes/treatments.js';
+import { createBookmarkRoutes } from './routes/bookmarks.js';
 import { createVisitRoutes } from './routes/visits.js';
 import { createDoctorRoutes } from './routes/doctors.js';
 import { createPharmacyRoutes, medicinesWithStock } from './routes/pharmacy.js';
@@ -63,16 +64,16 @@ export function createApp(db: Db) {
   b.get('/dashboard', requirePermission('dashboard.view'), async (c) => {
     const branchId = c.get('branch').id;
     const base = and(eq(patient.branchId, branchId), isNull(patient.deletedAt));
-    // Days are counted in the server's local time (the clinic PC's timezone), not UTC.
-    const localDay = sql<string>`date(${patient.createdAt}, 'localtime')`;
+    // Days are counted in India time (IST), whatever time zone the server computer is set to.
+    const localDay = sql<string>`date(${patient.createdAt}, '+330 minutes')`;
     const [{ total }] = await db.select({ total: sql<number>`count(*)` }).from(patient).where(base);
     const rows = await db
       .select({ day: localDay, count: sql<number>`count(*)` })
       .from(patient)
-      .where(and(base, gte(localDay, sql`date('now', 'localtime', '-13 days')`)))
+      .where(and(base, gte(localDay, sql`date('now', '+330 minutes', '-13 days')`)))
       .groupBy(localDay);
     const byDay = new Map(rows.map((r) => [r.day, r.count]));
-    const { today } = (await db.get<{ today: string }>(sql`select date('now', 'localtime') as today`))!;
+    const { today } = (await db.get<{ today: string }>(sql`select date('now', '+330 minutes') as today`))!;
     const last14Days = Array.from({ length: 14 }, (_, i) => {
       const d = new Date(`${today}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() - (13 - i));
@@ -98,7 +99,7 @@ export function createApp(db: Db) {
     // Money received today: OP bill payments + pharmacy sales, by mode. (Vendor payments are money out.)
     let collectionToday: { cashPaise: number; upiPaise: number; cardPaise: number; totalPaise: number } | null = null;
     if (can('billing.receive')) {
-      const onToday = (col: AnyColumn) => sql`date(${col}, 'localtime') = ${today}`;
+      const onToday = (col: AnyColumn) => sql`date(${col}, '+330 minutes') = ${today}`;
       const billRows = await db
         .select({ mode: billPayment.mode, sum: sql<number>`sum(${billPayment.amountPaise})` })
         .from(billPayment)
@@ -112,6 +113,15 @@ export function createApp(db: Db) {
       const m = { cash: 0, upi: 0, card: 0 };
       for (const r of [...billRows, ...saleRows]) m[r.mode] += r.sum;
       collectionToday = { cashPaise: m.cash, upiPaise: m.upi, cardPaise: m.card, totalPaise: m.cash + m.upi + m.card };
+    }
+
+    // Bills not fully paid yet, whatever their date (same bills as Billing > Pending payments).
+    let pendingDues: { totalPaise: number; count: number } | null = null;
+    if (can('billing.receive')) {
+      const r = await db.get<{ n: number; paise: number | null }>(
+        sql`select count(*) as n, sum(t.due) as paise from (select ${opBill.totalPaise} - coalesce((select sum(${billPayment.amountPaise}) from ${billPayment} where ${billPayment.billId} = ${opBill.id}), 0) as due from ${opBill} where ${opBill.branchId} = ${branchId}) t where t.due > 0`,
+      );
+      pendingDues = { totalPaise: r?.paise ?? 0, count: r?.n ?? 0 };
     }
 
     // Lab orders not finished yet (same as the lab queue).
@@ -166,6 +176,7 @@ export function createApp(db: Db) {
       last14Days,
       recent,
       collectionToday,
+      pendingDues,
       labPending,
       stock,
     });
@@ -180,6 +191,7 @@ export function createApp(db: Db) {
   b.route('/', createBillingRoutes(db));
   b.route('/', createCheckoutRoutes(db));
   b.route('/', createTreatmentRoutes(db));
+  b.route('/', createBookmarkRoutes(db));
   b.route('/', createBackupRoutes(db));
   b.route('/patients', createPatientRoutes(db));
 

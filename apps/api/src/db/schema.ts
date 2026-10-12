@@ -14,7 +14,7 @@ export const patient = sqliteTable(
     name: text('name').notNull(),
     phone: text('phone'),
     email: text('email'),
-    gender: text('gender', { enum: ['female', 'male', 'other'] }),
+    gender: text('gender', { enum: ['female', 'male', 'female child', 'male child', 'other'] }),
     dob: text('dob'),
     ageYears: integer('age_years'),
     bloodGroup: text('blood_group'),
@@ -285,6 +285,8 @@ export const labTestParameter = sqliteTable(
     /** JSON array of quick-pick values, e.g. ["Nil","+","++"]. */
     options: text('options'),
     noFlag: integer('no_flag', { mode: 'boolean' }).notNull().default(false),
+    /** May be left empty when the test is completed (e.g. one of several sugar readings). Not set = required. */
+    optional: integer('optional', { mode: 'boolean' }).notNull().default(false),
     sortOrder: integer('sort_order').notNull().default(0),
     deletedAt: text('deleted_at'),
   },
@@ -493,8 +495,32 @@ export const clinicSetting = sqliteTable('clinic_setting', {
   consultationFeePaise: integer('consultation_fee_paise').notNull().default(0),
   /** Doctor given to new OP visits. Ignored once that person is no longer a doctor of this branch. */
   defaultDoctorUserId: integer('default_doctor_user_id').references(() => user.id),
+  /** JSON: ready-made extra charges, [{ name, amountPaise }] (Dressing, IV fluids...). */
+  chargePresets: text('charge_presets'),
   updatedAt: timestamps.updatedAt,
 });
+
+/**
+ * An extra charge (dressing, IV...) put on a visit before its bill exists, by the doctor or the counter.
+ * The first bill of the visit takes these as its charge lines (billId is then set).
+ */
+export const visitCharge = sqliteTable(
+  'visit_charge',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    visitId: integer('visit_id')
+      .notNull()
+      .references(() => opVisit.id),
+    description: text('description').notNull(),
+    amountPaise: integer('amount_paise').notNull(),
+    billId: integer('bill_id').references(() => opBill.id),
+    createdBy: integer('created_by').references(() => user.id),
+    ...timestamps,
+    deletedAt: text('deleted_at'),
+  },
+  (t) => [index('ix_visit_charge_visit').on(t.branchId, t.visitId)],
+);
 
 /**
  * People who also see patients as a doctor in this branch, whatever their role (the owner, a branch admin...).
@@ -510,4 +536,70 @@ export const branchDoctor = sqliteTable(
     createdAt: timestamps.createdAt,
   },
   (t) => [primaryKey({ columns: [t.branchId, t.userId] })],
+);
+
+/**
+ * A bookmark: a ready-made treatment (e.g. "Dengue") -- medicines with dose, days and instructions, and
+ * instructions to carry out. Stored once per branch and applied to any patient's visit.
+ */
+export const treatmentBookmark = sqliteTable(
+  'treatment_bookmark',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    name: text('name').notNull(),
+    createdBy: integer('created_by').references(() => user.id),
+    ...timestamps,
+    deletedAt: text('deleted_at'),
+  },
+  (t) => [index('ix_bookmark_name').on(t.branchId, t.name)],
+);
+
+/** One line of a bookmark: a medicine (by id: its name and price are not repeated here) or an instruction (text). */
+export const treatmentBookmarkLine = sqliteTable(
+  'treatment_bookmark_line',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    bookmarkId: integer('bookmark_id')
+      .notNull()
+      .references(() => treatmentBookmark.id),
+    kind: text('kind', { enum: ['medicine', 'instruction'] }).notNull(),
+    // A medicine line:
+    medicineId: integer('medicine_id').references(() => medicine.id),
+    dose: text('dose'),
+    days: integer('days'),
+    /** null = dose x days, as on a prescription. */
+    quantity: integer('quantity'),
+    instructions: text('instructions'),
+    givenHere: integer('given_here', { mode: 'boolean' }).notNull().default(false),
+    // An instruction line:
+    text: text('text'),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [index('ix_bookmark_line').on(t.branchId, t.bookmarkId)],
+);
+
+/**
+ * An instruction on one patient's visit (copied from a bookmark when it is applied: the doctor may have unticked
+ * some, and the bookmark may change later). Ticked when carried out: who and when.
+ */
+export const visitInstruction = sqliteTable(
+  'visit_instruction',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    visitId: integer('visit_id')
+      .notNull()
+      .references(() => opVisit.id),
+    text: text('text').notNull(),
+    /** The bookmark it came from, as it was named then. */
+    bookmarkName: text('bookmark_name'),
+    doneAt: text('done_at'),
+    doneBy: integer('done_by').references(() => user.id),
+    createdBy: integer('created_by').references(() => user.id),
+    ...timestamps,
+    deletedAt: text('deleted_at'),
+  },
+  (t) => [index('ix_visit_instruction').on(t.branchId, t.visitId)],
 );

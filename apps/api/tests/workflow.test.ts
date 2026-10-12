@@ -223,7 +223,7 @@ describe('cancelling a lab test', () => {
 
     // c: completed -> never
     const cTest = report.tests.find((x: any) => x.orderId === c);
-    await lab(`/api/b/main/lab/orders/${c}/results`, { method: 'PUT', body: { results: [{ parameterId: cTest.parameters[0].id, value: '5' }], complete: true } });
+    await lab(`/api/b/main/lab/orders/${c}/results`, { method: 'PUT', body: { results: cTest.parameters.map((p: any) => ({ parameterId: p.id, value: '5' })), complete: true } });
     expect((await cancel(doc, c)).status).toBe(409);
 
     const after = (await json(doc(`/api/b/main/visits/${v.id}/lab-orders`))).orders;

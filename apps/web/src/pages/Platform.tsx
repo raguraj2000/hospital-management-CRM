@@ -90,7 +90,7 @@ export function Platform() {
                     <TD>
                       <div className="font-medium">{c.name}</div>
                       <div className="text-xs text-muted">
-                        UHID prefix <span className="font-mono">{c.idPrefix}</span> · since {new Date(c.createdAt).toLocaleDateString('en-IN')}
+                        UHID prefix <span className="font-mono">{c.idPrefix}</span> · since {new Date(c.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                       </div>
                     </TD>
                     <TD className="hidden md:table-cell">

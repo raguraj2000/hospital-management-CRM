@@ -33,10 +33,8 @@ import { api, ApiError, errorMessage } from '@/api/client';
 import { fmtDay } from '@/components/format';
 import { useCan } from '@/state/auth';
 
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+/** Today in India (IST), whatever time zone this computer is set to. */
+const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
 /** One row of the entry table. Everything is text while it is being typed. */
 interface Line {

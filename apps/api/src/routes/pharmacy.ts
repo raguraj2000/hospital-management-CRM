@@ -626,7 +626,7 @@ export function createPharmacyRoutes(db: Db) {
       .select({ id: pharmacySale.id, saleNo: pharmacySale.saleNo, visitId: pharmacySale.visitId, patientName: patient.name, totalPaise: pharmacySale.totalPaise, paymentMode: pharmacySale.paymentMode, createdAt: pharmacySale.createdAt })
       .from(pharmacySale)
       .leftJoin(patient, eq(patient.id, pharmacySale.patientId))
-      .where(and(eq(pharmacySale.branchId, b.id), sql`date(${pharmacySale.createdAt}, 'localtime') = ${day}`))
+      .where(and(eq(pharmacySale.branchId, b.id), sql`date(${pharmacySale.createdAt}, '+330 minutes') = ${day}`))
       .orderBy(desc(pharmacySale.id));
     const lines = sales.length
       ? await db

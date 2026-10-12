@@ -11,8 +11,8 @@ const HELP: { where: string; keys: [string, string][] }[] = [
   {
     where: 'Everywhere',
     keys: [
-      ['/', 'Search patients'],
       ['Alt + 1 … 9', 'Open a page of the side menu (the number is shown next to it)'],
+      ['Ctrl + K', 'Find or register a patient and start an OP visit, from any page'],
       ['Alt + N', 'Register a new patient'],
       ['Esc', 'Close a window'],
       ['?', 'Show this list'],
@@ -21,7 +21,7 @@ const HELP: { where: string; keys: [string, string][] }[] = [
   {
     where: 'OP visits',
     keys: [
-      ['Alt + V', 'Search a patient to start an OP visit'],
+      ['Ctrl + K', 'New OP visit (the button at the top does the same)'],
       ['Alt + C', 'Call the next patient in'],
     ],
   },
@@ -29,9 +29,10 @@ const HELP: { where: string; keys: [string, string][] }[] = [
     where: 'A visit (doctor)',
     keys: [
       ['Alt + C', 'Start the consultation'],
+      ['Alt + B', 'Add a bookmark (ready-made treatment)'],
       ['Alt + M', 'Add a medicine'],
-      ['Alt + L', 'Send to lab'],
-      ['Alt + S', 'Send to pharmacy & billing'],
+      ['Alt + L', 'Send to lab (on the Lab tab)'],
+      ['Alt + S', 'Create prescription & send to pharmacy (on the Preview step)'],
     ],
   },
   {
@@ -56,16 +57,23 @@ export function Kbd({ children }: { children: string }) {
 }
 
 /** `pages`: where Alt+1 … Alt+9 go, in menu order. `newPatientPath`: where Alt+N goes (not given = not allowed). */
-export function Shortcuts({ pages, newPatientPath, help, onHelp }: { pages: string[]; newPatientPath?: string; help: boolean; onHelp: (open: boolean) => void }) {
+export function Shortcuts({ pages, newPatientPath, help, onHelp, onQuickOp }: { pages: string[]; newPatientPath?: string; help: boolean; onHelp: (open: boolean) => void; onQuickOp?: () => void }) {
   const navigate = useNavigate();
-  const now = useRef({ pages, newPatientPath });
-  now.current = { pages, newPatientPath };
+  const now = useRef({ pages, newPatientPath, onQuickOp });
+  now.current = { pages, newPatientPath, onQuickOp };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey) return;
       // With a window open, only what is inside it can be reached.
       const dialog = document.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+K: the new-OP-visit window (the browser would put the cursor in its address bar).
+        if (e.code === 'KeyK' && !e.altKey && !e.shiftKey && now.current.onQuickOp) {
+          e.preventDefault();
+          if (!dialog) now.current.onQuickOp();
+        }
+        return;
+      }
       if (e.altKey) {
         const key = /^Digit\d$/.test(e.code) ? e.code.slice(5) : /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : null;
         if (!key) return;

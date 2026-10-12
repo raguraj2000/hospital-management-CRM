@@ -106,7 +106,7 @@ export function BackupRestore({ branch }: { branch: string }) {
           </div>
           {file && (
             <p className="text-sm">
-              Chosen: <b>{file.name}</b> · {sizeLabel(file.size)} · last changed {new Date(file.lastModified).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              Chosen: <b>{file.name}</b> · {sizeLabel(file.size)} · last changed {new Date(file.lastModified).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
             </p>
           )}
           {restoreError && <p role="alert" className="text-sm font-medium text-critical">{restoreError}</p>}

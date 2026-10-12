@@ -238,7 +238,7 @@ function StaffTab() {
                       {!s.isActive && <Badge tone="critical" dot>Inactive</Badge>}
                     </div>
                   </TD>
-                  <TD className="hidden text-muted sm:table-cell">{new Date(s.addedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</TD>
+                  <TD className="hidden text-muted sm:table-cell">{new Date(s.addedAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</TD>
                   <TD className="text-right">
                     {!self && (
                       <Menu>

@@ -10,6 +10,7 @@ import { ConditionBadges } from '@/components/Conditions';
 import { NewVisitForm, tokenName, useCallNext, useDoctors, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
 import { ageOf, formatPhone } from './Patients';
 import { KeyHint } from '@/components/Shortcuts';
+import { NEW_OP_EVENT } from '@/components/QuickOp';
 
 /** The day's visits in four lists, so 100+ patients never mean scrolling past the finished ones. */
 const SHOW: { key: 'queue' | 'counter' | 'done' | 'all'; label: string; tone: string; has: (v: OpVisitRow) => boolean }[] = [
@@ -83,7 +84,14 @@ export function OpVisits() {
         }
       />
 
-      {canCreate && <StartVisitSearch branch={branch!} />}
+      {canCreate && (
+        <Card className="mb-4 flex flex-wrap items-center justify-between gap-3 p-3">
+          <span className="text-sm text-muted">Find a patient or register a new one, then start the OP visit.</span>
+          <Button onClick={() => window.dispatchEvent(new Event(NEW_OP_EVENT))}>
+            <ClipboardPlus /> New OP visit <KeyHint>Ctrl+K</KeyHint>
+          </Button>
+        </Card>
+      )}
 
       {/* Only today has a queue (the server sends none for another day). */}
       {data?.queue && <QueueBanner branch={branch!} queue={data.queue} doctorName={queueDoctor} />}
@@ -170,99 +178,6 @@ export function OpVisits() {
         <Pager {...pager} />
       </Card>
     </div>
-  );
-}
-
-/** Front desk: find the patient by name, UHID or phone and start their OP visit without leaving the list. */
-function StartVisitSearch({ branch }: { branch: string }) {
-  const [search, setSearch] = useState('');
-  const [starting, setStarting] = useState<Patient | null>(null);
-  const canPrescribe = useCan('prescription.write');
-  const navigate = useNavigate();
-  const q = useDeferredValue(search.trim());
-  const { data, isFetching, error } = useQuery({
-    queryKey: ['patients', branch, 'op-search', q],
-    queryFn: () => api.get<{ patients: Patient[]; total: number }>(`/b/${branch}/patients?${new URLSearchParams({ q, limit: '8' })}`),
-    enabled: q.length >= 2,
-    placeholderData: keepPreviousData,
-  });
-  const found = q.length >= 2 ? data?.patients : undefined;
-
-  return (
-    <Card className="mb-4">
-      <div className="relative p-3">
-        <Search className="pointer-events-none absolute top-5.5 left-6 size-4 text-muted" />
-        <Input
-          type="search"
-          aria-label="Search patient to start an OP visit"
-          data-shortcut="alt+v"
-          placeholder="Search patient by name, UHID or phone to start an OP visit…   (Alt+V)"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
-      </div>
-      {q.length >= 2 &&
-        (error ? (
-          <p className="border-t border-border p-4 text-sm text-critical">{errorMessage(error)}</p>
-        ) : !found ? (
-          <div className="border-t border-border p-3">
-            <Skeleton className="h-10" />
-          </div>
-        ) : (
-          <div className={cn('border-t border-border transition-opacity', isFetching && 'opacity-60')}>
-            <ul className="divide-y divide-border">
-              {found.map((p) => (
-                <li key={p.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <Avatar name={p.name} size="sm" />
-                  <Link to={`/${branch}/patients/${p.id}`} className="min-w-0 flex-1 hover:underline">
-                    <span className="block truncate text-base font-medium">{p.name}</span>
-                    <ConditionBadges conditions={p.conditions} className="my-0.5" />
-                    <span className="block truncate text-xs text-muted">
-                      <span className="font-mono">{p.uhid}</span> · {p.phone ? formatPhone(p.phone) : 'No phone'}
-                      {ageOf(p) != null && ` · ${ageOf(p)} yrs`}
-                      {p.gender && <span className="capitalize"> · {p.gender}</span>}
-                    </span>
-                  </Link>
-                  <Button size="sm" onClick={() => setStarting(p)}>
-                    <ClipboardPlus /> New OP visit
-                  </Button>
-                </li>
-              ))}
-            </ul>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5 text-sm text-muted">
-              <span>
-                {found.length === 0 ? 'No patient found with this name, UHID or phone.' : data!.total > found.length ? `Showing ${found.length} of ${data!.total} — type more to narrow down.` : 'Not the right person?'}
-              </span>
-              <Link to={`/${branch}/patients?add=1`} className={buttonVariants({ variant: 'brand', size: 'sm' })}>
-                <UserPlus /> Register new patient
-              </Link>
-            </div>
-          </div>
-        ))}
-
-      <Dialog
-        open={!!starting}
-        onOpenChange={(open) => !open && setStarting(null)}
-        title="New OP visit"
-        description={starting ? `${starting.name} · ${starting.uhid} — the token and OP number are assigned automatically.` : undefined}
-      >
-        {starting && (
-          <NewVisitForm
-            branch={branch}
-            patientId={starting.id}
-            onCancel={() => setStarting(null)}
-            onDone={(visit, seenNow) => {
-              // Stay on the list: the new token is in the toast and in the table, and the next patient can be searched.
-              setStarting(null);
-              setSearch('');
-              // Unless the doctor is seeing this patient right now: then the visit opens.
-              if (seenNow && canPrescribe) navigate(`/${branch}/visits/${visit.id}`);
-            }}
-          />
-        )}
-      </Dialog>
-    </Card>
   );
 }
 

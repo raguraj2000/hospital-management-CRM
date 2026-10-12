@@ -1,0 +1,56 @@
+HMS - RESET GUIDE (START FRESH)
+===============================
+
+Use this when the hospital has finished testing and wants to begin with
+empty patient lists, or whenever the patient data should be cleared.
+
+Updating HMS from the pendrive NEVER clears anything. The reset happens
+only when someone opens it and types the words.
+
+
+WHAT IT REMOVES
+  - Every patient, OP visit and prescription
+  - Lab orders and results
+  - Bills, payments, other charges and pharmacy sales
+  - Doses to give and instructions
+  - The history log
+  - UHID, token, OP and bill numbers start again from 1
+
+WHAT IT KEEPS
+  - Staff and their passwords
+  - Lab tests and prices
+  - Medicines and prices
+  - Vendors
+  - Bookmarks (ready-made treatments)
+  - Consultation fee, ready-made charges and the print header
+
+MEDICINE STOCK
+  It asks: K to KEEP the stock and purchase bills, C to CLEAR them.
+
+
+HOW TO DO IT
+  1. Do it when nobody is using HMS. It stops for a few seconds.
+  2. On the MAIN computer open the folder  C:\HMS
+  3. Double-click   Start Fresh (delete test data).bat
+  4. Windows asks for permission: click Yes.
+  5. Type K or C for the medicine stock, then press Enter.
+  6. Type   START FRESH   (capital letters) and press Enter.
+     Anything else cancels and changes nothing.
+  7. Wait for DONE in green.
+  8. Everyone signs in again with the same mobile number and password.
+
+  If the .bat file is not in C:\HMS, run
+  "1 - MAIN COMPUTER (install or update)" from this pendrive first.
+
+
+TO GET THE OLD DATA BACK
+  A full backup is saved before anything is removed:
+      C:\HMS\backups\before-start-fresh-<date>.db
+  Sign in as the owner, open Settings, Backup, Restore, and choose that
+  file.
+
+
+REMEMBER
+  - It can be run as often as you like.
+  - It removes ALL patients and bills that are there at that moment,
+    real ones too. Take a normal backup first if you are not sure.

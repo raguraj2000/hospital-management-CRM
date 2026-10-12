@@ -6,24 +6,26 @@ The key is also written on the button or inside the search box.
 
 
 EVERYWHERE
-  /               Search patients
   Alt + 1 ... 9   Open a page of the side menu
                   (the number is shown next to each page)
+  Ctrl + K        New OP visit from any page: find the patient
+                  (or register them), then the visit details
   Alt + N         Register a new patient
   Esc             Close a window
   ?               Show the shortcut list
 
 
 OP VISITS
-  Alt + V         Search a patient to start an OP visit
   Alt + C         Call the next patient in
 
 
 A VISIT (DOCTOR)
   Alt + C         Start the consultation
+  Alt + B         Add a bookmark (ready-made treatment)
   Alt + M         Add a medicine
-  Alt + L         Send to lab
-  Alt + S         Send to pharmacy & billing
+  Alt + L         Send to lab (on the Lab tab)
+  Alt + S         Create prescription & send to pharmacy
+                  (on the Preview step)
 
 
 PHARMACY - DIRECT SALE

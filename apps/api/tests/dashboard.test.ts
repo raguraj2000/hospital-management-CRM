@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { medicineBatch } from '../src/db/schema.js';
-import { setup } from './helpers.js';
+import { allResults, setup } from './helpers.js';
 
 let t: Awaited<ReturnType<typeof setup>>;
 beforeEach(async () => (t = await setup()));
@@ -72,6 +72,24 @@ describe("owner's daily view", () => {
     expect((await json(owner('/api/b/east/dashboard'))).collectionToday).toEqual({ cashPaise: 20800, upiPaise: 0, cardPaise: 0, totalPaise: 20800 });
   });
 
+  it("payments due = what is still owed on this branch's bills; hidden from roles that do not take money", async () => {
+    const owner = await t.as('owner');
+    expect((await json(owner('/api/b/main/dashboard'))).pendingDues).toEqual({ totalPaise: 0, count: 0 });
+
+    const bill = async (branch: string, paidPaise: number) => {
+      await owner(`/api/b/${branch}/billing/settings`, { method: 'PUT', body: { consultationFeePaise: 20000 } });
+      const v = await visitFor(owner, branch, 'Ravi Kumar');
+      const { bill } = await json(owner(`/api/b/${branch}/visits/${v.id}/bills`, { method: 'POST' }));
+      if (paidPaise) expect((await owner(`/api/b/${branch}/bills/${bill.id}/payments`, { method: 'POST', body: { amountPaise: paidPaise, mode: 'cash' } })).status).toBe(201);
+    };
+    await bill('main', 5000); // 15000 still owed
+    await bill('main', 20000); // fully paid: not counted
+    await bill('east', 0); // another branch's unpaid bill
+    expect((await json(owner('/api/b/main/dashboard'))).pendingDues).toEqual({ totalPaise: 15000, count: 1 });
+    expect((await json(owner('/api/b/east/dashboard'))).pendingDues).toEqual({ totalPaise: 20000, count: 1 });
+    expect((await json((await t.as('labtech'))('/api/b/main/dashboard'))).pendingDues).toBeNull();
+  });
+
   it('low stock and near expiry list the right medicines of this branch only', async () => {
     const owner = await t.as('owner');
     const pharm = await t.as('pharm');
@@ -129,7 +147,7 @@ describe("owner's daily view", () => {
     // One stays "ordered", one is collected, one completed, one cancelled.
     const { orders } = await json(lab('/api/b/main/lab/orders'));
     expect((await lab(`/api/b/main/lab/orders/${orders[1].id}`, { method: 'PATCH', body: { status: 'sample_collected' } })).status).toBe(200);
-    expect((await lab(`/api/b/main/lab/orders/${orders[2].id}/results`, { method: 'PUT', body: { results: [], complete: true } })).status).toBe(200);
+    expect((await lab(`/api/b/main/lab/orders/${orders[2].id}/results`, { method: 'PUT', body: { results: await allResults(t.db, orders[2].id), complete: true } })).status).toBe(200);
     expect((await owner(`/api/b/main/lab/orders/${orders[3].id}`, { method: 'PATCH', body: { status: 'cancelled' } })).status).toBe(200);
     expect((await json(lab('/api/b/main/dashboard'))).labPending).toBe(2);
 

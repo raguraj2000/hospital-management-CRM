@@ -5,10 +5,14 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { openDb, runMigrations } from '@platform/core';
 import { createApp } from './app.js';
 import { config, ensureDataDir } from './config.js';
+import { addRandomBloodSugar, mergeDifferentialIntoCbc } from './lib/lab-merge.js';
 
 ensureDataDir();
 const db = await openDb(config.dbUrl);
 await runMigrations(db, config.migrationsFolder);
+const merged = await mergeDifferentialIntoCbc(db);
+if (await addRandomBloodSugar(db)) console.log('Lab tests: Random Blood Sugar added to the Blood Sugar test.');
+if (merged) console.log(`Lab tests: differential counts moved into the Complete Blood Count (${merged} branch${merged > 1 ? 'es' : ''}).`);
 
 const app = createApp(db);
 

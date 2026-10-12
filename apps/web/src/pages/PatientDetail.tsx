@@ -1,3 +1,4 @@
+import { formatRupees, ageInfo, GENDER_LABEL } from '@platform/shared';
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -37,7 +38,8 @@ import { PatientForm } from '@/components/PatientForm';
 import { NewVisitForm, TokenBadge, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
 import { ageOf, formatPhone } from './Patients';
 import { billsInDays, DayRangeFilter, labInDays, PatientBillsTab, PatientLabTab, usePatientBills, usePatientLab } from './PatientTabs';
-import { fmtDate, inDays } from '@/components/format';
+import { fmtDate, inDays, istDay } from '@/components/format';
+import { BookmarkSearch } from '@/components/Bookmarks';
 
 /** Free WhatsApp click-to-chat: opens WhatsApp with the message ready; staff press send. */
 function whatsAppLink(phone: string, text: string) {
@@ -119,6 +121,8 @@ export function PatientDetail() {
   const filtered = !!(range.from || range.to);
   const shownVisits = visits.data?.visits.filter((v) => inDays(v.visitDate, range.from, range.to));
   const shownBills = bills.data && billsInDays(bills.data, range);
+  // A bookmark's medicines and instructions belong to a visit: today's open one, if there is one.
+  const openVisit = visits.data?.visits.find((v) => v.visitDate === istDay(new Date().toISOString()) && v.status !== 'completed' && v.status !== 'cancelled');
 
   return (
     <div>
@@ -132,13 +136,23 @@ export function PatientDetail() {
             <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">{p.name}</h1>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Badge className="font-mono">{p.uhid}</Badge>
-              {age != null && <Badge tone="brand">{age} yrs</Badge>}
+              {ageInfo(p) && (
+                <>
+                  <Badge tone="brand">{ageInfo(p)!.text}</Badge>
+                  <Badge tone={ageInfo(p)!.child ? 'warning' : 'neutral'}>{ageInfo(p)!.child ? 'Child' : 'Adult'}</Badge>
+                </>
+              )}
               {p.gender && (
-                <Badge tone={p.gender === 'female' ? 'violet' : p.gender === 'male' ? 'brand' : 'neutral'} className="capitalize">
-                  {p.gender}
+                <Badge tone={p.gender.startsWith('female') ? 'violet' : p.gender.startsWith('male') ? 'brand' : 'neutral'}>
+                  {GENDER_LABEL[p.gender]}
                 </Badge>
               )}
               {p.bloodGroup && <Badge tone="critical">{p.bloodGroup}</Badge>}
+              {!!bills.data?.summary.balancePaise && (
+                <Badge tone="critical" dot>
+                  Balance due {formatRupees(bills.data.summary.balancePaise)}
+                </Badge>
+              )}
               <span className="text-xs text-muted">Registered {fmtDate(p.createdAt)}</span>
             </div>
             <ConditionBadges conditions={p.conditions} className="mt-2" />
@@ -176,6 +190,12 @@ export function PatientDetail() {
           </div>
         </div>
       </Card>
+
+      <BookmarkSearch
+        branch={branch!}
+        visitId={openVisit?.id ?? null}
+        where={openVisit ? `Goes onto today's visit${openVisit.token != null ? ` · Token ${openVisit.token}` : ''} · ${openVisit.opNo}` : 'No open visit today: start an OP visit first, then add a bookmark.'}
+      />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">

@@ -4,6 +4,18 @@ import type { PrintHeader } from '@platform/shared';
  * The branch letterhead printed on lab reports (and later bills), in the style of a
  * paper letterhead: logo | name + address | rule | doctors. Always light/green, also in dark mode.
  */
+/** The logo large and faint behind the page (set in the print header). On paper it repeats on every page. */
+export function ReportWatermark({ header }: { header: PrintHeader }) {
+  if (!header.watermark || !header.logo) return null;
+  return <img src={header.logo} alt="" aria-hidden className="report-watermark pointer-events-none absolute top-1/2 left-1/2 z-0 w-[62%] -translate-x-1/2 -translate-y-1/2 opacity-[0.07]" />;
+}
+
+/** The footer line of the lab report. */
+export function ReportFooter({ header }: { header: PrintHeader }) {
+  if (!header.footer) return null;
+  return <div className="mt-4 border-t border-[#1f6b4f] pt-1.5 text-center text-[11px] whitespace-pre-wrap text-[#3f4a45]">{header.footer}</div>;
+}
+
 export function ReportHeader({ header }: { header: PrintHeader }) {
   const doctors = header.doctors.filter((d) => d.name.trim());
   return (

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { ClipboardEdit, FlaskConical, ListPlus, Pencil, Plus, Printer, TestTube, Trash2, X } from 'lucide-react';
+import { ClipboardEdit, FlaskConical, ListPlus, Pencil, Plus, Printer, TestTube, Trash2, X, Undo2 } from 'lucide-react';
 import { formatRupees, LAB_CATALOG, opToken, type LabQueueEntry, type LabTest } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, ConfirmDelete, ConfirmDialog, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
+import { fmtDateTime } from '@/components/format';
 import { api, errorMessage } from '@/api/client';
 import { PrintHeaderForm } from '@/components/PrintHeaderForm';
 import { useBranch, useCan } from '@/state/auth';
@@ -57,6 +58,14 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
   });
   const [cancelling, setCancelling] = useState<LabQueueEntry | null>(null);
   const { rows, pager } = usePaged(data?.orders ?? [], status);
+  const back = useMutation({
+    mutationFn: (o: LabQueueEntry) => api.post(`/b/${branch}/lab/visits/${o.visitId}/back-to-doctor`),
+    onSuccess: (_d, o) => {
+      for (const k of ['lab-queue', 'visits', 'visit']) qc.invalidateQueries({ queryKey: [k, branch] });
+      toast.success(`${o.patientName} sent back to the doctor`, { description: 'They are on the doctor\'s waiting list again. The test stays ordered.' });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
   const cancel = useMutation({
     mutationFn: (o: LabQueueEntry) => api.patch(`/b/${branch}/lab/orders/${o.id}`, { status: 'cancelled' }),
     onSuccess: (_d, o) => {
@@ -119,6 +128,7 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
                   {opToken(o.opNo) != null && <span className="font-medium text-ink">Token {opToken(o.opNo)} · </span>}
                   <span className="font-mono text-xs">{o.opNo}</span>
                   {o.doctorName && ` · ${o.doctorName}`}
+                  <span className="block text-xs">Ordered {fmtDateTime(o.createdAt)}{o.completedAt ? ` · done ${fmtDateTime(o.completedAt)}` : ''}</span>
                 </TD>
                 <TD>
                   <Badge tone={o.status === 'ordered' ? 'warning' : o.status === 'completed' ? 'positive' : 'brand'} dot>
@@ -128,6 +138,11 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
                 <TD>
                   <div className="flex justify-end gap-1.5">
                     {/* The patient is going elsewhere: allowed until results are entered (the server refuses after that). */}
+                    {o.status !== 'completed' && o.visitStatus === 'at_lab' && (
+                      <Button size="sm" variant="ghost" disabled={back.isPending} onClick={() => back.mutate(o)} title="The patient does not wait here: back to the doctor's waiting list. The test stays ordered.">
+                        <Undo2 /> Back to doctor
+                      </Button>
+                    )}
                     {o.status !== 'completed' && (
                       <Button size="sm" variant="ghost" disabled={cancel.isPending} onClick={() => setCancelling(o)}>
                         <X /> Cancel test
@@ -155,14 +170,13 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
         </Table>
       )}
       <Pager {...pager} />
-      <ConfirmDialog
+      <ConfirmDelete
         open={!!cancelling}
         onOpenChange={(open) => !open && setCancelling(null)}
         title={`Cancel ${cancelling?.testName ?? 'test'}?`}
         description={`For ${cancelling?.patientName ?? 'this patient'}. It is removed from the queue and from the bill.`}
-        confirmLabel="Yes, cancel the test"
-        cancelLabel="Keep it"
-        onConfirm={() => cancelling && cancel.mutate(cancelling)}
+        pending={cancel.isPending}
+        onConfirm={() => cancelling && cancel.mutate(cancelling, { onSettled: () => setCancelling(null) })}
       />
     </Card>
   );

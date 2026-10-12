@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
-import { ArrowRight, CalendarClock, ClipboardList, FlaskConical, IndianRupee, PackageCheck, UserPlus, Users } from 'lucide-react';
+import { ArrowRight, CalendarClock, ClipboardList, FlaskConical, IndianRupee, PackageCheck, UserPlus, Users, Wallet } from 'lucide-react';
 import { formatRupees, type Patient } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, CardHeader, cn, EmptyState, PageHeader, Skeleton, StatCard, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
@@ -18,6 +18,7 @@ interface DashboardData {
   // null = this role may not see it; missing = older API. Either way the card is hidden.
   collectionToday?: { cashPaise: number; upiPaise: number; cardPaise: number; totalPaise: number } | null;
   labPending?: number | null;
+  pendingDues?: { totalPaise: number; count: number } | null;
   stock?: {
     lowStockCount: number;
     lowStock: { id: number; name: string; strength: string | null; stock: number; reorderLevel: number }[];
@@ -29,7 +30,7 @@ interface DashboardData {
 const dayLabel = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
 // Written out in full so Tailwind sees them; no card count leaves a hole in the last row.
-const STAT_GRID: Record<number, string> = { 2: 'sm:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'sm:grid-cols-2 xl:grid-cols-4' };
+const STAT_GRID: Record<number, string> = { 2: 'sm:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'sm:grid-cols-2 xl:grid-cols-4', 5: 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5' };
 
 const cardLink = 'inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted hover:text-ink';
 
@@ -48,7 +49,8 @@ export function Dashboard() {
     queryFn: () => api.get<DashboardData>(`/b/${branch}/dashboard`),
   });
 
-  const hour = new Date().getHours();
+  // The greeting follows India time, not the clock setting of this computer's time zone.
+  const hour = Number(new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }));
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
   // The server decides who sees money, lab and stock. While loading we can only guess from the
@@ -57,6 +59,8 @@ export function Dashboard() {
   const stock = data?.stock;
   const showCollection = isLoading ? canBilling : collection != null;
   const showLab = isLoading ? canLab : data?.labPending != null;
+  const dues = data?.pendingDues;
+  const showDues = isLoading ? canBilling : dues != null;
   const showStock = isLoading ? canInventory : stock != null;
   const footnote = (text: string) => (isLoading ? <Skeleton className="h-4 w-24" /> : text);
 
@@ -77,7 +81,7 @@ export function Dashboard() {
 
       {error && <Card className="mb-4 p-4 text-sm text-critical">{errorMessage(error)}</Card>}
 
-      <div className={cn('grid grid-cols-1 gap-4', STAT_GRID[2 + Number(showCollection) + Number(showLab)])}>
+      <div className={cn('grid grid-cols-1 gap-4', STAT_GRID[2 + Number(showCollection) + Number(showDues) + Number(showLab)])}>
         <StatCard
           icon={ClipboardList}
           tone="warning"
@@ -102,6 +106,17 @@ export function Dashboard() {
             )}
             loading={isLoading}
             action={canBilling && <Link to={`/${branch}/billing`} className={cardLink}>Billing →</Link>}
+          />
+        )}
+        {showDues && (
+          <StatCard
+            icon={Wallet}
+            tone="critical"
+            label="Payments due"
+            value={formatRupees(dues?.totalPaise ?? 0)}
+            footnote={footnote(dues?.count ? `${dues.count} bill${dues.count > 1 ? 's' : ''} not fully paid` : 'Every bill is paid')}
+            loading={isLoading}
+            action={canBilling && <Link to={`/${branch}/billing?tab=pending`} className={cardLink}>Who owes →</Link>}
           />
         )}
         {showLab && (
@@ -172,7 +187,7 @@ export function Dashboard() {
                     </TD>
                     <TD className="hidden whitespace-nowrap text-muted tabular-nums sm:table-cell lg:hidden xl:table-cell">{formatPhone(p.phone)}</TD>
                     <TD className="text-right">
-                      <Badge>{new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</Badge>
+                      <Badge>{new Date(p.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' })}</Badge>
                     </TD>
                   </TR>
                 ))}

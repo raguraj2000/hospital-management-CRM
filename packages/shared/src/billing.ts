@@ -161,7 +161,24 @@ export const billPaymentSchema = z.object({
   mode: z.enum(BILL_PAYMENT_MODES),
 });
 
-export const billingSettingsSchema = z.object({ consultationFeePaise: paise('the fee') });
+/** A ready-made extra charge the branch keeps in Settings: picked on a visit or a bill in one click. */
+export const chargePresetSchema = z.object({ name: z.string().trim().min(1, 'Give the charge a name').max(60), amountPaise: paise('the amount') });
+export type ChargePreset = z.infer<typeof chargePresetSchema>;
+
+export const billingSettingsSchema = z.object({ consultationFeePaise: paise('the fee'), chargePresets: z.array(chargePresetSchema).max(40, 'At most 40 ready-made charges').optional() });
+
+/** An extra charge of a visit as the visit page and the counter show it. `key`: what to send to remove it. */
+export interface VisitChargeRow extends BillCharge {
+  key: string;
+  /** Still waiting for the visit's first bill (true), or already a line of its unpaid bill (false). */
+  pending: boolean;
+}
+export interface VisitCharges {
+  charges: VisitChargeRow[];
+  /** Why no charge can be added or removed any more (the bill has a payment); null = it can. */
+  locked: string | null;
+  presets: ChargePreset[];
+}
 
 export interface BillLine {
   id: number;
@@ -305,12 +322,17 @@ export const CHECKOUT_LOOKBACK_DAYS = 30;
  */
 export const dispenseQuantitiesSchema = z.record(z.string().regex(/^\d+$/), z.number().int().min(1, 'At least 1').max(10_000)).optional();
 
+/** The bill line that carries the round-off. */
+export const ROUND_OFF_LINE = 'Round off';
+
 export const checkoutSchema = billUpdateSchema.extend({
   /** Prescription lines to dispense now; the other pending lines are marked "declined". */
   itemIds: z.array(z.number().int().positive()).max(200).default([]),
   /** Fewer units than prescribed for some of those lines (see dispenseQuantitiesSchema). */
   quantities: dispenseQuantitiesSchema,
   paymentMode: z.enum(BILL_PAYMENT_MODES),
+  /** Paise added so the patient pays whole rupees (150.66 -> 151): kept on the bill as its "Round off" line. */
+  roundOffPaise: z.number().int().min(0).max(99).optional(),
   amountPaise: z.number({ error: 'Enter the amount received' }).int().min(0, 'Enter the amount received').max(100_000_000),
 });
 export type CheckoutInput = z.input<typeof checkoutSchema>;
@@ -367,6 +389,8 @@ export interface CheckoutQueueEntry {
   opNo: string;
   token: number | null;
   visitDate: string;
+  /** When the OP visit was started (UTC ISO). */
+  visitAt: string;
   status: string;
   patientId: number;
   patientName: string;

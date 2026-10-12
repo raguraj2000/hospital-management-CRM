@@ -318,7 +318,7 @@ export interface StockReport {
  * null for free-text doses ("SOS", "as needed") -- then the quantity must be typed.
  */
 export function unitsPerDay(dose: string): number | null {
-  if (!/^\d+(\.5)?(-\d+(\.5)?){1,3}$/.test(dose.trim())) return null;
+  if (!/^\d+(\.(?:25|5|75))?(-\d+(\.(?:25|5|75))?){1,3}$/.test(dose.trim())) return null;
   return dose
     .trim()
     .split('-')
@@ -373,6 +373,63 @@ export interface PrescriptionItem {
 }
 
 // ---------------------------------------------------------------------------
+// Clinic: bookmarks (ready-made treatments) and the instructions of a visit
+// ---------------------------------------------------------------------------
+
+/** One line of a bookmark: a medicine as on a prescription, or an instruction to carry out. */
+export const bookmarkLineSchema = z.discriminatedUnion('kind', [
+  prescriptionItemSchema.extend({ kind: z.literal('medicine') }),
+  z.object({ kind: z.literal('instruction'), text: z.string().trim().min(2, 'Write the instruction').max(200) }),
+]);
+export const bookmarkInputSchema = z.object({
+  name: z.string().trim().min(2, 'Enter a name, e.g. Dengue').max(80),
+  lines: z.array(bookmarkLineSchema).min(1, 'Add at least one medicine or instruction').max(40),
+});
+export type BookmarkInput = z.input<typeof bookmarkInputSchema>;
+
+/**
+ * Which lines of the bookmark go onto the visit (the doctor unticks what this patient does not need), each with
+ * what was changed for this patient only -- the dose, days, quantity, instructions, or the instruction's text.
+ * The bookmark itself stays as it is.
+ */
+export const bookmarkApplySchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        id: z.number().int().positive(),
+        dose: z.string().trim().min(1, 'Enter the dose, e.g. 1-0-1').max(40).optional(),
+        days: z.number({ error: 'Enter days' }).int().min(1, 'At least 1 day').max(365).optional(),
+        quantity: z.number().int().min(1, 'At least 1').max(10_000).nullable().optional(),
+        instructions: z.string().trim().max(200).transform((v) => (v === '' ? null : v)).nullable().optional(),
+        text: z.string().trim().min(2, 'Write the instruction').max(200).optional(),
+      }),
+    )
+    .min(1, 'Tick at least one line')
+    .max(40),
+});
+export type BookmarkApplyInput = z.input<typeof bookmarkApplySchema>;
+
+export type BookmarkLine =
+  | { id: number; kind: 'medicine'; medicineId: number; medicineName: string; strength: string | null; form: MedicineForm; dose: string; days: number; quantity: number | null; instructions: string | null; givenHere: boolean; /** Today's rate per unit. */ pricePaise: number; /** Today's stock; 0 = cannot be prescribed now. */ stock: number; /** false = no longer in the medicine list. */ available: boolean }
+  | { id: number; kind: 'instruction'; text: string };
+
+export interface Bookmark {
+  id: number;
+  name: string;
+  lines: BookmarkLine[];
+}
+
+/** An instruction on a visit; done = ticked by someone as carried out. */
+export interface VisitInstruction {
+  id: number;
+  visitId: number;
+  text: string;
+  bookmarkName: string | null;
+  doneAt: string | null;
+  doneByName: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Clinic: treatments given in the hospital
 // ---------------------------------------------------------------------------
 
@@ -386,7 +443,7 @@ const TIMES_OF_DAY = ['Morning', 'Afternoon', 'Night'];
  */
 export function treatmentSlots(dose: string): { slotNo: number; slot: string; amount: string | null }[] {
   const parts = dose.trim().split('-');
-  if (parts.length < 2 || parts.length > 4 || parts.some((x) => !/^\d+(\.5)?$/.test(x))) return [{ slotNo: 1, slot: 'Dose', amount: null }];
+  if (parts.length < 2 || parts.length > 4 || parts.some((x) => !/^\d+(\.(?:25|5|75))?$/.test(x))) return [{ slotNo: 1, slot: 'Dose', amount: null }];
   const names = parts.length === 3 ? TIMES_OF_DAY : parts.length === 2 ? ['Morning', 'Night'] : parts.map((_, i) => `Dose ${i + 1}`);
   return parts.map((amount, i) => ({ slotNo: i + 1, slot: names[i]!, amount })).filter((s) => Number(s.amount) > 0);
 }
@@ -531,6 +588,8 @@ export const labTestLineSchema = z.object({
   method: z.string().trim().max(120).default(''),
   unit: z.string().trim().max(40).default(''),
   refRange: z.string().trim().max(120).default(''),
+  /** May be left empty when the test is completed. */
+  optional: z.boolean().default(false),
 });
 export type LabTestLine = z.infer<typeof labTestLineSchema>;
 
@@ -595,6 +654,8 @@ export interface LabReportParameter {
   type: 'number' | 'text';
   options: string[];
   noFlag: boolean;
+  /** May be left empty when the test is completed. */
+  optional: boolean;
   value: string;
   flag: '' | 'H' | 'L' | '!';
 }
@@ -654,6 +715,10 @@ export const printHeaderSchema = z.object({
   rightSignName: headerText(60),
   rightSignTitle: headerText(60),
   rightSignImage: imageDataUrl,
+  /** Print the logo large and faint behind the results of the lab report. */
+  watermark: z.boolean().default(false),
+  /** Printed at the end of the lab report, under the signatures (timings, a disclaimer...). */
+  footer: headerText(300),
 });
 export type PrintHeaderInput = z.input<typeof printHeaderSchema>;
 export type PrintHeader = z.output<typeof printHeaderSchema>;
@@ -670,6 +735,8 @@ export const EMPTY_PRINT_HEADER: PrintHeader = {
   rightSignName: '',
   rightSignTitle: '',
   rightSignImage: null,
+  watermark: false,
+  footer: '',
 };
 
 export * from './lab-catalog.js';
@@ -682,6 +749,8 @@ export interface LabQueueEntry extends LabOrder {
   doctorName: string | null;
   /** The doctor's note to the lab for this visit. */
   labNote: string | null;
+  /** Where the patient is now ('at_lab' = sent to the lab and not back with the doctor yet). */
+  visitStatus: string;
 }
 
 /** One lab order on the patient's Lab tab (all visits, newest first). */
@@ -708,7 +777,34 @@ const optionalText = (max: number) =>
     .nullable()
     .optional();
 
-export const GENDERS = ['female', 'male', 'other'] as const;
+/** 'female child' / 'male child': written F/Ch and M/Ch on paper. */
+export const GENDERS = ['female', 'male', 'female child', 'male child', 'other'] as const;
+export const GENDER_LABEL: Record<(typeof GENDERS)[number], string> = { female: 'Female', male: 'Male', 'female child': 'FCH', 'male child': 'MCH', other: 'Other' };
+
+/** Below this age a patient is shown as a child. */
+export const CHILD_BELOW_YEARS = 18;
+/**
+ * A patient's age for reading: "3 months" / "12 days" for a baby (needs the date of birth), else "24 yrs".
+ * `child`: under CHILD_BELOW_YEARS, or registered as FCH / MCH. null when neither date of birth nor age is known.
+ */
+export function ageInfo(p: { dob: string | null; ageYears: number | null; gender?: string | null }, today = new Date()): { text: string; years: number; child: boolean } | null {
+  let years = p.ageYears;
+  let text: string | null = null;
+  if (p.dob && /^\d{4}-\d{2}-\d{2}$/.test(p.dob)) {
+    const [y, m, d] = p.dob.split('-').map(Number) as [number, number, number];
+    const now = new Date(today.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + 'T00:00:00Z');
+    let months = (now.getUTCFullYear() - y) * 12 + (now.getUTCMonth() + 1 - m);
+    if (now.getUTCDate() < d) months--;
+    years = Math.floor(months / 12);
+    if (months < 1) text = `${Math.max(0, Math.round((now.getTime() - Date.UTC(y, m - 1, d)) / 86_400_000))} days`;
+    else if (months < 12) text = `${months} month${months === 1 ? '' : 's'}`;
+  }
+  if (years == null || years < 0) return null;
+  return { text: text ?? `${years} yrs`, years, child: years < CHILD_BELOW_YEARS || /child/.test(p.gender ?? '') };
+}
+
+/** A dose pattern for reading: "0.5-0-0.75" -> "½-0-¾". */
+export const prettyDose = (dose: string) => dose.replace(/(?<![\d.])0\.25(?!\d)/g, '¼').replace(/(?<![\d.])0\.5(?!\d)/g, '½').replace(/(?<![\d.])0\.75(?!\d)/g, '¾');
 
 /** Indian mobile number, typed any way ("98765 43210", "+91…", "0…"); stored as +91XXXXXXXXXX. */
 const mobile = z
@@ -765,6 +861,10 @@ export const splitConditions = (conditions: string | null | undefined): string[]
 
 export interface Patient {
   id: number;
+  /** Only in the patients list: the balance still due on this patient's bills. */
+  duePaise?: number;
+  /** Only in the patients list: the newest visit that was not cancelled. */
+  lastVisit?: { date: string; at: string; complaint: string | null } | null;
   /** Unique Health ID, e.g. AH000001 (unique across the organization). */
   uhid: string;
   name: string;
@@ -874,6 +974,8 @@ export interface OpVisit {
   spo2: number | null;
   weightKg: number | null;
   createdAt: string;
+  /** Who started the visit; null for visits from before this was shown, or when that person is gone. */
+  createdByName?: string | null;
   /** This visit's lab tests by status (cancelled ones are not counted). */
   lab: VisitLabSummary;
   /** Has lab tests and every one is completed: the patient goes back in before the next token. */

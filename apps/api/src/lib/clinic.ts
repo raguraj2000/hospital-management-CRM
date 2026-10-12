@@ -2,13 +2,13 @@ import { and, asc, eq, gte, isNull, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { CHECKOUT_LOOKBACK_DAYS, opToken } from '@platform/shared';
 import { notFound, type Db } from '@platform/core';
-import { billPayment, labOrder, medicine, opBill, opBillLine, opVisit, patient, prescriptionItem, user } from '../db/schema.js';
+import { billPayment, labOrder, medicine, opBill, opBillLine, opVisit, patient, prescriptionItem, user, visitCharge } from '../db/schema.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
-/** Today's date on the server (the clinic PC's local time), YYYY-MM-DD. */
+/** Today's date in India (IST = UTC+5:30, whatever time zone the server computer is set to), YYYY-MM-DD. */
 export async function localToday(db: Pick<Db, 'get'>): Promise<string> {
-  return (await db.get<{ d: string }>(sql`select date('now', 'localtime') as d`))!.d;
+  return (await db.get<{ d: string }>(sql`select date('now', '+330 minutes') as d`))!.d;
 }
 
 /** "2026-10-02" -> "261002", used in OP / sale numbers. */
@@ -72,6 +72,9 @@ export async function settledAtCounter(db: Db | Tx, branchId: number, visitId: n
     .from(labOrder)
     .where(and(eq(labOrder.branchId, branchId), eq(labOrder.visitId, visitId), sql`${labOrder.status} <> 'cancelled'`, sql`${labOrder.id} not in (select ${opBillLine.labOrderId} from ${opBillLine} where ${opBillLine.labOrderId} is not null)`));
   if (labs!.n) return false;
+  // An extra charge added after the last bill was paid still has to be billed.
+  const [charges] = await db.select({ n }).from(visitCharge).where(and(eq(visitCharge.branchId, branchId), eq(visitCharge.visitId, visitId), isNull(visitCharge.deletedAt), isNull(visitCharge.billId)));
+  if (charges!.n) return false;
   const [rx] = await db.select({ n }).from(prescriptionItem).where(and(eq(prescriptionItem.branchId, branchId), eq(prescriptionItem.visitId, visitId), eq(prescriptionItem.status, 'pending'), isNull(prescriptionItem.deletedAt)));
   return !rx!.n;
 }
@@ -107,12 +110,16 @@ export async function visitsToCollect(db: Db, branchId: number, today: string) {
       patientName: patient.name,
       patientUhid: patient.uhid,
       doctorName: doctor.name,
+      visitAt: opVisit.createdAt,
       /** The doctor's own fee for this visit; null = the branch's standard fee. */
       visitFeePaise: opVisit.consultationFeePaise,
       billCount: sql<number>`(select count(*) from ${opBill} where ${ofVisit(opBill)})`,
       balancePaise: sql<number>`(select coalesce(sum(${balance}), 0) from ${opBill} where ${ofVisit(opBill)})`,
       unbilledLabCount: sql<number>`(select count(*) from ${labOrder} where ${unbilledLab})`,
       unbilledLabPaise: sql<number>`(select coalesce(sum(${labOrder.pricePaise}), 0) from ${labOrder} where ${unbilledLab})`,
+      /** Extra charges (dressing, IV...) put on the visit that are on no bill yet. */
+      waitingChargePaise: sql<number>`(select coalesce(sum(vc.amount_paise), 0) from visit_charge vc where vc.visit_id = "op_visit"."id" and vc.deleted_at is null and vc.bill_id is null)`,
+      waitingChargeCount: sql<number>`(select count(*) from visit_charge vc where vc.visit_id = "op_visit"."id" and vc.deleted_at is null and vc.bill_id is null)`,
       medicinesWaiting: sql<number>`(select count(*) from ${prescriptionItem} where ${pendingRx})`,
       medicinesPaise: sql<number>`(select coalesce(sum(${prescriptionItem.quantity} * ${medicine.pricePaise}), 0) from ${prescriptionItem} inner join ${medicine} on ${medicine.id} = ${prescriptionItem.medicineId} where ${pendingRx})`,
     })
@@ -129,5 +136,5 @@ export async function visitsToCollect(db: Db, branchId: number, today: string) {
     )
     .orderBy(sql`case when ${opVisit.status} = 'at_counter' then 0 when ${opVisit.visitDate} = ${today} then 1 else 2 end`, asc(opVisit.visitDate), asc(opVisit.id));
   const stillWithDoctor = (r: (typeof rows)[number]) => r.visitDate === today && (r.status === 'waiting' || r.status === 'with_doctor' || r.status === 'at_lab');
-  return rows.filter((r) => !stillWithDoctor(r) && (r.billCount === 0 || r.unbilledLabCount > 0 || r.balancePaise > 0 || r.medicinesWaiting > 0)).map(withToken);
+  return rows.filter((r) => !stillWithDoctor(r) && (r.billCount === 0 || r.unbilledLabCount > 0 || r.waitingChargeCount > 0 || r.balancePaise > 0 || r.medicinesWaiting > 0)).map(withToken);
 }

@@ -1,8 +1,8 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { patientInputSchema, type Patient } from '@platform/shared';
+import { GENDERS, patientInputSchema, type Patient } from '@platform/shared';
 import { AppError, idPrefixFor, notFound, nextOrgNumber, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { opBill, organization, patient, pharmacySale } from '../db/schema.js';
+import { opBill, opVisit, organization, patient, pharmacySale } from '../db/schema.js';
 
 const columns = {
   id: patient.id,
@@ -49,9 +49,24 @@ export function createPatientRoutes(db: Db) {
       ? sql`(instr(lower(${patient.name}), ${q}) > 0 OR instr(lower(${patient.uhid}), ${q}) > 0${digits ? sql` OR instr(coalesce(${patient.phone}, ''), ${digits}) > 0` : sql``})`
       : undefined;
     const gender = c.req.query('gender');
-    const genderMatch = gender === 'female' || gender === 'male' || gender === 'other' ? eq(patient.gender, gender) : undefined;
-    const where = and(inBranch(b.id), match, genderMatch);
-    const rows = await db.select(columns).from(patient).where(where).orderBy(desc(patient.id)).limit(limit).offset(offset);
+    const asked = GENDERS.find((g) => g === gender);
+    const genderMatch = asked ? eq(patient.gender, asked) : undefined;
+    // What the patient still owes on their bills here ("patient"."id" written out, as for the last visit below).
+    const due = sql<number>`(select coalesce(sum(max(0, ob.total_paise - coalesce((select sum(bp.amount_paise) from bill_payment bp where bp.bill_id = ob.id), 0))), 0) from op_bill ob where ob.patient_id = "patient"."id" and ob.branch_id = ${b.id})`;
+    const dueMatch = c.req.query('due') === '1' ? sql`${due} > 0` : undefined;
+    const where = and(inBranch(b.id), match, genderMatch, dueMatch);
+    // The newest visit that was not cancelled, for the "Last visit" column. ("patient"."id" is written out: without
+    // a join the query builder leaves the table name off, and a bare "id" would be the visit's own.)
+    const last = (col: 'visit_date' | 'created_at' | 'complaint') =>
+      sql<string | null>`(select v.${sql.raw(col)} from ${opVisit} v where v.patient_id = "patient"."id" and v.branch_id = ${b.id} and v.deleted_at is null and v.status <> 'cancelled' order by v.id desc limit 1)`;
+    const found = await db
+      .select({ ...columns, duePaise: due, lastVisitDate: last('visit_date'), lastVisitAt: last('created_at'), lastVisitComplaint: last('complaint') })
+      .from(patient)
+      .where(where)
+      .orderBy(desc(patient.id))
+      .limit(limit)
+      .offset(offset);
+    const rows = found.map(({ lastVisitDate, lastVisitAt, lastVisitComplaint, ...p }) => ({ ...p, lastVisit: lastVisitDate ? { date: lastVisitDate, at: lastVisitAt!, complaint: lastVisitComplaint } : null }));
     const [{ total }] = await db.select({ total: sql<number>`count(*)` }).from(patient).where(where);
     return c.json({ patients: rows, total });
   });

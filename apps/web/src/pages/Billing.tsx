@@ -133,6 +133,12 @@ function ToBillCard({ branch, data, today, loading }: { branch: string; data?: T
 /** Where the receipt of one payment prints from. */
 export const receiptUrl = (branch: string, billId: number, paymentId: number) => `/${branch}/billing/${billId}/receipts/${paymentId}/print`;
 
+/** How long a bill has been waiting for its money, in whole days. */
+function dueSince(createdAt: string) {
+  const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000);
+  return days <= 0 ? 'Due since today' : `Due for ${days} day${days > 1 ? 's' : ''}`;
+}
+
 /** Every bill with a balance due. "Receive" takes the money and prints the receipt. */
 function PendingPayments({ branch, data, loading, error }: { branch: string; data?: BillListRow[]; loading: boolean; error: unknown }) {
   const navigate = useNavigate();
@@ -176,6 +182,7 @@ function PendingPayments({ branch, data, loading, error }: { branch: string; dat
                   <div className="text-[11px] text-muted">
                     {fmtDate(b.createdAt)} · {b.opNo}
                   </div>
+                  <div className="text-[11px] font-medium text-warning">{dueSince(b.createdAt)}</div>
                 </TD>
                 <TD>
                   <div className="font-medium">{b.patientName}</div>

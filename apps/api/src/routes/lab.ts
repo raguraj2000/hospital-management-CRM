@@ -39,9 +39,9 @@ const orderColumns = {
  * A result line added by hand. With a range that has a number in it ("12 - 15", "< 200") the result is a number
  * and is flagged high / low; otherwise it is free text, with no quick picks.
  */
-const newLine = (p: { name: string; method: string; unit: string; refRange: string }) => {
+const newLine = (p: { name: string; method: string; unit: string; refRange: string; optional?: boolean }) => {
   const number = /\d/.test(p.refRange);
-  return { name: p.name, method: p.method, unit: p.unit, refRange: p.refRange, valueType: number ? ('number' as const) : ('text' as const), options: number ? null : '[]' };
+  return { name: p.name, method: p.method, unit: p.unit, refRange: p.refRange, valueType: number ? ('number' as const) : ('text' as const), options: number ? null : '[]', optional: !!p.optional };
 };
 
 export function createLabRoutes(db: Db) {
@@ -101,6 +101,7 @@ export function createLabRoutes(db: Db) {
             type: x.valueType,
             options: x.options ? (JSON.parse(x.options) as string[]) : x.valueType === 'text' ? ['NEGATIVE', 'POSITIVE'] : [],
             noFlag: x.noFlag,
+            optional: x.optional,
             value: r?.value ?? '',
             flag: (r?.flag ?? '') as LabReportTest['parameters'][number]['flag'],
           };
@@ -192,6 +193,7 @@ export function createLabRoutes(db: Db) {
             valueType: p.type,
             options: p.options ? JSON.stringify(p.options) : null,
             noFlag: !!p.noFlag,
+            optional: !!p.optional,
             sortOrder: j,
           })),
         );
@@ -236,7 +238,7 @@ export function createLabRoutes(db: Db) {
     const t = await testOfBranch(b.id, Number(c.req.param('id')));
     const [row] = await db.select({ id: labTest.id, name: labTest.name, pricePaise: labTest.pricePaise, department: labTest.department, kind: labTest.kind }).from(labTest).where(eq(labTest.id, t.id));
     const parameters = await db
-      .select({ id: labTestParameter.id, name: labTestParameter.name, method: labTestParameter.method, unit: labTestParameter.unit, refRange: labTestParameter.refRange })
+      .select({ id: labTestParameter.id, name: labTestParameter.name, method: labTestParameter.method, unit: labTestParameter.unit, refRange: labTestParameter.refRange, optional: labTestParameter.optional })
       .from(labTestParameter)
       .where(and(eq(labTestParameter.branchId, b.id), eq(labTestParameter.testId, t.id), isNull(labTestParameter.deletedAt)))
       .orderBy(asc(labTestParameter.sortOrder), asc(labTestParameter.id));
@@ -316,7 +318,7 @@ export function createLabRoutes(db: Db) {
     const status = c.req.query('status');
     const statuses = (LAB_ORDER_STATUSES as readonly string[]).includes(status ?? '') ? [status as LabOrder['status']] : (['ordered', 'sample_collected'] as const);
     const orders: LabQueueEntry[] = await db
-      .select({ ...orderColumns, opNo: opVisit.opNo, patientId: patient.id, patientName: patient.name, patientUhid: patient.uhid, doctorName: doctor.name, labNote: opVisit.labNote })
+      .select({ ...orderColumns, opNo: opVisit.opNo, patientId: patient.id, patientName: patient.name, patientUhid: patient.uhid, doctorName: doctor.name, labNote: opVisit.labNote, visitStatus: opVisit.status })
       .from(labOrder)
       .innerJoin(labTest, eq(labTest.id, labOrder.testId))
       .innerJoin(opVisit, eq(opVisit.id, labOrder.visitId))
@@ -328,6 +330,22 @@ export function createLabRoutes(db: Db) {
       .orderBy(status === 'completed' ? desc(labOrder.id) : asc(labOrder.id))
       .limit(status === 'completed' ? 300 : 1000);
     return c.json({ orders });
+  });
+
+  /**
+   * The lab sends a patient back to the doctor without waiting for the results (a long queue, or the test is not
+   * wanted after all): the visit goes back to the doctor's waiting list. The tests stay as they are.
+   */
+  app.post('/lab/visits/:visitId/back-to-doctor', requirePermission('lab.view'), async (c) => {
+    const b = c.get('branch');
+    const u = c.get('user');
+    const id = Number(c.req.param('visitId'));
+    const [v] = Number.isInteger(id) ? await db.select({ id: opVisit.id, status: opVisit.status }).from(opVisit).where(and(eq(opVisit.branchId, b.id), eq(opVisit.id, id), isNull(opVisit.deletedAt))) : [];
+    if (!v) throw notFound('Visit not found');
+    if (v.status !== 'at_lab') throw new AppError(409, 'bad_state', 'This patient is not at the lab now');
+    await db.update(opVisit).set({ status: 'waiting', updatedAt: new Date().toISOString() }).where(eq(opVisit.id, v.id));
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: v.id, detail: { status: 'waiting', by: 'lab' } });
+    return c.json({ ok: true });
   });
 
   /** Everything for the results screen and the printed report of one visit. */
@@ -353,14 +371,21 @@ export function createLabRoutes(db: Db) {
     if (!o) throw notFound('Lab order not found');
     if (o.status === 'cancelled') throw new AppError(409, 'bad_state', 'This test was cancelled');
     const amending = o.status === 'completed';
-    // A final report stays whole: a value can be corrected, not emptied.
-    if (amending && parsed.data.results.some((r) => r.value === '')) throw new AppError(400, 'validation', 'This test is completed. A value can be corrected, but not left empty.');
     const params = await db
-      .select({ id: labTestParameter.id, refRange: labTestParameter.refRange, noFlag: labTestParameter.noFlag })
+      .select({ id: labTestParameter.id, name: labTestParameter.name, refRange: labTestParameter.refRange, noFlag: labTestParameter.noFlag, optional: labTestParameter.optional })
       .from(labTestParameter)
       .where(and(eq(labTestParameter.testId, o.testId), isNull(labTestParameter.deletedAt)));
     const byId = new Map(params.map((p) => [p.id, p]));
     if (parsed.data.results.some((r) => !byId.has(r.parameterId))) throw new AppError(400, 'validation', 'A result belongs to a different test');
+    // A final report stays whole: a required value can be corrected, not emptied.
+    if (amending && parsed.data.results.some((r) => r.value === '' && !byId.get(r.parameterId)!.optional)) throw new AppError(400, 'validation', 'This test is completed. A value can be corrected, but not left empty.');
+    // Completing needs every required line: what is sent now, else what was saved before.
+    if (parsed.data.complete && !amending) {
+      const saved = await db.select({ parameterId: labResult.parameterId, value: labResult.value }).from(labResult).where(eq(labResult.orderId, id));
+      const value = new Map<number, string>([...saved.map((r) => [r.parameterId, r.value] as const), ...parsed.data.results.map((r) => [r.parameterId, r.value] as const)]);
+      const empty = params.filter((p) => !p.optional && !(value.get(p.id) ?? '').trim());
+      if (empty.length) throw new AppError(400, 'missing_results', `Fill in ${empty.map((p) => p.name).join(', ')} before completing. (Lines marked optional may stay empty.)`);
+    }
     const now = new Date().toISOString();
     await db.transaction(async (tx) => {
       for (const r of parsed.data.results) {
@@ -397,7 +422,7 @@ export function createLabRoutes(db: Db) {
     const u = c.get('user');
     const id = Number(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { status?: string };
-    const [o] = await db.select({ id: labOrder.id, status: labOrder.status }).from(labOrder).where(and(eq(labOrder.branchId, b.id), eq(labOrder.id, id)));
+    const [o] = await db.select({ id: labOrder.id, status: labOrder.status, visitId: labOrder.visitId }).from(labOrder).where(and(eq(labOrder.branchId, b.id), eq(labOrder.id, id)));
     if (!o) throw notFound('Lab order not found');
     if (body.status === 'sample_collected') {
       if (!c.get('branch').permissions.includes('lab.view')) throw new AppError(403, 'forbidden', "You don't have permission for this");
@@ -411,6 +436,10 @@ export function createLabRoutes(db: Db) {
       await db.transaction(async (tx) => {
         await onLabOrderCancel(tx, id); // off its bill (refused if that bill has payments)
         await tx.update(labOrder).set({ status: 'cancelled', updatedAt: new Date().toISOString() }).where(eq(labOrder.id, id));
+        // Cancelled while the patient sits at the lab (machine down, test not wanted) and nothing else is left for
+        // the lab to do: the patient goes back to the doctor's waiting list, for another test or the prescription.
+        const [left] = await tx.select({ n: sql<number>`count(*)` }).from(labOrder).where(and(eq(labOrder.branchId, b.id), eq(labOrder.visitId, o.visitId), inArray(labOrder.status, ['ordered', 'sample_collected', 'completed'])));
+        if (!left!.n) await tx.update(opVisit).set({ status: 'waiting', updatedAt: new Date().toISOString() }).where(and(eq(opVisit.branchId, b.id), eq(opVisit.id, o.visitId), eq(opVisit.status, 'at_lab')));
       });
     } else {
       throw new AppError(400, 'validation', 'Unknown status');
