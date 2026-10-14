@@ -2,6 +2,11 @@ import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import {
+  DIRECT_BILL_COMPLAINT,
+  feeSlotAt,
+  directVisitSchema,
+  DIRECT_LAB_COMPLAINT,
+  directLabSchema,
   visitCallNextSchema,
   visitInputSchema,
   visitSendSchema,
@@ -12,10 +17,11 @@ import {
   type VisitQueue,
   type VisitSendResponse,
 } from '@platform/shared';
-import { AppError, nextNumber, notFound, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
-import { balanceDueOf, settledAtCounter, withToken } from '../lib/clinic.js';
-import { visitFee } from './billing.js';
+import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
+import { labOrder, labTest, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
+import { balanceDueOf, settledAtCounter, withToken, assertPatientActive } from '../lib/clinic.js';
+import { feeSlots, visitFee } from './billing.js';
+import { testsToOrder } from './lab.js';
 import { defaultDoctorOf, doctorsOf } from './doctors.js';
 
 // Visits reuse the patient permissions: view / create (register a visit) / edit / delete.
@@ -29,6 +35,7 @@ const columns = {
   doctorUserId: opVisit.doctorUserId,
   doctorName: doctor.name,
   complaint: opVisit.complaint,
+  referredBy: opVisit.referredBy,
   notes: opVisit.notes,
   pharmacyNote: opVisit.pharmacyNote,
   labNote: opVisit.labNote,
@@ -38,6 +45,7 @@ const columns = {
   temperatureF: opVisit.temperatureF,
   spo2: opVisit.spo2,
   weightKg: opVisit.weightKg,
+  heightCm: opVisit.heightCm,
   createdAt: opVisit.createdAt,
   // Who started the visit (front desk, or the doctor themselves).
   createdByName: sql<string | null>`(select ${user.name} from ${user} where ${user.id} = ${opVisit.createdBy})`,
@@ -83,6 +91,12 @@ async function localToday(db: Db): Promise<string> {
 }
 
 /** OP-YYMMDD-NNN: the day's running number in this branch (doubles as the queue token). */
+/** Lab-only / bill-only visits: numbered apart (LAB-261014-001, CHG-261014-001), so they take no token. */
+async function nextDirectNo(db: Pick<Db, 'insert'>, branchId: number, day: string, kind: 'LAB' | 'CHG'): Promise<string> {
+  const n = await nextNumber(db, branchId, `${kind.toLowerCase()}:${day}`);
+  return `${kind}-${day.slice(2).replace(/-/g, '')}-${String(n).padStart(3, '0')}`;
+}
+
 async function nextOpNo(db: Pick<Db, 'insert'>, branchId: number, day: string): Promise<string> {
   const n = await nextNumber(db, branchId, `op:${day}`);
   return `OP-${day.slice(2).replace(/-/g, '')}-${String(n).padStart(3, '0')}`;
@@ -194,6 +208,7 @@ export function createVisitRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const p = await findPatient(b.id, Number(c.req.param('id')));
+    await assertPatientActive(db, b.id, p.id);
     const parsed = visitInputSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) throw validationError(parsed.error);
     await assertDoctor(b.id, parsed.data.doctorUserId);
@@ -201,16 +216,76 @@ export function createVisitRoutes(db: Db) {
     const doctorUserId = parsed.data.doctorUserId === undefined ? await defaultDoctorOf(db, b.id) : parsed.data.doctorUserId;
 
     const day = await localToday(db);
+    // A fee for this time of day (night fee 22:00-06:00...): the visit keeps it; the rest of the day the standard fee.
+    const hhmm = new Date(Date.now() + 330 * 60_000).toISOString().slice(11, 16);
+    const slot = feeSlotAt(await feeSlots(db, b.id), hhmm);
     const id = await db.transaction(async (tx) => {
       const opNo = await nextOpNo(tx, b.id, day);
       const [row] = await tx
         .insert(opVisit)
-        .values({ ...parsed.data, doctorUserId, branchId: b.id, patientId: p.id, opNo, visitDate: day, createdBy: u.id })
+        .values({ ...parsed.data, ...(slot ? { consultationFeePaise: slot.feePaise } : {}), doctorUserId, branchId: b.id, patientId: p.id, opNo, visitDate: day, createdBy: u.id })
         .returning({ id: opVisit.id });
       // Weight taken at the visit becomes the patient's latest weight.
       if (parsed.data.weightKg != null) await tx.update(patient).set({ weightKg: parsed.data.weightKg }).where(eq(patient.id, p.id));
+      if (parsed.data.heightCm != null) await tx.update(patient).set({ heightCm: parsed.data.heightCm }).where(eq(patient.id, p.id));
       await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'op_visit', entityId: row.id, detail: { opNo, patientId: p.id } });
       return row.id;
+    });
+    return c.json({ visit: await findVisit(b.id, id) }, 201);
+  });
+
+  /**
+   * A lab test without seeing the doctor (a walk-in, or a test another hospital asked for): one step makes the
+   * visit -- no doctor, no consultation fee, straight to the counter's list -- and orders the tests on it.
+   * The lab finds the tests in its queue; the counter collects the lab charges as for any visit.
+   */
+  app.post('/patients/:id/direct-lab', requireAnyPermission('lab.view', 'patient.create'), async (c) => {
+    const b = c.get('branch');
+    const u = c.get('user');
+    const p = await findPatient(b.id, Number(c.req.param('id')));
+    await assertPatientActive(db, b.id, p.id);
+    const parsed = directLabSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    await assertDoctor(b.id, parsed.data.doctorUserId);
+    const doctorUserId = parsed.data.doctorUserId ?? null;
+    const tests = await testsToOrder(db, b.id, parsed.data.testIds, parsed.data.packageIds);
+    const testIds = tests.map((t) => t.id);
+    const day = await localToday(db);
+    const id = await db.transaction(async (tx) => {
+      const opNo = await nextDirectNo(tx, b.id, day, 'LAB');
+      const [row] = await tx
+        .insert(opVisit)
+        .values({ branchId: b.id, patientId: p.id, opNo, visitDate: day, createdBy: u.id, doctorUserId, referredBy: parsed.data.referredBy || null, complaint: DIRECT_LAB_COMPLAINT, consultationFeePaise: 0, status: 'at_counter' })
+        .returning({ id: opVisit.id });
+      await tx.insert(labOrder).values(tests.map((t) => ({ branchId: b.id, visitId: row!.id, patientId: p.id, testId: t.id, pricePaise: t.pricePaise, orderedBy: u.id })));
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'op_visit', entityId: row!.id, detail: { opNo, patientId: p.id, directLab: true, testIds } });
+      return row!.id;
+    });
+    return c.json({ visit: await findVisit(b.id, id), count: tests.length }, 201);
+  });
+
+  /**
+   * A bill without seeing the doctor (a dressing, an injection, a charge of its own): makes the visit -- no doctor,
+   * consultation fee 0, straight to the counter's list -- where the counter adds the charges and collects.
+   */
+  app.post('/patients/:id/direct-bill', requirePermission('billing.receive'), async (c) => {
+    const b = c.get('branch');
+    const u = c.get('user');
+    const p = await findPatient(b.id, Number(c.req.param('id')));
+    await assertPatientActive(db, b.id, p.id);
+    const parsed = directVisitSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    await assertDoctor(b.id, parsed.data.doctorUserId);
+    const doctorUserId = parsed.data.doctorUserId ?? null;
+    const day = await localToday(db);
+    const id = await db.transaction(async (tx) => {
+      const opNo = await nextDirectNo(tx, b.id, day, 'CHG');
+      const [row] = await tx
+        .insert(opVisit)
+        .values({ branchId: b.id, patientId: p.id, opNo, visitDate: day, createdBy: u.id, doctorUserId, complaint: DIRECT_BILL_COMPLAINT, consultationFeePaise: 0, status: 'at_counter' })
+        .returning({ id: opVisit.id });
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'op_visit', entityId: row!.id, detail: { opNo, patientId: p.id, directBill: true } });
+      return row!.id;
     });
     return c.json({ visit: await findVisit(b.id, id) }, 201);
   });
@@ -310,6 +385,15 @@ export function createVisitRoutes(db: Db) {
     const to = parsed.data.status;
     if (to === 'completed' && existing.status === 'cancelled') throw new AppError(409, 'bad_state', 'This visit was cancelled. Move it back to waiting first.');
     if (to === 'cancelled' && existing.status === 'completed') throw new AppError(409, 'bad_state', 'This visit is already completed; it can no longer be cancelled.');
+    // At the counter the visit completes when the payment is collected (see checkout): not by hand while money is owed.
+    if (to === 'completed' && existing.status === 'at_counter' && (!(await settledAtCounter(db, b.id, id)) || (await balanceDueOf(db, b.id, id)) > 0))
+      throw new AppError(409, 'not_settled', 'Collect the payment at the counter first: this visit still has something to bill, give or collect.');
+    if (to === 'cancelled' && existing.status !== 'cancelled') {
+      // Money was taken or medicines were given on it: the bill and the sale would be left pointing at a cancelled visit.
+      const [bill] = await db.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, b.id), eq(opBill.visitId, id))).limit(1);
+      const [sale] = await db.select({ id: pharmacySale.id }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), eq(pharmacySale.visitId, id))).limit(1);
+      if (bill || sale) throw new AppError(409, 'has_bills', 'This visit has a bill or a pharmacy sale, so it cannot be cancelled.');
+    }
     const changes: typeof parsed.data = { ...parsed.data };
     // Given to another doctor while inside: the patient waits for the new doctor (one inside per doctor).
     if (!to && existing.status === 'with_doctor' && parsed.data.doctorUserId !== undefined && parsed.data.doctorUserId !== existing.doctorUserId) changes.status = 'waiting';

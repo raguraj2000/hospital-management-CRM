@@ -12,6 +12,7 @@ export const TRIAL_TABLES = [
   'treatment_dose',
   'visit_instruction',
   'visit_charge',
+  'expense',
   'lab_order',
   'lab_result',
   'lab_release',
@@ -42,6 +43,7 @@ export const SETUP_TABLES = [
   'clinic_setting',
   'lab_test',
   'lab_test_parameter',
+  'lab_package',
   'medicine',
   'vendor',
   'treatment_bookmark',
@@ -57,11 +59,12 @@ export interface StartFreshResult {
 
 /**
  * Removes the trial data in one transaction (all of it or none of it). `keepStock`: leave the medicine stock,
- * purchase bills and vendor payments exactly as they are now.
+ * purchase bills and vendor payments exactly as they are now. `keepPatients`: leave the patients registered so far
+ * (name, phone, UHID...) and the UHID numbering, so nobody types them again; their visits, bills and results go.
  */
-export async function startFresh(db: Db, { keepStock }: { keepStock: boolean }): Promise<StartFreshResult> {
+export async function startFresh(db: Db, { keepStock, keepPatients = false }: { keepStock: boolean; keepPatients?: boolean }): Promise<StartFreshResult> {
   const count = async (table: string) => (await db.all<{ n: number }>(sql.raw(`select count(*) as n from "${table}"`)))[0]!.n;
-  const clear = [...TRIAL_TABLES, ...(keepStock ? [] : STOCK_TABLES)];
+  const clear = [...TRIAL_TABLES, ...(keepStock ? [] : STOCK_TABLES)].filter((t) => !(keepPatients && t === 'patient'));
   const removed: Record<string, number> = {};
   for (const t of clear) {
     const n = await count(t);
@@ -69,7 +72,9 @@ export async function startFresh(db: Db, { keepStock }: { keepStock: boolean }):
   }
   // Rows point at each other (a bill at its visit, a sale line at its batch): the checks are off while the
   // tables are emptied together, as in a restore.
-  const script = ['PRAGMA foreign_keys = OFF;', 'BEGIN;', ...clear.map((t) => `DELETE FROM "${t}";`), 'COMMIT;'].join('\n');
+  // Kept patients keep their UHIDs: the UHID counter stays, so new patients never get a number already used.
+  const del = (t: string) => (keepPatients && t === 'org_counter' ? `DELETE FROM "org_counter" WHERE name <> 'uhid';` : `DELETE FROM "${t}";`);
+  const script = ['PRAGMA foreign_keys = OFF;', 'BEGIN;', ...clear.map(del), 'COMMIT;'].join('\n');
   try {
     await db.$client.executeMultiple(script);
   } catch (e) {
@@ -79,6 +84,6 @@ export async function startFresh(db: Db, { keepStock }: { keepStock: boolean }):
     await db.$client.executeMultiple('PRAGMA foreign_keys = ON;').catch(() => undefined);
   }
   const kept: Record<string, number> = {};
-  for (const t of [...SETUP_TABLES, ...(keepStock ? STOCK_TABLES : [])]) kept[t] = await count(t);
+  for (const t of [...SETUP_TABLES, ...(keepStock ? STOCK_TABLES : []), ...(keepPatients ? ['patient'] : [])]) kept[t] = await count(t);
   return { removed, kept };
 }

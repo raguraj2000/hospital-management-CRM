@@ -10,8 +10,8 @@ import { BookmarkSearch, VisitInstructions } from './Bookmarks';
 import { CounterNote } from './CounterNote';
 import { Prescription } from './Prescription';
 import { KeyHint } from './Shortcuts';
-import { VisitBill } from './VisitBill';
 import { VisitChargesBox } from './VisitCharges';
+import type { PatientBills } from '@platform/shared';
 import { VisitFeeEditor } from './VisitFee';
 import { useVisitLab } from './VisitLab';
 import { useVisitSend } from './VisitNext';
@@ -89,24 +89,26 @@ export function RxStepper({ branch, visit, patientName, fee, onAdded }: { branch
       )}
 
       {step === 1 && (
-        <Card>
+        <>
+        <Prescription branch={branch} visit={visit} onAdded={onAdded} hideNote readOnly />
+        <Card className="mt-4">
           <CardHeader title="Note to the pharmacy" description="Optional. The pharmacy reads it with these medicines." icon={Pill} iconTone="violet" />
-          {medicinesList}
           <CounterNote branch={branch} visit={visit} field="pharmacyNote" label="Note to pharmacy (optional)" placeholder="e.g. Give the generic brand. Explain the inhaler to the patient." canEdit={canWrite} />
         </Card>
+        </>
       )}
 
       {step === 2 && (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid items-start gap-4 lg:grid-cols-2">
           <Card>
-            <CardHeader title="Charges" description="The consultation fee of this visit, and other charges if needed (dressing, IV, injection…)." />
+            <CardHeader title="Charges" description="The consultation fee of this visit, and other charges if needed (dressing, IV, injection…). The counter makes the bill and collects." />
             <div className="border-b border-border px-4 py-3">
               <VisitFeeEditor branch={branch} visitId={visit.id} fee={fee} cancelled={visit.status === 'cancelled'} />
             </div>
             <div className="bg-subtle/40 px-4 py-1 text-xs font-semibold tracking-wide text-muted uppercase">Other charges</div>
             <VisitChargesBox branch={branch} visitId={visit.id} />
           </Card>
-          <VisitBill branch={branch} visitId={visit.id} hideCharges />
+          <BalanceDue branch={branch} patientId={visit.patientId} />
         </div>
       )}
 
@@ -184,5 +186,40 @@ function Section({ title, amount, children }: { title: string; amount?: number; 
       </div>
       {children}
     </div>
+  );
+}
+
+/** Right of the charges: what this patient still owes, bill by bill. Only to see; the counter collects it. */
+function BalanceDue({ branch, patientId }: { branch: string; patientId: number }) {
+  const { data, isLoading } = useQuery({ queryKey: ['patient-bills', branch, patientId], queryFn: () => api.get<PatientBills>(`/b/${branch}/patients/${patientId}/bills`), staleTime: 0 });
+  const due = data?.summary.balancePaise ?? 0;
+  const unpaid = (data?.bills ?? []).filter((b) => b.balancePaise > 0);
+  return (
+    <Card className={due > 0 ? 'border-warning/50' : undefined}>
+      <CardHeader
+        title="Balance due"
+        description={due > 0 ? 'Unpaid on earlier bills of this patient. The counter collects it with today’s bill.' : 'What this patient still owes.'}
+        action={data && <span className={cn('text-xl font-bold tabular-nums', due > 0 ? 'text-warning' : 'text-muted')}>{due > 0 ? formatRupees(due) : 'Nothing due'}</span>}
+      />
+      {isLoading ? (
+        <div className="p-4 text-sm text-muted">Loading…</div>
+      ) : unpaid.length === 0 ? (
+        <p className="px-4 py-6 text-center text-sm text-muted">No unpaid bills.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {unpaid.map((b) => (
+            <li key={b.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+              <span className="min-w-0">
+                <span className="font-mono text-xs font-medium">{b.billNo}</span>
+                <span className="block text-xs text-muted">
+                  {new Date(`${b.billDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} · bill {formatRupees(b.totalPaise)} · paid {formatRupees(b.paidPaise)}
+                </span>
+              </span>
+              <span className="font-semibold text-warning tabular-nums">{formatRupees(b.balancePaise)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

@@ -87,7 +87,7 @@ describe('prescription -> pharmacy', () => {
     expect((await pharm('/api/b/main/pharmacy/dispense', { method: 'POST', body: { visitId: v.id, itemIds: [queue[0].items[0].id], paymentMode: 'cash' } })).status).toBe(409);
     expect((await doc(`/api/b/main/prescription-items/${queue[0].items[0].id}`, { method: 'DELETE' })).status).toBe(409);
 
-    const day = await json(pharm('/api/b/main/pharmacy/sales'));
+    const day = await json((await t.as('owner'))('/api/b/main/pharmacy/sales'));
     expect(day.totalPaise).toBe(2000);
     expect(day.sales[0].lines.map((l: any) => [l.batchNo, l.quantity])).toEqual([['SOON', 5], ['LATE', 5]]);
   });
@@ -95,9 +95,11 @@ describe('prescription -> pharmacy', () => {
   it('not enough stock: nothing is sold and stock is untouched', async () => {
     const pharm = await t.as('pharm');
     const doc = await t.as('doc');
-    const para = await medicineWithStock(pharm, 'Paracetamol', 200, [{ batchNo: 'B1', days: 100, quantity: 4 }]);
+    // 10 in stock when the doctor prescribes 9 (more than the stock cannot be prescribed); 6 are sold over the counter meanwhile.
+    const para = await medicineWithStock(pharm, 'Paracetamol', 200, [{ batchNo: 'B1', days: 100, quantity: 10 }]);
     const v = await visitFor(doc, 'Asha Devi');
     await doc(`/api/b/main/visits/${v.id}/prescription`, { method: 'POST', body: { medicineId: para, dose: '1-1-1', days: 3 } }); // 9 needed
+    expect((await pharm('/api/b/main/pharmacy/sales', { method: 'POST', body: { paymentMode: 'cash', items: [{ medicineId: para, quantity: 6 }] } })).status).toBe(201);
     const { queue } = await json(pharm('/api/b/main/pharmacy/queue'));
     const res = await pharm('/api/b/main/pharmacy/dispense', { method: 'POST', body: { visitId: v.id, itemIds: [queue[0].items[0].id], paymentMode: 'cash' } });
     expect(res.status).toBe(409);

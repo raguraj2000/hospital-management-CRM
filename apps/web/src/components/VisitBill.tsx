@@ -35,7 +35,7 @@ export function VisitBill({ branch, visitId, hideCharges }: { branch: string; vi
 
   return (
     <Card>
-      <CardHeader title="Bill" description="Consultation, lab tests and other charges. Medicines are paid at the pharmacy." icon={ReceiptText} iconTone="positive" action={bills.length > 0 && <Link to={`/${branch}/visits/${visitId}/bill/print`} className="text-sm font-medium text-brand hover:underline">Print bill</Link>} />
+      <CardHeader title="Bill status" description="Shows if the counter has billed this visit, and if it is paid." icon={ReceiptText} iconTone="positive" action={bills.length > 0 && <Link to={`/${branch}/visits/${visitId}/bill/print`} className="text-sm font-medium text-brand hover:underline">Print bill</Link>} />
       {isLoading ? (
         <Skeleton className="m-4 h-12" />
       ) : (
@@ -52,7 +52,7 @@ export function VisitBill({ branch, visitId, hideCharges }: { branch: string; vi
               </span>
             </Link>
           ))}
-          {bills.length === 0 && <p className="px-4 py-3 text-sm text-muted">Not billed yet.</p>}
+          {bills.length === 0 && <p className="px-4 py-3 text-sm text-muted">Not billed yet. The counter makes the bill when the patient pays.</p>}
           {unbilled.length > 0 && bills.length > 0 && (
             <p className="px-4 py-2.5 text-xs font-medium text-warning">
               {unbilled.length} new lab test{unbilled.length > 1 ? 's' : ''} not billed ({formatRupees(unbilled.reduce((s, x) => s + x.pricePaise, 0))})

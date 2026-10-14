@@ -90,6 +90,32 @@ export type PurchaseBillInput = z.input<typeof purchaseBillSchema>;
 export const VENDOR_PAYMENT_MODES = ['cash', 'upi', 'cheque', 'bank'] as const;
 export type VendorPaymentMode = (typeof VENDOR_PAYMENT_MODES)[number];
 
+/** Money spent on something that is not medicine stock: a keyboard, a chair, a repair. */
+export const expenseInputSchema = z.object({
+  expenseDate: isoDate,
+  description: z.string().trim().min(2, 'Say what was bought').max(120),
+  /** A vendor of the list, or... */
+  vendorId: z.number().int().positive().nullable().optional(),
+  /** ...a shop typed by name (kept on this expense; added to the vendor list when `addVendor` is set). */
+  vendorName: text(80),
+  addVendor: z.boolean().optional(),
+  amountPaise: z.number({ error: 'Enter the amount' }).int().min(1, 'Enter the amount').max(1_000_000_000),
+  mode: z.enum(VENDOR_PAYMENT_MODES),
+  notes: text(300),
+});
+export interface Expense {
+  id: number;
+  expenseDate: string;
+  description: string;
+  vendorId: number | null;
+  vendorName: string | null;
+  amountPaise: number;
+  mode: VendorPaymentMode;
+  notes: string | null;
+  createdByName: string | null;
+  createdAt: string;
+}
+
 export const vendorPaymentSchema = z.object({
   amountPaise: z.number({ error: 'Enter the amount' }).int().min(1, 'Enter the amount'),
   mode: z.enum(VENDOR_PAYMENT_MODES),
@@ -164,8 +190,19 @@ export const billPaymentSchema = z.object({
 /** A ready-made extra charge the branch keeps in Settings: picked on a visit or a bill in one click. */
 export const chargePresetSchema = z.object({ name: z.string().trim().min(1, 'Give the charge a name').max(60), amountPaise: paise('the amount') });
 export type ChargePreset = z.infer<typeof chargePresetSchema>;
+/** What a branch starts with, until it saves its own list in Settings (every name and price can be changed there). */
+export const DEFAULT_CHARGE_PRESETS: ChargePreset[] = ['IM INJ', 'IVF', 'SV Set Inj', 'Dressing', 'Sutures', 'Venflon', 'Procedure (I & D)', 'Procedure (D & C)', 'USG', 'ECG'].map((name) => ({ name, amountPaise: 10_000 }));
 
-export const billingSettingsSchema = z.object({ consultationFeePaise: paise('the fee'), chargePresets: z.array(chargePresetSchema).max(40, 'At most 40 ready-made charges').optional() });
+const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a time like 22:00');
+/** A consultation fee for part of the day (India time): from 22:00 to 06:00 = ₹200. "to" before "from" goes past midnight. */
+export const feeSlotSchema = z.object({ from: clock, to: clock, feePaise: paise('the fee') }).refine((s) => s.from !== s.to, { message: 'From and to must differ', path: ['to'] });
+export type FeeSlot = z.infer<typeof feeSlotSchema>;
+/** The slot that holds at "HH:MM" (India time), if any. */
+export function feeSlotAt(slots: FeeSlot[], hhmm: string): FeeSlot | null {
+  return slots.find((s) => (s.from < s.to ? hhmm >= s.from && hhmm < s.to : hhmm >= s.from || hhmm < s.to)) ?? null;
+}
+
+export const billingSettingsSchema = z.object({ consultationFeePaise: paise('the fee'), feeSlots: z.array(feeSlotSchema).max(6, 'At most 6 time slots').optional(), chargePresets: z.array(chargePresetSchema).max(40, 'At most 40 ready-made charges').optional(), /** The waiting numbers in the side menu: on or off for the whole branch. */ navCounts: z.boolean().optional() });
 
 /** An extra charge of a visit as the visit page and the counter show it. `key`: what to send to remove it. */
 export interface VisitChargeRow extends BillCharge {
@@ -287,7 +324,8 @@ export interface DayReport extends Collection {
   visits: { total: number; completed: number; cancelled: number; newPatients: number; byDoctor: { doctorName: string | null; count: number }[] };
   labTests: number;
   /** What the day's OP bills and pharmacy sales were made up of. */
-  billed: { consultationPaise: number; labPaise: number; otherPaise: number; discountPaise: number; pharmacyPaise: number };
+  /** roundOffPaise: what rounding the bills up added (not part of otherPaise). */
+  billed: { consultationPaise: number; labPaise: number; otherPaise: number; roundOffPaise: number; discountPaise: number; pharmacyPaise: number };
   /** Balance still due on the bills made that day, and on every bill of the branch. */
   pendingDayPaise: number;
   pendingAllPaise: number;
@@ -324,6 +362,10 @@ export const dispenseQuantitiesSchema = z.record(z.string().regex(/^\d+$/), z.nu
 
 /** The bill line that carries the round-off. */
 export const ROUND_OFF_LINE = 'Round off';
+/** The counter rounds the total UP to the next ₹5 by itself (158 -> 160, 163 -> 165); staff can type another amount. */
+export const ROUND_OFF_STEP_PAISE = 500;
+export const ROUND_OFF_MAX_PAISE = 1000;
+export const autoRoundOffPaise = (totalPaise: number) => (ROUND_OFF_STEP_PAISE - (totalPaise % ROUND_OFF_STEP_PAISE)) % ROUND_OFF_STEP_PAISE;
 
 export const checkoutSchema = billUpdateSchema.extend({
   /** Prescription lines to dispense now; the other pending lines are marked "declined". */
@@ -331,8 +373,8 @@ export const checkoutSchema = billUpdateSchema.extend({
   /** Fewer units than prescribed for some of those lines (see dispenseQuantitiesSchema). */
   quantities: dispenseQuantitiesSchema,
   paymentMode: z.enum(BILL_PAYMENT_MODES),
-  /** Paise added so the patient pays whole rupees (150.66 -> 151): kept on the bill as its "Round off" line. */
-  roundOffPaise: z.number().int().min(0).max(99).optional(),
+  /** Paise added so the patient pays a round amount (158 -> 160): kept on the bill as its "Round off" line. */
+  roundOffPaise: z.number().int().min(0).max(ROUND_OFF_MAX_PAISE, 'Round off can be ₹10 at most').optional(),
   amountPaise: z.number({ error: 'Enter the amount received' }).int().min(0, 'Enter the amount received').max(100_000_000),
 });
 export type CheckoutInput = z.input<typeof checkoutSchema>;
@@ -395,7 +437,10 @@ export interface CheckoutQueueEntry {
   patientId: number;
   patientName: string;
   patientUhid: string;
+  patientPhone?: string | null;
   doctorName: string | null;
+  /** Made without the doctor: by "Direct lab test" or by "Create bill". */
+  direct?: 'lab' | 'bill' | null;
   /** Pending prescription lines and what they cost. */
   medicinesWaiting: number | null;
   medicinesPaise: number | null;

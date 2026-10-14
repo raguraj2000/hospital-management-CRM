@@ -121,14 +121,14 @@ describe('extra charges on a bill', () => {
     const v = await visit('Charges Patient');
     await doc(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [cbc] } });
     const { bill } = await json(desk(`/api/b/main/visits/${v.id}/bills`, { method: 'POST' }));
-    const before = (await json(desk('/api/b/main/billing/day-report'))).billed;
+    const before = (await json(owner('/api/b/main/billing/day-report'))).billed;
 
     const two = await json(desk(`/api/b/main/bills/${bill.id}`, { method: 'PATCH', body: { charges: [{ description: 'Dressing', amountPaise: 5000 }, { description: 'Injection', amountPaise: 2500 }] } }));
     expect(two.bill.totalPaise).toBe(20000 + 30000 + 7500);
     expect(two.bill.lines.map((l: any) => [l.description, l.amountPaise, l.labOrderId != null])).toEqual([['CBC', 30000, true], ['Dressing', 5000, false], ['Injection', 2500, false]]);
     const co = await json(desk(`/api/b/main/visits/${v.id}/checkout`));
     expect(co.bill).toMatchObject({ charges: [{ description: 'Dressing', amountPaise: 5000 }, { description: 'Injection', amountPaise: 2500 }], labLines: [{ description: 'CBC', amountPaise: 30000, billed: true }], duePaise: 57500 });
-    const after = (await json(desk('/api/b/main/billing/day-report'))).billed;
+    const after = (await json(owner('/api/b/main/billing/day-report'))).billed;
     expect([after.labPaise - before.labPaise, after.otherPaise - before.otherPaise]).toEqual([0, 7500]);
 
     // The list replaces what was there; the lab test stays.

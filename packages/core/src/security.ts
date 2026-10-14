@@ -40,7 +40,10 @@ export function securityHeaders(): MiddlewareHandler {
 export function rateLimit(max: number, windowMs: number): MiddlewareHandler {
   const hits = new Map<string, { count: number; resetAt: number }>();
   return async (c, next) => {
-    const key = c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || c.env?.incoming?.socket?.remoteAddress || 'local';
+    // X-Forwarded-For is trusted only when the server sits behind a proxy that sets it (TRUST_PROXY=1): otherwise
+    // anyone could send a new value with every try and never be limited.
+    const forwarded = process.env.TRUST_PROXY === '1' ? c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() : undefined;
+    const key = forwarded || c.env?.incoming?.socket?.remoteAddress || 'local';
     const now = Date.now();
     const entry = hits.get(key);
     if (!entry || entry.resetAt < now) hits.set(key, { count: 1, resetAt: now + windowMs });

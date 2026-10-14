@@ -102,16 +102,17 @@ if (cmd === 'init') {
   await db.update(session).set({ revokedAt: new Date().toISOString() }).where(eq(session.userId, done[0].id)); // sign out everywhere
   console.log(`New password set for ${done[0].name}.`);
 } else if (cmd === 'start-fresh') {
-  if (a1 !== 'keep-stock' && a1 !== 'clear-stock') fail('Usage: start-fresh <keep-stock|clear-stock>');
+  if (a1 !== 'keep-stock' && a1 !== 'clear-stock') fail('Usage: start-fresh <keep-stock|clear-stock> [keep-patients]');
+  const keepPatients = a2 === 'keep-patients';
   const [org] = await db.select({ id: organization.id, name: organization.name }).from(organization).limit(1);
   if (!org) fail('This computer is not set up yet: there is nothing to clear.');
-  const r = await startFresh(db, { keepStock: a1 === 'keep-stock' });
-  await writeAudit(db, { organizationId: org!.id, action: 'start_fresh', entity: 'database', detail: { keepStock: a1 === 'keep-stock', removed: r.removed } });
+  const r = await startFresh(db, { keepStock: a1 === 'keep-stock', keepPatients });
+  await writeAudit(db, { organizationId: org!.id, action: 'start_fresh', entity: 'database', detail: { keepStock: a1 === 'keep-stock', keepPatients, removed: r.removed } });
   await db.run(sql`VACUUM`); // give the space back
   const say = (o: Record<string, number>) => Object.entries(o).map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ') || 'nothing';
   console.log(`"${org!.name}" starts fresh.`);
   console.log(`Removed: ${say(r.removed)}.`);
-  console.log(`Kept:    ${say(Object.fromEntries(Object.entries(r.kept).filter(([k]) => ['user', 'lab_test', 'medicine', 'vendor', 'treatment_bookmark', 'medicine_batch', 'purchase_bill'].includes(k))))}.`);
+  console.log(`Kept:    ${say(Object.fromEntries(Object.entries(r.kept).filter(([k]) => ['user', 'patient', 'lab_test', 'medicine', 'vendor', 'treatment_bookmark', 'medicine_batch', 'purchase_bill'].includes(k))))}.`);
 } else if (cmd === 'export') {
   if (!a1 || !a2) fail('Usage: export <branch name> <out.json>');
   const found = await db.select().from(branch).where(eq(branch.name, a1!));

@@ -41,7 +41,7 @@ export function VisitDetail() {
   return (
     // Keyed by visit: "see next patient" goes straight from one visit to the next, and nothing typed for the last patient may carry over.
     <div key={v.id}>
-      <Link to={`/${branch}/visits`} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
+      <Link to={`/${branch}/visits`} className="mb-4 inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-base font-medium text-ink shadow-sm hover:bg-subtle">
         <ArrowLeft className="size-4" /> OP visits
       </Link>
 

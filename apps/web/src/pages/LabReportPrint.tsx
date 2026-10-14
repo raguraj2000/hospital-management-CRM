@@ -7,6 +7,7 @@ import { useMe } from '@/state/auth';
 import { ReportFooter, ReportHeader, ReportWatermark } from '@/components/ReportHeader';
 import { useAutoPrint } from '@/components/useAutoPrint';
 import { printDateTime } from '@/components/printFormat';
+import { PrintActions } from '@/components/PrintActions';
 
 const fmt = (iso: string | null | undefined) =>
   iso ? new Date(iso.length === 10 ? `${iso}T00:00:00` : iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
@@ -16,6 +17,8 @@ const fmt = (iso: string | null | undefined) =>
  * letterhead, patient box, results by department with H/L flags, signatures.
  * One report for every test that has results. The print dialog opens by itself once it has loaded.
  */
+const NEW_PAGE_KEY = 'hms-lab-new-page-tests';
+
 export function LabReportPrint() {
   const { branch, visitId } = useParams();
   const { data: me } = useMe();
@@ -28,13 +31,40 @@ export function LabReportPrint() {
     retry: false,
   });
   const canRelease = me?.branches.find((b) => b.slug === branch)?.permissions.includes('settings.manage');
+  // Tests ticked here start on a new page, with the heading and signatures again. Remembered by test name on this computer.
+  const [newPage, setNewPage] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(NEW_PAGE_KEY) ?? '[]') as unknown;
+      return Array.isArray(saved) ? saved.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const tickNewPage = (name: string, on: boolean) => {
+    const next = on ? [...new Set([...newPage, name])] : newPage.filter((x) => x !== name);
+    setNewPage(next);
+    try {
+      localStorage.setItem(NEW_PAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* private window: works for this print only */
+    }
+  };
 
   useEffect(() => {
     if (data) document.title = `Lab Report - ${data.patient.name}`;
   }, [data]);
   // Only tests with results print. (Nothing to print, "Payment pending" or an error: no print dialog.)
   // Only finished tests are a report: values typed but not yet "Save & complete" stay in the lab.
-  const tests = (data?.tests ?? []).filter((t) => t.status === 'completed' && t.parameters.some((p) => p.value.trim()));
+  const done = (data?.tests ?? []).filter((t) => t.status === 'completed' && t.parameters.some((p) => p.value.trim()));
+  // In the order they print: department by department.
+  const departments = [...new Set(done.map((t) => t.department))];
+  const tests = departments.flatMap((d) => done.filter((t) => t.department === d));
+  // The pages: a ticked test opens a new one, the tests after it follow on that page.
+  const pages: LabReportTest[][] = [];
+  for (const t of tests) {
+    if (!pages.length || newPage.includes(t.name)) pages.push([t]);
+    else pages.at(-1)!.push(t);
+  }
   const printable = tests.length > 0;
   useAutoPrint(!error && printable, !me || !allowed || !!error || (!!data && !printable));
 
@@ -58,22 +88,41 @@ export function LabReportPrint() {
           .sheet { width: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; box-shadow: none !important; }
           .rt tr, .cgrp, .closing { break-inside: avoid; }
           .report-watermark { position: fixed !important; }
+          .pages .report-watermark { position: absolute !important; }
+          .pages .sheet + .sheet { break-before: page; }
         }
       `}</style>
 
       <div className="no-print sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-[#b7c3bd] bg-white px-4 py-2.5">
-        <button onClick={() => window.history.back()} className="rounded-md border border-[#1f6b4f] px-3 py-1.5 text-sm font-medium text-[#1f6b4f]">
+        <button onClick={() => window.history.back()} className="rounded-md border border-[#1f6b4f] px-4 py-2 text-base font-medium text-[#1f6b4f]">
           ← Back
         </button>
         <span className="font-semibold text-[#1f6b4f]">{h.title}</span>
         <span className="flex-1" />
         {pending > 0 && <span className="rounded bg-[#fff3d1] px-2 py-1 text-xs font-medium text-[#6b4500]">{pending} test{pending > 1 ? 's' : ''} not completed yet</span>}
-        <button onClick={() => window.print()} disabled={!printable} className="rounded-md bg-[#1f6b4f] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50">
-          Print
-        </button>
+        {tests.length > 1 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-[#b7c3bd] px-3 py-1.5 text-sm">
+            <span className="font-semibold">Start on a new page:</span>
+            {tests.slice(1).map((t) => (
+              <label key={t.orderId} className="flex items-center gap-1.5">
+                <input type="checkbox" className="size-4 accent-[#1f6b4f]" checked={newPage.includes(t.name)} onChange={(e) => tickNewPage(t.name, e.target.checked)} />
+                {t.name}
+              </label>
+            ))}
+          </div>
+        )}
+        <PrintActions
+          size="sm"
+          canPrint={printable}
+          share={{
+            phone: data.patient.phone,
+            subject: `Lab report - ${data.patient.name}`,
+            message: `Hello ${data.patient.name}, your lab report from ${h.title || 'the hospital'} is ready: ${tests.map((t) => t.name).join(', ')}. OP No. ${data.visit.opNo}.`,
+          }}
+        />
       </div>
 
-      <Sheet data={data} tests={tests} />
+      {pages.length > 1 ? <div className="pages">{pages.map((p) => <Sheet key={p[0]!.orderId} data={data} tests={p} />)}</div> : <Sheet data={data} tests={tests} />}
     </div>
   );
 }
@@ -99,10 +148,11 @@ function Sheet({ data, tests }: { data: LabReport; tests: LabReportTest[] }) {
         <Kv k="Bill Date" v={printDateTime(data.billedAt) || fmt(data.visit.visitDate)} />
         <Kv k="Mobile" v={p.phone?.replace(/^\+91/, '') ?? ''} />
         <Kv k="Sample Date" v={printDateTime(sampleAt)} />
-        <Kv k="Referred By" v={data.visit.doctorName ?? ''} />
+        <Kv k="Referred By" v={data.visit.referredBy || data.visit.doctorName || ''} />
         <Kv k="Report Date" v={printDateTime(reportAt ?? new Date().toISOString())} />
         <Kv k="OP No." v={data.visit.opNo} />
         <Kv k="Bill No." v={data.billNo ?? ''} />
+        <Kv k="Sample No." v={tests.map((t) => `S-${String(t.orderId).padStart(5, '0')}`).join(', ')} />
       </div>
 
       {tests.length === 0 ? (

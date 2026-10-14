@@ -1,15 +1,17 @@
 HMS - KEYBOARD SHORTCUTS
 ========================
 
-Press  ?  on any screen to see this list inside the app.
+Press  ?  (Shift + /) on any screen to see this list inside the app.
+The numbers in the side menu are not shortcut keys: they show how many
+patients or tests are waiting on that page.
 The key is also written on the button or inside the search box.
 
 
 EVERYWHERE
-  Alt + 1 ... 9   Open a page of the side menu
-                  (the number is shown next to each page)
-  Ctrl + K        New OP visit from any page: find the patient
-                  (or register them), then the visit details
+  F2              Billing
+  F3              Pharmacy
+  Alt + 1 ... 9   Open the 1st ... 9th page of the side menu,
+                  counted from the top
   Alt + N         Register a new patient
   Esc             Close a window
   ?               Show the shortcut list

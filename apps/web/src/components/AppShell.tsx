@@ -1,3 +1,5 @@
+import { api } from '@/api/client';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import {
   Link,
@@ -37,14 +39,20 @@ import { NAV, NAV_GROUPS, type NavItem } from '@/nav';
 import { useLogout, useMe } from '@/state/auth';
 import { useTheme, type Theme } from '@/state/theme';
 import { ChangePasswordDialog } from './ChangePassword';
+import { useBranchLogo } from './BranchLogo';
 import { NEW_OP_EVENT, QuickOp } from './QuickOp';
+import type { NewChoice } from './NewMenu';
+import { DirectLab } from './DirectLab';
 import { Shortcuts } from './Shortcuts';
 
 const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
-  { value: 'auto', label: 'Auto (day light, night dark)', icon: SunMoon },
+  { value: 'auto', label: 'Auto (same as this computer)', icon: SunMoon },
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
 ];
+
+/** What the number next to a page of the side menu counts. */
+const WAITING_TITLE: Record<string, string> = { visits: 'Patients waiting, with the doctor or at the lab', billing: 'Patients to collect from', pharmacy: 'Patients waiting for medicines', lab: 'Lab tests to do', treatments: 'Doses still to give today' };
 
 export function AppShell() {
   const { data: me } = useMe();
@@ -56,7 +64,17 @@ export function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
   const [shortcutHelp, setShortcutHelp] = useState(false);
+  const branchLogo = useBranchLogo(branch);
+  const navCounts = useQuery({ queryKey: ['nav-counts', branch], queryFn: () => api.get<{ enabled?: boolean; counts: Record<string, number> }>(`/b/${branch}/nav-counts`),
+    enabled: !!branch && !!me,
+    // Switched off in Settings: asked once, then left alone (switching it on again refreshes this).
+    refetchInterval: (q) => (q.state.data?.enabled === false ? false : 20_000),
+    refetchOnWindowFocus: (q) => q.state.data?.enabled !== false,
+    staleTime: 10_000,
+  });
+  const waiting: Record<string, number> = navCounts.data?.counts ?? {};
   const [quickOp, setQuickOp] = useState(false);
+  const [direct, setDirect] = useState<'lab' | 'bill' | null>(null);
   // A page asks for the new-OP-visit window (the button on OP visits).
   useEffect(() => {
     const open = () => setQuickOp(true);
@@ -76,8 +94,26 @@ export function AppShell() {
       <NoBranches />
     );
 
-  const items = NAV.filter((n) => current.permissions.includes(n.permission));
+  // The menu: what the role may open, less the pages that are a tab of another page for them.
+  const items = NAV.filter((n) => current.permissions.includes(n.permission) && !(n.foldedWith && current.permissions.includes(n.foldedWith)));
   const to = (path: string) => `/${current.slug}${path ? `/${path}` : ''}`;
+  const can = (p: string) => current.permissions.includes(p as never);
+  // Ctrl+K / "New": what this role can start. Only one thing: it opens straight away.
+  const newChoices: NewChoice[] = [
+    ...(can('patient.create') ? (['op'] as const) : []),
+    ...(can('lab.view') || can('patient.create') ? (['lab'] as const) : []),
+    ...(can('billing.receive') ? (['bill'] as const) : []),
+    ...(can('pharmacy.sell') ? (['sale'] as const) : []),
+  ];
+  // One window at a time: a tab on top of it switches to another.
+  const pickNew = (c: NewChoice) => {
+    setQuickOp(c === 'op');
+    setDirect(c === 'lab' || c === 'bill' ? c : null);
+    if (c === 'sale') navigate(`${to('pharmacy')}?tab=direct`);
+  };
+  // Ctrl+K / New: "New OP visit" straight away (or the first thing this role can start).
+  const openNew = () => newChoices[0] && pickNew(newChoices[0]);
+  const newTabs = { allowed: newChoices, onPick: pickNew };
   const section = location.pathname.split('/')[2] ?? '';
   const activeItem = items.find((n) => n.path === section);
   // Browser tab: "Patients · Main branch"
@@ -93,11 +129,17 @@ export function AppShell() {
     navigate('/login', { replace: true });
   }
 
+  // The branch's own logo (Settings > Branch settings); the first letter until one is uploaded.
+  const logo = branchLogo.data?.header.logo ?? null;
   const branchBlock = (
     <>
-      <span className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground'>
-        {current.name.charAt(0)}
-      </span>
+      {logo ? (
+        <img src={logo} alt='' className='size-8 shrink-0 rounded-lg border border-border bg-white object-contain' />
+      ) : (
+        <span className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground'>
+          {current.name.charAt(0)}
+        </span>
+      )}
       <span className='min-w-0 flex-1 leading-tight'>
         <span className='block truncate text-sm font-semibold'>
           {current.name}
@@ -197,12 +239,13 @@ export function AppShell() {
         </span>
       )}
       {/* Alt + this number opens the page. */}
-      {items.indexOf(n) < 9 && (
+      {/* How many are waiting on that page right now (the shortcut keys are in the "?" list). */}
+      {!!waiting[n.path] && (
         <span
-          className='hidden text-[10px] text-muted/70 tabular-nums md:inline'
-          title={`Alt + ${items.indexOf(n) + 1}`}
+          className='rounded-full bg-primary px-1.5 text-[11px] leading-5 font-semibold text-primary-foreground tabular-nums'
+          title={WAITING_TITLE[n.path]}
         >
-          {items.indexOf(n) + 1}
+          {waiting[n.path]}
         </span>
       )}
     </NavLink>
@@ -233,13 +276,13 @@ export function AppShell() {
             );
           })}
         </nav>
-        {current.permissions.includes('patient.create') && (
+        {newChoices.length > 0 && (
           <div className='px-3 pb-3'>
             <button
-              onClick={() => setQuickOp(true)}
+              onClick={openNew}
               className='flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90'
             >
-              <Plus className='size-4' /> New OP visit
+              <Plus className='size-4' /> New
               <kbd className='rounded border border-primary-foreground/30 px-1 text-[10px] font-normal'>Ctrl K</kbd>
             </button>
           </div>
@@ -356,11 +399,16 @@ export function AppShell() {
         onOpenChange={setChangingPassword}
       />
       {current.permissions.includes('patient.create') && (
-        <QuickOp branch={current.slug} open={quickOp} onClose={() => setQuickOp(false)} />
+        <QuickOp branch={current.slug} open={quickOp} onClose={() => setQuickOp(false)} tabs={newTabs} />
       )}
+      {direct && <DirectLab key={direct} mode={direct} branch={current.slug} open onClose={() => setDirect(null)} tabs={newTabs} />}
       <Shortcuts
-        onQuickOp={current.permissions.includes('patient.create') ? () => setQuickOp(true) : undefined}
+        onQuickOp={newChoices.length ? openNew : undefined}
         pages={items.map((n) => to(n.path))}
+        keys={{
+          ...(current.permissions.includes('billing.receive') ? { F2: to('billing') } : {}),
+          ...(current.permissions.includes('pharmacy.sell') ? { F3: to('pharmacy') } : {}),
+        }}
         newPatientPath={
           current.permissions.includes('patient.create')
             ? `${to('patients')}?add=1`

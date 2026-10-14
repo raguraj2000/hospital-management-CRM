@@ -9,12 +9,12 @@ only when someone opens it and types the words.
 
 
 WHAT IT REMOVES
-  - Every patient, OP visit and prescription
+  - Every OP visit and prescription (and the patients, unless you keep them)
   - Lab orders and results
   - Bills, payments, other charges and pharmacy sales
   - Doses to give and instructions
   - The history log
-  - UHID, token, OP and bill numbers start again from 1
+  - Token, OP and bill numbers start again from 1 (UHID too, unless you keep the patients)
 
 WHAT IT KEEPS
   - Staff and their passwords
@@ -27,6 +27,11 @@ WHAT IT KEEPS
 MEDICINE STOCK
   It asks: K to KEEP the stock and purchase bills, C to CLEAR them.
 
+PATIENTS
+  It asks: K to KEEP the patients registered so far (name, phone, UHID,
+  age...), C to CLEAR them. Kept patients keep their UHID; the next new
+  patient gets the next number. Their visits and bills are still cleared.
+
 
 HOW TO DO IT
   1. Do it when nobody is using HMS. It stops for a few seconds.
@@ -34,6 +39,7 @@ HOW TO DO IT
   3. Double-click   Start Fresh (delete test data).bat
   4. Windows asks for permission: click Yes.
   5. Type K or C for the medicine stock, then press Enter.
+     Type K or C for the patients, then press Enter.
   6. Type   START FRESH   (capital letters) and press Enter.
      Anything else cancels and changes nothing.
   7. Wait for DONE in green.
@@ -52,5 +58,6 @@ TO GET THE OLD DATA BACK
 
 REMEMBER
   - It can be run as often as you like.
-  - It removes ALL patients and bills that are there at that moment,
-    real ones too. Take a normal backup first if you are not sure.
+  - It removes ALL visits and bills that are there at that moment (and the
+    patients if you type C), real ones too. Take a normal backup first if
+    you are not sure.

@@ -10,6 +10,7 @@ import { useCan } from '@/state/auth';
 import { useVisitLab } from './VisitLab';
 import { tokenName, useCallNext, useVisitInvalidate } from './Visits';
 import { KeyHint } from './Shortcuts';
+import { isUndone, withUndo } from '@/components/undo';
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const SENT: Record<VisitSendTo, string> = { lab: 'sent to the lab', counter: 'sent to pharmacy & billing', waiting: 'moved back to waiting' };
@@ -25,7 +26,8 @@ export function useVisitSend(branch: string, visit: OpVisit, patientName: string
   const invalidate = useVisitInvalidate(branch);
   const who = tokenName({ ...visit, patientName });
   return useMutation({
-    mutationFn: (to: VisitSendTo) => api.post<VisitSendResponse>(`/b/${branch}/visits/${visit.id}/send`, { to, callNext: true }),
+    // Sent after 5 seconds: Undo on the toast keeps the patient here.
+    mutationFn: (to: VisitSendTo) => withUndo(`${who}: ${SENT[to].replace('moved back to waiting', 'back to waiting')}`, () => api.post<VisitSendResponse>(`/b/${branch}/visits/${visit.id}/send`, { to, callNext: true })),
     onSuccess: ({ visit: sent, next }, to) => {
       invalidate();
       // Already paid and nothing to give at the counter: the visit is done.
@@ -39,6 +41,7 @@ export function useVisitSend(branch: string, visit: OpVisit, patientName: string
       }
     },
     onError: (e) => {
+      if (isUndone(e)) return;
       invalidate();
       toast.error(errorMessage(e));
     },
@@ -66,7 +69,8 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
 
   const who = tokenName({ ...visit, patientName });
   const send = useMutation({
-    mutationFn: (to: VisitSendTo) => api.post<VisitSendResponse>(`/b/${branch}/visits/${visit.id}/send`, { to, callNext: true }),
+    // Sent after 5 seconds: Undo on the toast keeps the patient here.
+    mutationFn: (to: VisitSendTo) => withUndo(`${who}: ${SENT[to].replace('moved back to waiting', 'back to waiting')}`, () => api.post<VisitSendResponse>(`/b/${branch}/visits/${visit.id}/send`, { to, callNext: true })),
     onSuccess: ({ visit: sent, next }, to) => {
       invalidate();
       // Already paid and nothing to give at the counter: the visit is done.
@@ -80,6 +84,7 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
       }
     },
     onError: (e) => {
+      if (isUndone(e)) return;
       invalidate();
       toast.error(errorMessage(e));
     },

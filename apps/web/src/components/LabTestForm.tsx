@@ -130,7 +130,7 @@ export function LabTestForm({ branch, testId, departments, onDone, onCancel }: {
               <Input aria-label={`Line ${i + 1}: unit`} placeholder="e.g. %" value={l.unit} onChange={(e) => setLine(i, { unit: e.target.value })} />
               <Input aria-label={`Line ${i + 1}: normal range`} placeholder="e.g. 0 - 1" value={l.refRange} onChange={(e) => setLine(i, { refRange: e.target.value })} />
               <div className="flex items-center gap-1">
-                <label className="flex items-center gap-1 text-xs whitespace-nowrap text-muted" title="Ticked: the test cannot be completed while this line is empty. Unticked: the line may stay empty.">
+                <label className="flex items-center gap-1 text-xs whitespace-nowrap text-muted" title="Ticked: a result must be typed, and the line always prints. Unticked: the line may stay empty, and an empty line is left out of the printed report.">
                   <input type="checkbox" aria-label={`Line ${i + 1}: required`} className="size-4 accent-[var(--color-primary)]" checked={!l.optional} onChange={(e) => setLine(i, { optional: !e.target.checked })} />
                   Required
                 </label>

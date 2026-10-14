@@ -1,7 +1,8 @@
 import { useDeferredValue, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { ClipboardList, ClipboardPlus, DoorOpen, Search, UserPlus } from 'lucide-react';
+import { ClipboardList, ClipboardPlus, DoorOpen, FlaskConical, Search, UserPlus } from 'lucide-react';
+import { DirectLab } from '@/components/DirectLab';
 import type { OpVisitRow, Patient, VisitQueue } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, cn, Dialog, EmptyState, Input, NativeSelect, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
@@ -28,6 +29,7 @@ export function OpVisits() {
   const { branch } = useParams();
   const current = useBranch();
   const canCreate = useCan('patient.create');
+  const [directLab, setDirectLab] = useState(false);
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const date = params.get('date') ?? '';
@@ -80,24 +82,27 @@ export function OpVisits() {
                 </option>
               ))}
             </NativeSelect>
+            {canCreate && (
+              <Button variant="outline" onClick={() => setDirectLab(true)} title="A lab test without seeing the doctor: no consultation fee.">
+                <FlaskConical /> Direct lab test
+              </Button>
+            )}
+            {canCreate && (
+              <Button onClick={() => window.dispatchEvent(new Event(NEW_OP_EVENT))}>
+                <ClipboardPlus /> New OP visit <KeyHint>Ctrl+K</KeyHint>
+              </Button>
+            )}
           </>
         }
       />
 
-      {canCreate && (
-        <Card className="mb-4 flex flex-wrap items-center justify-between gap-3 p-3">
-          <span className="text-sm text-muted">Find a patient or register a new one, then start the OP visit.</span>
-          <Button onClick={() => window.dispatchEvent(new Event(NEW_OP_EVENT))}>
-            <ClipboardPlus /> New OP visit <KeyHint>Ctrl+K</KeyHint>
-          </Button>
-        </Card>
-      )}
+      {canCreate && <DirectLab branch={branch!} open={directLab} onClose={() => setDirectLab(false)} />}
 
       {/* Only today has a queue (the server sends none for another day). */}
       {data?.queue && <QueueBanner branch={branch!} queue={data.queue} doctorName={queueDoctor} />}
 
       <Tabs value={show} onValueChange={(t) => setParam('show', t === 'queue' ? '' : t)}>
-        <TabsList className="mb-4 h-11 max-w-full overflow-x-auto">
+        <TabsList className="mb-3 h-11 max-w-full overflow-x-auto">
           {SHOW.map((t) => (
             <TabsTrigger key={t.key} value={t.key} className="h-9 px-4 text-base">
               {t.label} <b className={cn('tabular-nums', t.tone)}>{visits.filter(t.has).length}</b>
@@ -112,7 +117,7 @@ export function OpVisits() {
         ) : isLoading ? (
           <div className="space-y-3 p-4">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-10" />)}</div>
         ) : visits.length === 0 ? (
-          <EmptyState icon={ClipboardList} title="No OP visits on this day" description="Search the patient above and press “New OP visit” to add them to the list." />
+          <EmptyState icon={ClipboardList} title="No OP visits on this day" description="Press “New OP visit” (Ctrl+K) to find or register a patient and add them to the list." />
         ) : shown.length === 0 ? (
           <EmptyState icon={ClipboardList} title={EMPTY[show]} />
         ) : (
@@ -217,28 +222,28 @@ function QueueBanner({ branch, queue, doctorName }: { branch: string; queue: Vis
   // to them (on the visit page), which also calls the next patient. So the button here opens that visit instead.
   // (A next patient with no doctor chosen yet goes to the doctor whose queue this is.)
   const inside = next ? withDoctor.find((v) => v.doctorUserId === (next.visit.doctorUserId ?? queue.doctorUserId)) : withDoctor[0];
-  const big = 'h-14 w-full px-6 text-lg md:w-auto';
+  const big = 'h-11 w-full px-5 text-base md:w-auto';
 
   return (
-    <Card className="mb-4 border-2 border-brand/30 p-4 sm:p-5">
-      <div className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-center">
+    <Card className="mb-3 border-2 border-brand/30 px-4 py-2.5">
+      <div className="grid gap-x-4 gap-y-2 md:grid-cols-[1fr_1fr_auto] md:items-center">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-muted">Now with doctor{doctorName ? ` (${doctorName})` : ''}</div>
+          <div className="text-xs font-medium text-muted">Now with doctor{doctorName ? ` (${doctorName})` : ''}</div>
           {withDoctor.length === 0 ? (
-            <div className="mt-1 text-xl font-semibold text-muted">No one is with the doctor</div>
+            <div className="text-lg font-semibold text-muted">No one is with the doctor</div>
           ) : (
             withDoctor.map((v) => (
-              <Link key={v.id} to={`/${branch}/visits/${v.id}`} className="mt-1 block truncate text-xl font-bold text-brand hover:underline">
+              <Link key={v.id} to={`/${branch}/visits/${v.id}`} className="block truncate text-lg font-bold text-brand hover:underline">
                 {tokenName(v)}
               </Link>
             ))
           )}
         </div>
         <div className="min-w-0">
-          <div className="text-sm font-medium text-muted">Next</div>
+          <div className="text-xs font-medium text-muted">Next</div>
           {next ? (
             <>
-              <div className="mt-1 truncate text-xl font-bold">{tokenName(next.visit)}</div>
+              <div className="truncate text-lg font-bold">{tokenName(next.visit)}</div>
               {next.reason === 'lab_ready' && (
                 <Badge tone="positive" className="mt-1 bg-positive px-2.5 py-1 text-sm text-white">
                   Back from lab — result ready
@@ -246,7 +251,7 @@ function QueueBanner({ branch, queue, doctorName }: { branch: string; queue: Vis
               )}
             </>
           ) : (
-            <div className="mt-1 text-xl font-semibold text-muted">Nobody is waiting</div>
+            <div className="text-lg font-semibold text-muted">Nobody is waiting</div>
           )}
         </div>
         {canEdit && (
@@ -256,14 +261,13 @@ function QueueBanner({ branch, queue, doctorName }: { branch: string; queue: Vis
                 <Link to={`/${branch}/visits/${inside.id}`} data-shortcut="alt+c" className={cn(buttonVariants(), big)}>
                   Open Token {inside.token ?? inside.opNo} — choose what next <KeyHint>Alt+C</KeyHint>
                 </Link>
-                <p className="mt-1.5 text-sm text-muted">Finish with this patient first; that calls the next one in.</p>
+                <p className="mt-1 text-xs text-muted">Finish with this patient first; that calls the next one in.</p>
               </>
             ) : (
               <>
                 <Button className={big} data-shortcut="alt+c" disabled={!next || call.isPending} onClick={() => call.mutate({ doctorUserId: queue.doctorUserId })}>
                   <DoorOpen /> {next ? `Call next (Token ${next.visit.token ?? next.visit.opNo})` : 'Call next'} <KeyHint>Alt+C</KeyHint>
                 </Button>
-                {!next && <p className="mt-1.5 text-sm text-muted">Nobody is waiting right now.</p>}
               </>
             )}
           </div>

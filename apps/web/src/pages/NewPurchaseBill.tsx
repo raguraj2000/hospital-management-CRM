@@ -98,7 +98,8 @@ export function NewPurchaseBill() {
     const med = medicines.find((m) => m.id === l.medicineId);
     const price = reckon(l).pricePerUnitPaise;
     if (!med || !price || price === med.pricePaise) return null;
-    return { med, price, on: l.setPrice ?? med.pricePaise === 0 };
+    // On unless unticked: the newest bill's sell rate is the selling price of ALL stock of the medicine, old and new.
+    return { med, price, on: l.setPrice ?? true };
   };
 
   async function openFile(file: File) {
@@ -180,7 +181,7 @@ export function NewPurchaseBill() {
 
   return (
     <div>
-      <Link to={`/${branch}/vendors`} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
+      <Link to={`/${branch}/inventory?tab=vendors`} className="mb-4 inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-base font-medium text-ink shadow-sm hover:bg-subtle">
         <ArrowLeft className="size-4" /> Vendors
       </Link>
       <PageHeader
@@ -227,7 +228,8 @@ export function NewPurchaseBill() {
 
       <Card>
         <CardHeader title="Items" description="One line per batch, in the vendor's own terms: 20 strips of 10 is Pack 10, Qty 20. The app works out the tablets." />
-        <div className="overflow-x-auto">
+        {/* Tall enough for the medicine list to open inside it (a sideways-scrolling box cuts off what hangs out of it). */}
+        <div className="min-h-[24rem] overflow-x-auto">
           <table className="w-full min-w-[1180px] text-sm">
             <thead className="bg-subtle/60 text-left text-xs text-muted">
               <tr>
@@ -237,8 +239,8 @@ export function NewPurchaseBill() {
                 <th className="px-2 py-2 text-right font-medium">Pack</th>
                 <th className="px-2 py-2 text-right font-medium">Qty</th>
                 <th className="px-2 py-2 text-right font-medium">Free</th>
-                <th className="px-2 py-2 text-right font-medium">Rate (₹)</th>
-                <th className="px-2 py-2 text-right font-medium">MRP (₹)</th>
+                <th className="px-2 py-2 text-right font-medium" title="What the vendor charges for one pack, before GST">Buy rate (₹)</th>
+                <th className="px-2 py-2 text-right font-medium" title="The printed MRP of one pack: what the patient pays">Sell rate / MRP (₹)</th>
                 <th className="px-2 py-2 text-right font-medium">GST %</th>
                 <th className="px-3 py-2 text-right font-medium">Amount</th>
                 <th />
@@ -278,10 +280,18 @@ export function NewPurchaseBill() {
                           )}
                         </div>
                       )}
+                      {!l.medicineId && !l.fileName && canAddMedicine && (
+                        <button type="button" className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline" onClick={() => setCreating(l)}>
+                          <Plus className="size-3.5" /> New medicine (not in the list)
+                        </button>
+                      )}
                       {change && (
-                        <label className="mt-1 flex items-center gap-1.5 text-xs">
-                          <input type="checkbox" className="size-4 accent-[var(--color-primary)]" checked={change.on} onChange={(e) => setLine(l.key, { setPrice: e.target.checked })} />
-                          Set selling price to {formatRupees(change.price)} / {FORM_UNIT[change.med.form]} <span className="text-muted">(now {formatRupees(change.med.pricePaise)})</span>
+                        <label className="mt-1 flex items-start gap-1.5 text-xs">
+                          <input type="checkbox" className="mt-0.5 size-4 accent-[var(--color-primary)]" checked={change.on} onChange={(e) => setLine(l.key, { setPrice: e.target.checked })} />
+                          <span>
+                            New selling price {formatRupees(change.price)} / {FORM_UNIT[change.med.form]} <span className="text-muted">(now {formatRupees(change.med.pricePaise)})</span>
+                            {change.on && <span className="block text-muted">For all stock of this medicine, old and new.</span>}
+                          </span>
                         </label>
                       )}
                     </td>
@@ -356,7 +366,8 @@ export function NewPurchaseBill() {
           onCreated={async (id) => {
             await meds.refetch();
             // Every line of the file with that product name is now this medicine.
-            setLines((ls) => ls.map((l) => (!l.medicineId && l.fileName === creating.fileName ? { ...l, medicineId: id } : l)));
+            // (A medicine made for a typed line goes onto that line only.)
+            setLines((ls) => ls.map((l) => (!l.medicineId && (creating.fileName ? l.fileName === creating.fileName : l.key === creating.key) ? { ...l, medicineId: id } : l)));
             setCreating(null);
           }}
         />
@@ -447,10 +458,11 @@ function ImportDialog({ rows, onClose, onRead }: { rows: ImportCell[][]; onClose
 function CreateMedicineDialog({ branch, line, pricePaise, onClose, onCreated }: { branch: string; line: Line; pricePaise: number; onClose: () => void; onCreated: (id: number) => void }) {
   const [name, setName] = useState(line.fileName);
   const [form, setForm] = useState<MedicineForm>(/\binj|vial|amp/i.test(line.fileName) ? 'injection' : /syr|susp|liq|\bml\b/i.test(line.fileName) ? 'syrup' : /\bcap/i.test(line.fileName) ? 'capsule' : /oint|cream|gel/i.test(line.fileName) ? 'ointment' : 'tablet');
+  const [strength, setStrength] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()} title="Create as new medicine" description={`“${line.fileName}” from the vendor's file. Selling price ${formatRupees(pricePaise)} per unit, from the MRP — it can be changed in Inventory.`}>
+    <Dialog open onOpenChange={(open) => !open && onClose()} title="Create as new medicine" description={`${line.fileName ? `“${line.fileName}” from the vendor's file. ` : 'It is added to the medicine list and put on this line. '}Selling price ${formatRupees(pricePaise)} per unit, from the MRP — it can be changed in Inventory.`}>
       <form
         className="space-y-4"
         onSubmit={async (e) => {
@@ -458,7 +470,7 @@ function CreateMedicineDialog({ branch, line, pricePaise, onClose, onCreated }: 
           setSaving(true);
           setError('');
           try {
-            const { id } = await api.post<{ id: number }>(`/b/${branch}/medicines`, { name, form, pricePaise });
+            const { id } = await api.post<{ id: number }>(`/b/${branch}/medicines`, { name, form, strength: strength.trim() || undefined, pricePaise });
             toast.success(`${name} added to the medicine list`);
             onCreated(id);
           } catch (err) {
@@ -479,6 +491,9 @@ function CreateMedicineDialog({ branch, line, pricePaise, onClose, onCreated }: 
               </option>
             ))}
           </NativeSelect>
+        </Field>
+        <Field label="Strength" htmlFor="new-med-strength" hint="Optional, e.g. 500 mg">
+          <Input id="new-med-strength" value={strength} onChange={(e) => setStrength(e.target.value)} />
         </Field>
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="outline" onClick={onClose}>

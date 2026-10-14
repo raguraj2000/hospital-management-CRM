@@ -7,6 +7,7 @@ import { Button, Field, Input, NativeSelect, Textarea } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { ageOf } from '@/pages/Patients';
 import { ConditionsPicker } from './Conditions';
+import { isUndone } from '@/components/undo';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const emptyToNull = (v: unknown) => (v === '' ? null : v);
@@ -49,6 +50,7 @@ export function PatientForm({
       ageYears: initial ? ageOf(initial) : null,
       bloodGroup: initial?.bloodGroup ?? '',
       weightKg: initial?.weightKg ?? null,
+      heightCm: initial?.heightCm ?? null,
       address: initial?.address ?? '',
       conditions: initial?.conditions ?? '',
       emergencyContactName: initial?.emergencyContactName ?? '',
@@ -75,6 +77,7 @@ export function PatientForm({
     try {
       await onSubmit(values);
     } catch (err) {
+      if (isUndone(err)) return; // Undo pressed: nothing was saved, the form stays as typed
       // Server-side rule broken? Show it on the right field.
       if (err instanceof ApiError && err.fields) {
         for (const [field, msgs] of Object.entries(err.fields)) setError(field as keyof PatientFormValues, { message: msgs[0] });
@@ -94,8 +97,15 @@ export function PatientForm({
       <Field label="Mobile number" htmlFor="phone" error={errors.phone?.message} hint="10 digits, +91 is added for you">
         <Input id="phone" inputMode="tel" placeholder="98765 43210" aria-invalid={!!errors.phone} {...register('phone')} />
       </Field>
-      <Field label="Email" htmlFor="email" error={errors.email?.message} hint="Optional">
-        <Input id="email" type="email" placeholder="name@example.com" aria-invalid={!!errors.email} {...register('email')} />
+      <Field label="Gender" htmlFor="gender">
+        <NativeSelect id="gender" {...register('gender', { setValueAs: emptyToNull })}>
+          <option value="">Not specified</option>
+          {GENDERS.map((g) => (
+            <option key={g} value={g}>
+              {GENDER_LABEL[g]}
+            </option>
+          ))}
+        </NativeSelect>
       </Field>
       {sameNumber.length > 0 && (
         <div role="alert" className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm sm:col-span-2">
@@ -135,15 +145,17 @@ export function PatientForm({
       <Field label="Age" hint={baby ? `${baby} old (from the date of birth)` : 'Filled in from the date of birth. Type it if the date is unknown.'} htmlFor="ageYears" error={errors.ageYears?.message}>
         <Input id="ageYears" inputMode="numeric" {...register('ageYears', { setValueAs: (v) => (v === '' || v == null ? null : Math.floor(Number(v))) })} />
       </Field>
-      <Field label="Gender" htmlFor="gender">
-        <NativeSelect id="gender" {...register('gender', { setValueAs: emptyToNull })}>
-          <option value="">Not specified</option>
-          {GENDERS.map((g) => (
-            <option key={g} value={g}>
-              {GENDER_LABEL[g]}
-            </option>
-          ))}
-        </NativeSelect>
+      <Field label="Height (cm)" htmlFor="heightCm" error={errors.heightCm?.message}>
+        <Input id="heightCm" inputMode="decimal" placeholder="e.g. 165" aria-invalid={!!errors.heightCm} {...register('heightCm', { setValueAs: (v) => (v === '' || v == null ? null : Number(v)) })} />
+      </Field>
+      <Field label="Weight (kg)" htmlFor="weightKg" error={errors.weightKg?.message}>
+        <Input
+          id="weightKg"
+          inputMode="decimal"
+          placeholder="e.g. 62.5"
+          aria-invalid={!!errors.weightKg}
+          {...register('weightKg', { setValueAs: (v) => (v === '' || v == null ? null : Number(v)) })}
+        />
       </Field>
       <Field label="Blood group" htmlFor="bloodGroup">
         <NativeSelect id="bloodGroup" {...register('bloodGroup')}>
@@ -155,14 +167,8 @@ export function PatientForm({
           ))}
         </NativeSelect>
       </Field>
-      <Field label="Weight (kg)" htmlFor="weightKg" error={errors.weightKg?.message}>
-        <Input
-          id="weightKg"
-          inputMode="decimal"
-          placeholder="e.g. 62.5"
-          aria-invalid={!!errors.weightKg}
-          {...register('weightKg', { setValueAs: (v) => (v === '' || v == null ? null : Number(v)) })}
-        />
+      <Field label="Email" htmlFor="email" error={errors.email?.message} hint="Optional">
+        <Input id="email" type="email" placeholder="name@example.com" aria-invalid={!!errors.email} {...register('email')} />
       </Field>
       <div className="sm:col-span-2">
         <Field label="Address" htmlFor="address" error={errors.address?.message}>

@@ -59,7 +59,7 @@ describe('direct sale', () => {
     const lines = await t.db.select().from(pharmacySaleLine);
     expect(lines.map((l) => [l.prescriptionItemId, l.quantity, l.amountPaise])).toEqual([[null, 5, 1000], [null, 3, 600], [null, 2, 18000]]);
 
-    const day = await json(pharm('/api/b/main/pharmacy/sales'));
+    const day = await json(owner('/api/b/main/pharmacy/sales'));
     expect(day.totalPaise).toBe(19600);
     expect(day.sales).toHaveLength(1);
     expect(day.sales[0]).toMatchObject({ id: sale.id, saleNo: sale.saleNo, visitId: null, patientName: 'Walk-in' });
@@ -80,7 +80,7 @@ describe('direct sale', () => {
     const { sale } = await json(sell(pharm, 'main', { items: [{ medicineId: para, quantity: 6 }], paymentMode: 'upi', patientId: patient.id }));
     const [row] = await t.db.select().from(pharmacySale);
     expect(row).toMatchObject({ visitId: null, patientId: patient.id });
-    expect((await json(pharm('/api/b/main/pharmacy/sales'))).sales[0]).toMatchObject({ visitId: null, patientName: 'Ravi Kumar' });
+    expect((await json(owner('/api/b/main/pharmacy/sales'))).sales[0]).toMatchObject({ visitId: null, patientName: 'Ravi Kumar' });
 
     const print = await json(pharm(`/api/b/main/pharmacy/sales/${sale.id}`));
     expect(print.sale).toMatchObject({ id: sale.id, saleNo: sale.saleNo, paymentMode: 'upi', totalPaise: 1200, soldByName: 'pharm', patient: { name: 'Ravi Kumar', uhid: patient.uhid }, visitId: null, opNo: null });
@@ -112,7 +112,7 @@ describe('direct sale', () => {
     expect(await batchesOf(pharm, para)).toEqual([['B1', 20]]);
     expect(await batchesOf(pharm, syrup)).toEqual([['S1', 3]]);
     expect(await t.db.select().from(pharmacySale)).toEqual([]);
-    expect((await json(pharm('/api/b/main/pharmacy/sales'))).sales).toEqual([]);
+    expect((await json((await t.as('owner'))('/api/b/main/pharmacy/sales'))).sales).toEqual([]);
   });
 
   it('needs pharmacy.sell', async () => {

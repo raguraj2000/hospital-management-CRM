@@ -2,7 +2,9 @@ import { formatRupees, ageInfo, GENDER_LABEL } from '@platform/shared';
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, CalendarClock, ClipboardPlus, Droplet, Mail, MapPin, MessageCircle, MoreHorizontal, Pencil, Phone, PhoneCall, Scale, Stethoscope, Trash2, UserRound } from 'lucide-react';
+import { ArrowLeft, CalendarClock, ClipboardPlus, Droplet, Mail, MapPin, MessageCircle, MoreHorizontal, Pencil, Phone, PhoneCall, Scale, Stethoscope, UserRound, Ban, ReceiptText } from 'lucide-react';
+import { DirectLab } from '@/components/DirectLab';
+import { PayDues } from '@/components/PayDues';
 import type { OpVisit, Patient } from '@platform/shared';
 import {
   Avatar,
@@ -11,7 +13,6 @@ import {
   buttonVariants,
   Card,
   CardHeader,
-  ConfirmDelete,
   Dialog,
   EmptyState,
   Menu,
@@ -30,6 +31,8 @@ import {
   THead,
   TR,
   toast,
+  Field,
+  Textarea,
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
@@ -53,10 +56,14 @@ export function PatientDetail() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const canEdit = useCan('patient.edit');
-  const canDelete = useCan('patient.delete');
+  // Deactivating and activating a patient: the doctor and whoever manages the branch.
+  const canSteward = [useCan('prescription.write'), useCan('settings.manage')].some(Boolean);
   const canCreate = useCan('patient.create');
+  const canBill = useCan('billing.receive');
+  const [billing, setBilling] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
+  const [reason, setReason] = useState('');
   const [startingVisit, setStartingVisit] = useState(false);
   const [tab, setTab] = useState('overview');
   const [range, setRange] = useState({ from: '', to: '' });
@@ -75,19 +82,22 @@ export function PatientDetail() {
     retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 1,
   });
 
-  const remove = useMutation({
-    mutationFn: () => api.delete(`/b/${branch}/patients/${id}`),
-    onSuccess: () => {
-      qc.removeQueries({ queryKey: key });
+  // What the patient still owes: it is collected before the patient can be deactivated.
+  const owes = bills.data?.summary.balancePaise ?? 0;
+  const setActive = useMutation({
+    mutationFn: (why: string | null) => (why == null ? api.post(`/b/${branch}/patients/${id}/activate`) : api.post(`/b/${branch}/patients/${id}/deactivate`, { reason: why })),
+    onSuccess: (_d, why) => {
+      qc.invalidateQueries({ queryKey: key });
       qc.invalidateQueries({ queryKey: ['patients', branch] });
-      qc.invalidateQueries({ queryKey: ['dashboard', branch] });
-      toast.success(`${data?.patient.name} deleted`);
-      navigate(`/${branch}/patients`, { replace: true });
+      toast.success(why == null ? `${data?.patient.name} is active again` : `${data?.patient.name} deactivated`);
+      setDeactivating(false);
+      setReason('');
     },
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   const back = (
-    <Link to={`/${branch}/patients`} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
+    <Link to={`/${branch}/patients`} className="mb-4 inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-base font-medium text-ink shadow-sm hover:bg-subtle">
       <ArrowLeft className="size-4" /> All patients
     </Link>
   );
@@ -156,11 +166,28 @@ export function PatientDetail() {
               <span className="text-xs text-muted">Registered {fmtDate(p.createdAt)}</span>
             </div>
             <ConditionBadges conditions={p.conditions} className="mt-2" />
+            {p.deactivatedAt && (
+              <div role="alert" className="mt-2 rounded-lg border border-critical/30 bg-critical-soft px-3 py-2 text-sm text-critical">
+                <b>Deactivated</b> on {fmtDate(p.deactivatedAt)}: {p.deactivatedReason}
+                <span className="block text-xs">No new OP visit, medicine, lab test or bill until a doctor or the admin activates the patient.</span>
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {canCreate && (
+            {canBill && <PayDues branch={branch!} patientId={p.id} patientName={p.name} duePaise={owes} />}
+            {canBill && !p.deactivatedAt && (
+              <Button variant="outline" onClick={() => setBilling(true)} title="A bill without seeing the doctor (dressing, injection…): no consultation fee.">
+                <ReceiptText /> Create bill
+              </Button>
+            )}
+            {canCreate && !p.deactivatedAt && (
               <Button onClick={() => setStartingVisit(true)}>
                 <ClipboardPlus /> New OP visit
+              </Button>
+            )}
+            {p.deactivatedAt && canSteward && (
+              <Button disabled={setActive.isPending} onClick={() => setActive.mutate(null)}>
+                <UserRound /> Activate patient
               </Button>
             )}
             {p.phone && (
@@ -168,12 +195,12 @@ export function PatientDetail() {
                 <MessageCircle className="text-positive" /> WhatsApp
               </a>
             )}
-            {canEdit && (
+            {canEdit && !p.deactivatedAt && (
               <Button variant="outline" onClick={() => setEditing(true)}>
                 <Pencil /> Edit
               </Button>
             )}
-            {canDelete && (
+            {canSteward && !p.deactivatedAt && (
               <Menu>
                 <MenuTrigger asChild>
                   <Button variant="outline" size="icon" aria-label="More actions">
@@ -181,8 +208,8 @@ export function PatientDetail() {
                   </Button>
                 </MenuTrigger>
                 <MenuContent align="end">
-                  <MenuItem destructive onSelect={() => setDeleting(true)}>
-                    <Trash2 /> Delete patient
+                  <MenuItem destructive onSelect={() => setDeactivating(true)}>
+                    <Ban /> Deactivate patient
                   </MenuItem>
                 </MenuContent>
               </Menu>
@@ -228,6 +255,7 @@ export function PatientDetail() {
               <Row icon={UserRound} label="Gender" value={p.gender ? p.gender[0]!.toUpperCase() + p.gender.slice(1) : null} />
               <Row icon={Droplet} label="Blood group" value={p.bloodGroup} />
               <Row icon={Scale} label="Weight" value={p.weightKg != null ? `${p.weightKg} kg` : null} />
+              <Row icon={Scale} label="Height" value={p.heightCm != null ? `${p.heightCm} cm` : null} />
             </dl>
           </Card>
           <Card className="md:col-span-2">
@@ -250,7 +278,7 @@ export function PatientDetail() {
                 icon={Stethoscope}
                 title="No OP visits yet"
                 description="Start an OP visit when the patient comes in. It gets the next token for today."
-                action={canCreate && <Button size="sm" variant="outline" onClick={() => setStartingVisit(true)}><ClipboardPlus /> New OP visit</Button>}
+                action={canCreate && !p.deactivatedAt && <Button size="sm" variant="outline" onClick={() => setStartingVisit(true)}><ClipboardPlus /> New OP visit</Button>}
               />
             ) : (
               <Table>
@@ -313,6 +341,7 @@ export function PatientDetail() {
         />
       </Dialog>
 
+      {canBill && <DirectLab mode="bill" branch={branch!} patient={p} open={billing} onClose={() => setBilling(false)} />}
       <Dialog open={startingVisit} onOpenChange={setStartingVisit} title="New OP visit" description={`${p.name} · ${p.uhid} — the token and OP number are assigned automatically.`}>
         <NewVisitForm
           branch={branch!}
@@ -325,15 +354,36 @@ export function PatientDetail() {
         />
       </Dialog>
 
-      <ConfirmDelete
-        open={deleting}
-        onOpenChange={setDeleting}
-        title={`Delete ${p.name}?`}
-        description="The patient is removed from this branch's lists. The record is kept in the audit trail."
-        pending={remove.isPending}
-        error={remove.error ? errorMessage(remove.error) : null}
-        onConfirm={() => remove.mutate()}
-      />
+      <Dialog open={deactivating} onOpenChange={setDeactivating} title={`Deactivate ${p.name}?`} description="Everyone still sees the patient and their history. No new OP visit, medicine, lab test or bill can be made until a doctor or the admin activates the patient again.">
+        {owes > 0 && (
+          <div role="alert" className="mb-4 rounded-lg border border-critical/30 bg-critical-soft px-3 py-2 text-sm text-critical">
+            <b>This patient still owes {formatRupees(owes)}.</b> Collect it first in{' '}
+            <Link to={`/${branch}/billing?tab=pending`} className="font-medium underline">
+              Billing → Pending payments
+            </Link>
+            , then deactivate.
+          </div>
+        )}
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!owes && reason.trim().length >= 3 && !setActive.isPending) setActive.mutate(reason.trim());
+          }}
+        >
+          <Field required label="Reason" htmlFor="deactivate-reason" hint="Shown to everyone who opens this patient.">
+            <Textarea id="deactivate-reason" autoFocus rows={2} maxLength={300} placeholder="e.g. Registered twice: use AH000123. / Patient has passed away." value={reason} onChange={(e) => setReason(e.target.value)} />
+          </Field>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={() => setDeactivating(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="danger" disabled={owes > 0 || reason.trim().length < 3 || setActive.isPending}>
+              {setActive.isPending ? 'Saving…' : 'Deactivate patient'}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
     </div>
   );
 }

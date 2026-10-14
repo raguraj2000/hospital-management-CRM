@@ -200,6 +200,11 @@ describe('send and status rules', () => {
     // The checkout's last step: at the counter -> completed.
     await callNext(doc);
     await send(doc, v.id, { to: 'counter' });
+    // ...but not by hand while the counter still has something to collect.
+    const early = await patch({ status: 'completed' });
+    expect(early.status).toBe(409);
+    expect((await early.json()).code).toBe('not_settled');
+    expect((await patch({ status: 'waiting' })).status).toBe(200);
     expect((await patch({ status: 'completed' })).status).toBe(200);
     expect((await patch({ status: 'cancelled' })).status).toBe(409);
     expect((await patch({ status: 'waiting' })).status).toBe(200);

@@ -11,7 +11,9 @@ const HELP: { where: string; keys: [string, string][] }[] = [
   {
     where: 'Everywhere',
     keys: [
-      ['Alt + 1 … 9', 'Open a page of the side menu (the number is shown next to it)'],
+      ['F2', 'Billing'],
+      ['F3', 'Pharmacy'],
+      ['Alt + 1 … 9', 'Open the 1st … 9th page of the side menu, counted from the top'],
       ['Ctrl + K', 'Find or register a patient and start an OP visit, from any page'],
       ['Alt + N', 'Register a new patient'],
       ['Esc', 'Close a window'],
@@ -30,7 +32,7 @@ const HELP: { where: string; keys: [string, string][] }[] = [
     keys: [
       ['Alt + C', 'Start the consultation'],
       ['Alt + B', 'Add a bookmark (ready-made treatment)'],
-      ['Alt + M', 'Add a medicine'],
+      ['Alt + M', 'Add a drug to the prescription'],
       ['Alt + L', 'Send to lab (on the Lab tab)'],
       ['Alt + S', 'Create prescription & send to pharmacy (on the Preview step)'],
     ],
@@ -57,15 +59,21 @@ export function Kbd({ children }: { children: string }) {
 }
 
 /** `pages`: where Alt+1 … Alt+9 go, in menu order. `newPatientPath`: where Alt+N goes (not given = not allowed). */
-export function Shortcuts({ pages, newPatientPath, help, onHelp, onQuickOp }: { pages: string[]; newPatientPath?: string; help: boolean; onHelp: (open: boolean) => void; onQuickOp?: () => void }) {
+export function Shortcuts({ pages, newPatientPath, help, onHelp, onQuickOp, keys = {} }: { pages: string[]; newPatientPath?: string; help: boolean; onHelp: (open: boolean) => void; onQuickOp?: () => void; /** Function keys that open a page: { F2: '/main/billing' }. */ keys?: Record<string, string> }) {
   const navigate = useNavigate();
-  const now = useRef({ pages, newPatientPath, onQuickOp });
-  now.current = { pages, newPatientPath, onQuickOp };
+  const now = useRef({ pages, newPatientPath, onQuickOp, keys });
+  now.current = { pages, newPatientPath, onQuickOp, keys };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // With a window open, only what is inside it can be reached.
       const dialog = document.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+      // F2, F3...: straight to a page, from anywhere (also while typing in a box).
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && now.current.keys[e.key]) {
+        e.preventDefault();
+        if (!dialog) navigate(now.current.keys[e.key]!);
+        return;
+      }
       if (e.ctrlKey || e.metaKey) {
         // Ctrl+K: the new-OP-visit window (the browser would put the cursor in its address bar).
         if (e.code === 'KeyK' && !e.altKey && !e.shiftKey && now.current.onQuickOp) {

@@ -9,6 +9,8 @@ import { useCan } from '@/state/auth';
 import { CounterNote } from './CounterNote';
 import { labLabel, labTone } from './format';
 import { PrintLink } from './print';
+import { isUndone, withUndo } from '@/components/undo';
+import { PackagePicker, useLabPackages } from './LabPackages';
 
 /** The visit's lab orders: the same query (and cache) wherever the visit page needs them. */
 export const useVisitLab = (branch: string, visitId: number, enabled = true) =>
@@ -22,20 +24,23 @@ export function VisitLab({ branch, visit, onOrdered }: { branch: string; visit: 
   const orders = useVisitLab(branch, visit.id);
   const tests = useQuery({ queryKey: ['lab-tests', branch], queryFn: () => api.get<{ tests: LabTest[] }>(`/b/${branch}/lab/tests`), enabled: canOrder, staleTime: 60_000 });
   const [picked, setPicked] = useState<number[]>([]);
+  const [pickedPackages, setPickedPackages] = useState<number[]>([]);
+  const packages = useLabPackages(branch, canOrder);
   const [cancelling, setCancelling] = useState<LabOrder | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['visit-lab', branch, visit.id] });
 
   const order = useMutation({
-    mutationFn: () => api.post(`/b/${branch}/visits/${visit.id}/lab-orders`, { testIds: picked }),
+    mutationFn: () => withUndo(`Ordering ${picked.length + pickedPackages.length} lab item${picked.length + pickedPackages.length > 1 ? 's' : ''}`, () => api.post(`/b/${branch}/visits/${visit.id}/lab-orders`, { testIds: picked, packageIds: pickedPackages })),
     onSuccess: () => {
-      toast.success(`${picked.length} test${picked.length > 1 ? 's' : ''} sent to the lab`);
+      toast.success('Sent to the lab');
       setPicked([]);
+      setPickedPackages([]);
       refresh();
       // The lab queue, the patient's Lab tab and the OP list (lab progress) all show it.
       for (const k of ['lab-queue', 'patient-lab', 'visits']) qc.invalidateQueries({ queryKey: [k, branch] });
       onOrdered();
     },
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: (e) => !isUndone(e) && toast.error(errorMessage(e)),
   });
   const cancel = useMutation({
     mutationFn: (id: number) => api.patch(`/b/${branch}/lab/orders/${id}`, { status: 'cancelled' }),
@@ -51,7 +56,8 @@ export function VisitLab({ branch, visit, onOrdered }: { branch: string; visit: 
   const already = new Set(active.map((o) => o.testId));
   // Every test is done and the patient is still to be seen: this is why they are back.
   const resultReady = active.length > 0 && active.every((o) => o.status === 'completed') && (visit.status === 'waiting' || visit.status === 'with_doctor' || visit.status === 'at_lab');
-  const pickedTotal = (tests.data?.tests ?? []).filter((t) => picked.includes(t.id)).reduce((s, t) => s + t.pricePaise, 0);
+  const pickedTotal = (tests.data?.tests ?? []).filter((t) => picked.includes(t.id)).reduce((s, t) => s + t.pricePaise, 0) + (packages.data?.packages ?? []).filter((p) => pickedPackages.includes(p.id)).reduce((s, p) => s + p.pricePaise, 0);
+  const pickedCount = picked.length + pickedPackages.length;
 
   return (
     <Card>
@@ -103,6 +109,8 @@ export function VisitLab({ branch, visit, onOrdered }: { branch: string; visit: 
           {tests.data?.tests.length === 0 ? (
             <p className="text-sm text-muted">No tests set up yet. A branch admin adds them in Lab → Tests.</p>
           ) : (
+            <>
+            <PackagePicker packages={packages.data?.packages ?? []} tests={tests.data?.tests ?? []} picked={pickedPackages} onChange={setPickedPackages} />
             <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
               {(tests.data?.tests ?? []).map((t) => (
                 <label key={t.id} className={`flex min-h-10 items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-subtle ${already.has(t.id) ? 'opacity-50' : ''}`}>
@@ -120,9 +128,10 @@ export function VisitLab({ branch, visit, onOrdered }: { branch: string; visit: 
                 </label>
               ))}
             </div>
+            </>
           )}
-          <Button className="mt-3 w-full sm:w-auto" disabled={!picked.length || order.isPending} onClick={() => order.mutate()}>
-            <CheckCircle2 /> {picked.length ? `Order ${picked.length} test${picked.length > 1 ? 's' : ''} · ${formatRupees(pickedTotal)}` : 'Tick tests to order'}
+          <Button className="mt-3 w-full sm:w-auto" disabled={!pickedCount || order.isPending} onClick={() => order.mutate()}>
+            <CheckCircle2 /> {pickedCount ? `Order ${pickedCount} item${pickedCount > 1 ? 's' : ''} · ${formatRupees(pickedTotal)}` : 'Tick tests to order'}
           </Button>
         </div>
       )}

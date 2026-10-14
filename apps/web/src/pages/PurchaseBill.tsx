@@ -58,7 +58,7 @@ export function PurchaseBillPage() {
 
   return (
     <div>
-      <Link to={`/${branch}/vendors`} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
+      <Link to={`/${branch}/inventory?tab=vendors`} className="mb-4 inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-base font-medium text-ink shadow-sm hover:bg-subtle">
         <ArrowLeft className="size-4" /> Vendors
       </Link>
       <PageHeader

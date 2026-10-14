@@ -1,5 +1,5 @@
 // Vendors, purchase bills (receiving medicines = adding stock) and payments to vendors.
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql, gte, lte } from 'drizzle-orm';
 import { Hono } from 'hono';
 import {
   cancelSchema,
@@ -10,9 +10,11 @@ import {
   type PurchaseBillDetail,
   type PurchaseBillSummary,
   type Vendor,
+  expenseInputSchema,
+  type Expense,
 } from '@platform/shared';
 import { AppError, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { medicine, medicineBatch, purchaseBill, purchaseLine, user, vendor, vendorPayment } from '../db/schema.js';
+import { medicine, medicineBatch, purchaseBill, purchaseLine, user, vendor, vendorPayment, expense } from '../db/schema.js';
 import { exclusively, localToday } from '../lib/clinic.js';
 
 const addDays = (iso: string, days: number) => {
@@ -167,6 +169,69 @@ export function createVendorRoutes(db: Db) {
     return c.json({ ok: true });
   });
 
+  // ---------------------------------------------------------------- other expenses (not medicine stock)
+
+  const expenseRows = (branchId: number, more?: ReturnType<typeof and>) =>
+    db
+      .select({ id: expense.id, expenseDate: expense.expenseDate, description: expense.description, vendorId: expense.vendorId, vendorName: sql<string | null>`coalesce(${vendor.name}, ${expense.vendorName})`, amountPaise: expense.amountPaise, mode: expense.mode, notes: expense.notes, createdByName: user.name, createdAt: expense.createdAt })
+      .from(expense)
+      .leftJoin(vendor, eq(vendor.id, expense.vendorId))
+      .leftJoin(user, eq(user.id, expense.createdBy))
+      .where(and(eq(expense.branchId, branchId), isNull(expense.deletedAt), more))
+      .orderBy(desc(expense.expenseDate), desc(expense.id));
+
+  /** Expenses between two days (default: this month), newest first, with their total. */
+  app.get('/expenses', manage, async (c) => {
+    const b = c.get('branch');
+    const today = await localToday(db);
+    const day = (v: string | undefined, fallback: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : fallback);
+    const from = day(c.req.query('from'), `${today.slice(0, 8)}01`);
+    const to = day(c.req.query('to'), today);
+    const expenses: Expense[] = await expenseRows(b.id, and(gte(expense.expenseDate, from), lte(expense.expenseDate, to))).limit(2000);
+    return c.json({ from, to, expenses, totalPaise: expenses.reduce((s, e) => s + e.amountPaise, 0) });
+  });
+
+  app.post('/expenses', manage, async (c) => {
+    const parsed = expenseInputSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const { addVendor, ...input } = parsed.data;
+    let vendorId = input.vendorId ?? null;
+    if (vendorId != null) {
+      // A vendor of another branch answers like one that does not exist.
+      const [v] = await db.select({ id: vendor.id }).from(vendor).where(and(eq(vendor.branchId, b.id), eq(vendor.id, vendorId), isNull(vendor.deletedAt)));
+      if (!v) throw new AppError(400, 'validation', 'Choose a vendor of this branch', { vendorId: ['Choose a vendor of this branch'] });
+    }
+    const id = await db.transaction(async (tx) => {
+      // A shop typed by name joins the vendor list when asked, so it can be picked next time.
+      if (vendorId == null && addVendor && input.vendorName) {
+        const [made] = await tx.insert(vendor).values({ branchId: b.id, name: input.vendorName }).returning({ id: vendor.id });
+        vendorId = made!.id;
+        await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'vendor', entityId: vendorId, detail: { name: input.vendorName, from: 'expense' } });
+      }
+      const [row] = await tx
+        .insert(expense)
+        .values({ branchId: b.id, expenseDate: input.expenseDate, description: input.description, vendorId, vendorName: vendorId == null ? (input.vendorName ?? null) : null, amountPaise: input.amountPaise, mode: input.mode, notes: input.notes ?? null, createdBy: u.id })
+        .returning({ id: expense.id });
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'expense', entityId: row!.id, detail: input });
+      return row!.id;
+    });
+    const [made] = await expenseRows(b.id, and(eq(expense.id, id)));
+    return c.json({ expense: made }, 201);
+  });
+
+  app.delete('/expenses/:id', manage, async (c) => {
+    const b = c.get('branch');
+    const u = c.get('user');
+    const id = Number(c.req.param('id'));
+    const [row] = Number.isInteger(id) ? await db.select({ id: expense.id }).from(expense).where(and(eq(expense.branchId, b.id), eq(expense.id, id), isNull(expense.deletedAt))) : [];
+    if (!row) throw notFound('Expense not found');
+    await db.update(expense).set({ deletedAt: new Date().toISOString() }).where(eq(expense.id, id));
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'delete', entity: 'expense', entityId: id });
+    return c.json({ ok: true });
+  });
+
   // ---------------------------------------------------------------- purchase bills
 
   app.get('/purchases', canReceive, async (c) => {
@@ -175,6 +240,52 @@ export function createVendorRoutes(db: Db) {
     const list = await bills(b.id, Number.isInteger(vendorId) && vendorId > 0 ? and(eq(purchaseBill.vendorId, vendorId)) : undefined);
     const status = c.req.query('status');
     return c.json({ bills: status === 'due' ? list.filter((x) => x.status === 'unpaid' || x.status === 'part_paid') : list });
+  });
+
+  /**
+   * Every purchase line between two bill dates (default: this month), with what it cost and what it sells for.
+   * Profit is counted at today's selling price of the medicine: "if all sold" on everything bought, "so far" on
+   * the units already gone from that batch. Cancelled bills are left out. Money matters: vendor.manage only.
+   */
+  app.get('/purchases/profit', manage, async (c) => {
+    const b = c.get('branch');
+    const today = await localToday(db);
+    const day = (v: string | undefined, fallback: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : fallback);
+    const from = day(c.req.query('from'), `${today.slice(0, 8)}01`);
+    const to = day(c.req.query('to'), today);
+    const rows = await db
+      .select({
+        id: purchaseLine.id,
+        billId: purchaseBill.id,
+        billDate: purchaseBill.billDate,
+        vendorName: vendor.name,
+        vendorBillNo: purchaseBill.vendorBillNo,
+        medicineName: medicine.name,
+        strength: medicine.strength,
+        batchNo: medicineBatch.batchNo,
+        units: purchaseLine.quantity,
+        costPaise: purchaseLine.amountPaise,
+        unitCostPaise: purchaseLine.unitCostPaise,
+        sellPricePaise: medicine.pricePaise,
+        received: medicineBatch.receivedQty,
+        left: medicineBatch.quantity,
+      })
+      .from(purchaseLine)
+      .innerJoin(purchaseBill, eq(purchaseBill.id, purchaseLine.billId))
+      .innerJoin(vendor, eq(vendor.id, purchaseBill.vendorId))
+      .innerJoin(medicine, eq(medicine.id, purchaseLine.medicineId))
+      .innerJoin(medicineBatch, eq(medicineBatch.id, purchaseLine.batchId))
+      .where(and(eq(purchaseLine.branchId, b.id), isNull(purchaseBill.cancelledAt), gte(purchaseBill.billDate, from), lte(purchaseBill.billDate, to)))
+      .orderBy(desc(purchaseBill.billDate), desc(purchaseLine.id))
+      .limit(2000);
+    const lines = rows.map((r) => {
+      const sold = Math.max(0, r.received - r.left);
+      // Cost of one unit as paid (free units make it cheaper): the line's amount over the units that came in.
+      const unitCost = r.received > 0 ? r.costPaise / r.received : r.unitCostPaise;
+      return { ...r, soldUnits: sold, sellValuePaise: r.received * r.sellPricePaise, profitIfAllSoldPaise: Math.round(r.received * r.sellPricePaise - r.costPaise), profitSoFarPaise: Math.round(sold * (r.sellPricePaise - unitCost)) };
+    });
+    const sum = (k: 'costPaise' | 'sellValuePaise' | 'profitIfAllSoldPaise' | 'profitSoFarPaise') => lines.reduce((s, l) => s + l[k], 0);
+    return c.json({ from, to, lines, totals: { costPaise: sum('costPaise'), sellValuePaise: sum('sellValuePaise'), profitIfAllSoldPaise: sum('profitIfAllSoldPaise'), profitSoFarPaise: sum('profitSoFarPaise') } });
   });
 
   app.get('/purchases/:id', canReceive, async (c) => c.json({ bill: await billDetail(c.get('branch').id, Number(c.req.param('id'))) }));

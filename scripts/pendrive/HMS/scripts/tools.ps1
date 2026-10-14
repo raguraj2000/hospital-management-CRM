@@ -38,8 +38,9 @@ if ($Action -eq 'start-fresh') {
   Write-Host 'START FRESH - clears the patient data so the hospital begins again with empty lists.' -ForegroundColor Yellow
   Write-Host '(Updating HMS never does this. It happens only here, when you choose it.)'
   Write-Host ''
-  Write-Host 'REMOVED: every patient, OP visit, prescription, lab order and result, bill,'
-  Write-Host '         payment, pharmacy sale and the history log. Numbers start again from 1.'
+  Write-Host 'REMOVED: every OP visit, prescription, lab order and result, bill, payment,'
+  Write-Host '         pharmacy sale and the history log. Token and bill numbers start again from 1.'
+  Write-Host '         Patients too, unless you choose to keep them below.'
   Write-Host 'KEPT:    staff and their passwords, lab tests and prices, medicines and prices,'
   Write-Host '         vendors, bookmarks, the consultation fee and the print header.'
   Write-Host ''
@@ -47,6 +48,8 @@ if ($Action -eq 'start-fresh') {
   Write-Host ''
   $stock = ''
   while ($stock -notin 'K', 'C') { $stock = (Read-Host 'Medicine STOCK and purchase bills entered so far: type K to KEEP them, C to CLEAR them').Trim().ToUpper() }
+  $people = ''
+  while ($people -notin 'K', 'C') { $people = (Read-Host 'PATIENTS registered so far (name, phone, UHID): type K to KEEP them, C to CLEAR them').Trim().ToUpper() }
   $typed = (Read-Host 'To go ahead type  START FRESH  (anything else cancels)').Trim()
   if ($typed -cne 'START FRESH') {
     Write-Host "`nCANCELLED. Nothing was changed." -ForegroundColor Green
@@ -60,7 +63,7 @@ if ($Action -eq 'start-fresh') {
       $svc = Get-Service -Name 'HMSServer' -ErrorAction SilentlyContinue
       if ($svc -and $svc.Status -ne 'Stopped') { Stop-Service -Name 'HMSServer' -Force; Start-Sleep -Seconds 2 }
       $mode = if ($stock -eq 'K') { 'keep-stock' } else { 'clear-stock' }
-      $done = Invoke-Tool start-fresh $mode
+      $done = if ($people -eq 'K') { Invoke-Tool start-fresh $mode keep-patients } else { Invoke-Tool start-fresh $mode }
       if ($svc) { Start-Service -Name 'HMSServer' }
       if ($done) {
         Write-Host "`nDONE. The hospital starts fresh. Everyone signs in again with the same password." -ForegroundColor Green

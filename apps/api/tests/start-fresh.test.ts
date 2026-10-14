@@ -85,4 +85,21 @@ describe('start fresh', () => {
     expect((await json(owner('/api/b/main/medicines'))).medicines.find((m: any) => m.id === med).stock).toBe(96);
     expect((await json(owner('/api/b/main/purchases'))).bills).toHaveLength(1);
   });
+
+  it('keep patients: the patients and their UHIDs stay, the next patient gets a new number; visits and bills go', async () => {
+    await trial();
+    const owner = await t.as('owner');
+    const before = (await json(owner('/api/b/main/patients'))).patients.map((p: any) => p.uhid).sort();
+    expect(before.length).toBeGreaterThan(0);
+    const result = await startFresh(t.db, { keepStock: true, keepPatients: true });
+    expect(result.removed.patient).toBeUndefined();
+    expect(result.kept.patient).toBe(before.length);
+    expect(await rows('op_visit')).toBe(0);
+    expect(await rows('op_bill')).toBe(0);
+    const owner2 = await t.as('owner');
+    expect((await json(owner2('/api/b/main/patients'))).patients.map((p: any) => p.uhid).sort()).toEqual(before);
+    const made = await owner2('/api/b/main/patients', { method: 'POST', body: { name: 'After Fresh' } });
+    expect(made.status).toBe(201);
+    expect(before).not.toContain((await made.json()).patient.uhid);
+  });
 });

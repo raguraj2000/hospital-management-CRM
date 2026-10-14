@@ -1,7 +1,7 @@
 import { and, asc, eq, gte, isNull, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { CHECKOUT_LOOKBACK_DAYS, opToken } from '@platform/shared';
-import { notFound, type Db } from '@platform/core';
+import { notFound, type Db, AppError } from '@platform/core';
 import { billPayment, labOrder, medicine, opBill, opBillLine, opVisit, patient, prescriptionItem, user, visitCharge } from '../db/schema.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -27,6 +27,12 @@ export async function visitOfBranch(db: Db, branchId: number, visitId: number) {
     .limit(1);
   if (!v) throw notFound('Visit not found');
   return v;
+}
+
+/** Refuses (409) when the patient is deactivated: no new visit, medicine, lab test, charge or bill until they are activated again. */
+export async function assertPatientActive(db: Db | Tx, branchId: number, patientId: number) {
+  const [p] = await db.select({ at: patient.deactivatedAt, reason: patient.deactivatedReason }).from(patient).where(and(eq(patient.branchId, branchId), eq(patient.id, patientId)));
+  if (p?.at) throw new AppError(409, 'patient_inactive', `This patient is deactivated${p.reason ? ` (${p.reason})` : ''}. A doctor or the admin must activate the patient first.`);
 }
 
 /** A patient of this branch (not deleted), or 404. */
@@ -93,10 +99,11 @@ export async function balanceDueOf(db: Db | Tx, branchId: number, visitId: numbe
  * Earlier days stay listed until settled, but only CHECKOUT_LOOKBACK_DAYS back.
  * Today's patients are listed only once the doctor has sent them to the counter (or the visit is completed with
  * something still owed): while they wait, are with the doctor or at the lab, the counter does not see them yet.
- * Order: sent to the counter by the doctor first (token order), then today's other visits, then older ones oldest first.
+ * Order: yesterday and today first (day by day), then older days; within a day, sent by the doctor first, then token order.
  */
 export async function visitsToCollect(db: Db, branchId: number, today: string) {
-  const ofVisit = <T extends { visitId: unknown }>(t: T) => sql`${t.visitId} = ${opVisit.id}`;
+  // With the branch: the tables are indexed by (branch, visit), so each lookup is a seek, not a scan of the table.
+  const ofVisit = <T extends { visitId: unknown; branchId: unknown }>(t: T) => sql`${t.branchId} = ${branchId} and ${t.visitId} = ${opVisit.id}`;
   const unbilledLab = sql`${ofVisit(labOrder)} and ${labOrder.status} <> 'cancelled' and ${labOrder.id} not in (select ${opBillLine.labOrderId} from ${opBillLine} where ${opBillLine.labOrderId} is not null)`;
   const pendingRx = sql`${ofVisit(prescriptionItem)} and ${prescriptionItem.status} = 'pending' and ${prescriptionItem.deletedAt} is null`;
   const balance = sql`max(0, ${opBill.totalPaise} - (select coalesce(sum(${billPayment.amountPaise}), 0) from ${billPayment} where ${billPayment.billId} = ${opBill.id}))`;
@@ -109,17 +116,21 @@ export async function visitsToCollect(db: Db, branchId: number, today: string) {
       patientId: patient.id,
       patientName: patient.name,
       patientUhid: patient.uhid,
+      patientPhone: patient.phone,
       doctorName: doctor.name,
+      complaint: opVisit.complaint,
       visitAt: opVisit.createdAt,
       /** The doctor's own fee for this visit; null = the branch's standard fee. */
       visitFeePaise: opVisit.consultationFeePaise,
       billCount: sql<number>`(select count(*) from ${opBill} where ${ofVisit(opBill)})`,
+      /** Bills with no payment yet: the counter can still change them (round off). */
+      openBillCount: sql<number>`(select count(*) from ${opBill} where ${ofVisit(opBill)} and not exists (select 1 from ${billPayment} where ${billPayment.billId} = ${opBill.id}))`,
       balancePaise: sql<number>`(select coalesce(sum(${balance}), 0) from ${opBill} where ${ofVisit(opBill)})`,
       unbilledLabCount: sql<number>`(select count(*) from ${labOrder} where ${unbilledLab})`,
       unbilledLabPaise: sql<number>`(select coalesce(sum(${labOrder.pricePaise}), 0) from ${labOrder} where ${unbilledLab})`,
       /** Extra charges (dressing, IV...) put on the visit that are on no bill yet. */
-      waitingChargePaise: sql<number>`(select coalesce(sum(vc.amount_paise), 0) from visit_charge vc where vc.visit_id = "op_visit"."id" and vc.deleted_at is null and vc.bill_id is null)`,
-      waitingChargeCount: sql<number>`(select count(*) from visit_charge vc where vc.visit_id = "op_visit"."id" and vc.deleted_at is null and vc.bill_id is null)`,
+      waitingChargePaise: sql<number>`(select coalesce(sum(vc.amount_paise), 0) from visit_charge vc where vc.branch_id = ${branchId} and vc.visit_id = "op_visit"."id" and vc.deleted_at is null and vc.bill_id is null)`,
+      waitingChargeCount: sql<number>`(select count(*) from visit_charge vc where vc.branch_id = ${branchId} and vc.visit_id = "op_visit"."id" and vc.deleted_at is null and vc.bill_id is null)`,
       medicinesWaiting: sql<number>`(select count(*) from ${prescriptionItem} where ${pendingRx})`,
       medicinesPaise: sql<number>`(select coalesce(sum(${prescriptionItem.quantity} * ${medicine.pricePaise}), 0) from ${prescriptionItem} inner join ${medicine} on ${medicine.id} = ${prescriptionItem.medicineId} where ${pendingRx})`,
     })
@@ -134,7 +145,11 @@ export async function visitsToCollect(db: Db, branchId: number, today: string) {
         gte(opVisit.visitDate, sql`date(${today}, ${`-${CHECKOUT_LOOKBACK_DAYS} days`})`),
       ),
     )
-    .orderBy(sql`case when ${opVisit.status} = 'at_counter' then 0 when ${opVisit.visitDate} = ${today} then 1 else 2 end`, asc(opVisit.visitDate), asc(opVisit.id));
+    // Day by day, oldest first: a visit made just after midnight (token 1 of the new day) follows last night's
+    // patients instead of jumping ahead of them. Within a day: sent by the doctor first, then in token order.
+    // Yesterday and today first, day by day (last night's patients before today's token 1); older days after them.
+    // Within a day: sent by the doctor first, then in number order.
+    .orderBy(sql`case when ${opVisit.visitDate} >= date(${today}, '-1 day') then 0 else 1 end`, asc(opVisit.visitDate), sql`case when ${opVisit.status} = 'at_counter' then 0 else 1 end`, asc(opVisit.id));
   const stillWithDoctor = (r: (typeof rows)[number]) => r.visitDate === today && (r.status === 'waiting' || r.status === 'with_doctor' || r.status === 'at_lab');
   return rows.filter((r) => !stillWithDoctor(r) && (r.billCount === 0 || r.unbilledLabCount > 0 || r.waitingChargeCount > 0 || r.balancePaise > 0 || r.medicinesWaiting > 0)).map(withToken);
 }

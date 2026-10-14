@@ -6,7 +6,9 @@ import { formatRupees, toPaise, type BillListRow, type BillPaymentMode, type Day
 import { Avatar, Badge, Button, buttonVariants, Card, CardHeader, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, StatCard, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
+import { PeriodPicker, PeriodSummary, type PeriodDays } from '@/components/PeriodReport';
 import { CheckoutList, useCheckoutQueue } from '@/components/Checkout';
+import { DirectLab } from '@/components/DirectLab';
 import { billLabel, billTone, fmtDate, fmtDay, fmtTime, modeLabel } from '@/components/format';
 import { PrintLink, printInPlace } from '@/components/print';
 import { formatPhone } from './Patients';
@@ -25,13 +27,19 @@ interface ToBill {
   unbilledLabCount: number;
 }
 
-const TABS = ['todo', 'pending', 'completed', 'report'] as const;
+const TABS = ['todo', 'pending', 'completed', 'reports'] as const;
 
 export function Billing() {
   const { branch } = useParams();
   const current = useBranch();
   const [params, setParams] = useSearchParams();
-  const tab = TABS.find((t) => t === params.get('tab')) ?? 'todo';
+  // Old links ("completed", "report") open the reports too.
+  const asked = params.get('tab');
+  const canReports = useCan('reports.view');
+  const [creating, setCreating] = useState(false);
+  const wanted = TABS.find((t) => t === asked) ?? (asked === 'report' ? 'reports' : 'todo');
+  const tab = wanted === 'reports' && !canReports ? 'todo' : wanted;
+  const [period, setPeriod] = useState<PeriodDays>(1);
   // With pharmacy.sell too, this counter takes the visit's whole payment (checkout cards); otherwise it bills consultation + lab, as before.
   const fullCheckout = useCan('pharmacy.sell');
   const checkout = useCheckoutQueue(branch, fullCheckout);
@@ -41,26 +49,38 @@ export function Billing() {
 
   return (
     <div>
+      {branch && <DirectLab mode="bill" branch={branch} open={creating} onClose={() => setCreating(false)} />}
       <PageHeader
+        actions={
+          <Button onClick={() => setCreating(true)} title="A bill without seeing the doctor: no consultation fee.">
+            <ReceiptText /> Create bill
+          </Button>
+        }
         title="Billing"
         description={fullCheckout ? `Collect consultation, lab and medicines in one payment at ${current?.name}.` : `Consultation and lab bills at ${current?.name}. Medicines are paid at the pharmacy counter.`}
       />
       <Tabs value={tab} onValueChange={(t) => setParams(t === 'todo' ? {} : { tab: t }, { replace: true })}>
-        <TabsList className="mb-4">
+        <TabsList className="mb-4 max-w-full overflow-x-auto">
           <TabsTrigger value="todo">To collect {waiting > 0 && <Badge tone="warning">{waiting}</Badge>}</TabsTrigger>
           <TabsTrigger value="pending">Pending payments {!!due.data?.bills.length && <Badge tone="critical">{due.data.bills.length}</Badge>}</TabsTrigger>
-          <TabsTrigger value="completed">Completed payments</TabsTrigger>
-          <TabsTrigger value="report">Daily report</TabsTrigger>
+          <TabsTrigger value="completed">Completed</TabsTrigger>
+          {canReports && <TabsTrigger value="reports">Payment reports</TabsTrigger>}
         </TabsList>
         <TabsContent value="todo">{fullCheckout ? <CheckoutList branch={branch!} /> : <ToBillCard branch={branch!} data={toBill.data?.visits} today={toBill.data?.today} loading={toBill.isLoading} />}</TabsContent>
         <TabsContent value="pending">
           <PendingPayments branch={branch!} data={due.data?.bills} loading={due.isLoading} error={due.error} />
         </TabsContent>
+        <TabsContent value="reports" className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-sm text-muted">Money received, what it was for, and each doctor's patients.</span>
+            <PeriodPicker value={period} onChange={setPeriod} />
+          </div>
+          <PeriodSummary branch={branch!} days={period} />
+          {/* One day: also every receipt of the day (with print) and the paid bills. */}
+          {period === 1 && <DayReportView branch={branch!} />}
+        </TabsContent>
         <TabsContent value="completed">
           <CompletedPayments branch={branch!} />
-        </TabsContent>
-        <TabsContent value="report">
-          <DayReportView branch={branch!} />
         </TabsContent>
       </Tabs>
     </div>
@@ -358,6 +378,7 @@ function DayReportView({ branch }: { branch: string }) {
         ['Consultation', b.consultationPaise],
         ['Lab tests', b.labPaise],
         ['Other charges', b.otherPaise],
+        ['Round off', b.roundOffPaise],
         ['Discount given', -b.discountPaise],
         ['Pharmacy', b.pharmacyPaise],
       ]

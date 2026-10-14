@@ -4,10 +4,11 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { ChevronRight, Plus, Search, SearchX, Users, Wallet } from 'lucide-react';
 import type { Patient } from '@platform/shared';
-import { Avatar, Badge, Button, Card, Dialog, EmptyState, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+import { Avatar, Badge, Button, Card, Dialog, EmptyState, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, NativeSelect } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { PatientForm } from '@/components/PatientForm';
+import { withUndo } from '@/components/undo';
 
 const PAGE_SIZE = 20;
 
@@ -45,7 +46,7 @@ export function Patients() {
 
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['patients', branch, q, gender, dueOnly, page],
-    queryFn: () => api.get<{ patients: Patient[]; total: number }>(`/b/${branch}/patients?${query}`),
+    queryFn: () => api.get<{ patients: Patient[]; total: number; lastUhid?: string | null }>(`/b/${branch}/patients?${query}`),
     placeholderData: keepPreviousData, // no flicker while typing or paging
   });
 
@@ -55,8 +56,8 @@ export function Patients() {
   return (
     <div>
       <PageHeader
-        title="Patients"
-        description={`Everyone registered at ${current?.name}.`}
+        title={data ? `Patients (${filtered ? `${total} found` : total})` : 'Patients'}
+        description={`Everyone registered at ${current?.name}.${data?.lastUhid ? ` Last UHID given: ${data.lastUhid}` : ''}`}
         actions={
           canCreate && (
             <Button onClick={() => setParam('add', '1')}>
@@ -79,9 +80,15 @@ export function Patients() {
               className="pl-9"
             />
           </div>
-          <Button variant={dueOnly ? 'default' : 'outline'} aria-pressed={dueOnly} onClick={() => setParam('due', dueOnly ? null : '1')}>
-            <Wallet /> {dueOnly ? `With a balance due (${total})` : 'With a balance due'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <span className="text-sm font-medium whitespace-nowrap tabular-nums">
+              {total} {filtered ? 'found' : 'patients'}
+            </span>
+            <NativeSelect aria-label="Balance" className="w-48" value={dueOnly ? '1' : ''} onChange={(e) => setParam('due', e.target.value || null)}>
+              <option value="">All patients</option>
+              <option value="1">With a balance due</option>
+            </NativeSelect>
+          </div>
           <Tabs value={gender} onValueChange={(v) => setParam('gender', v === 'all' ? null : v)}>
             <TabsList>
               <TabsTrigger value="all">All</TabsTrigger>
@@ -152,7 +159,9 @@ export function Patients() {
                             <Link to={`/${branch}/patients/${p.id}`} className="block truncate font-medium hover:underline">
                               {p.name}
                             </Link>
-                            <div className="font-mono text-xs text-muted">{p.uhid}</div>
+                            <div className="font-mono text-xs text-muted">
+                              {p.uhid} {p.deactivatedAt && <span title={p.deactivatedReason ?? undefined}><Badge tone="critical">Deactivated</Badge></span>}
+                            </div>
                           </div>
                         </div>
                       </TD>
@@ -195,7 +204,7 @@ export function Patients() {
           submitLabel="Save patient"
           onCancel={() => setParam('add', null)}
           onSubmit={async (values) => {
-            const { patient } = await api.post<{ patient: Patient }>(`/b/${branch}/patients`, values);
+            const { patient } = await withUndo(`Registering ${values.name}`, () => api.post<{ patient: Patient }>(`/b/${branch}/patients`, values));
             qc.invalidateQueries({ queryKey: ['patients', branch] });
             qc.invalidateQueries({ queryKey: ['dashboard', branch] });
             toast.success(`${patient.name} registered`, { description: `UHID ${patient.uhid}` });

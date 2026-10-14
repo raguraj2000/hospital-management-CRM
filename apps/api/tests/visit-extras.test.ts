@@ -136,10 +136,10 @@ describe("the day's report", () => {
     expect((await w.desk(`/api/b/main/visits/${a.id}/checkout`, { method: 'POST', body: { itemIds: [item], paymentMode: 'upi', amountPaise: 52000 } })).status).toBe(201);
     expect((await w.desk(`/api/b/main/visits/${b.id}/checkout`, { method: 'POST', body: { itemIds: [], paymentMode: 'cash', amountPaise: 5000 } })).status).toBe(201);
 
-    const r = await json(w.desk('/api/b/main/billing/day-report'));
+    const r = await json(w.owner('/api/b/main/billing/day-report'));
     expect(r.visits).toMatchObject({ total: 2, cancelled: 0, newPatients: 2, byDoctor: [{ doctorName: null, count: 2 }] });
     expect(r.labTests).toBe(1);
-    expect(r.billed).toEqual({ consultationPaise: 40000, labPaise: 30000, otherPaise: 0, discountPaise: 0, pharmacyPaise: 2000 });
+    expect(r.billed).toEqual({ consultationPaise: 40000, labPaise: 30000, otherPaise: 0, roundOffPaise: 0, discountPaise: 0, pharmacyPaise: 2000 });
     expect(r.bills).toEqual({ cash: 5000, upi: 50000, card: 0 });
     expect(r.pharmacy).toEqual({ cash: 0, upi: 2000, card: 0 });
     expect(r.totalPaise).toBe(57000);
@@ -158,16 +158,17 @@ describe("the day's report", () => {
     const [due] = (await json(w.desk('/api/b/main/bills'))).bills;
     expect(due).toMatchObject({ patientName: 'Part Paid', patientPhone: null, totalPaise: 20000, paidPaise: 5000 });
     expect((await w.desk(`/api/b/main/bills/${due.id}/payments`, { method: 'POST', body: { amountPaise: 15000, mode: 'card' } })).status).toBe(201);
-    const after = await json(w.desk('/api/b/main/billing/day-report'));
+    const after = await json(w.owner('/api/b/main/billing/day-report'));
     expect(after.pendingAllPaise).toBe(0);
     expect(after.receipts.filter((x: any) => x.billId === due.id).map((x: any) => x.no)).toEqual([`${due.billNo}/R1`, `${due.billNo}/R2`]);
 
     // Another day is empty; another branch never sees this money; a role without billing is refused.
-    expect((await json(w.desk('/api/b/main/billing/day-report?date=2020-01-01'))).receipts).toEqual([]);
-    const east = await json(w.east('/api/b/east/billing/day-report'));
+    expect((await json(w.owner('/api/b/main/billing/day-report?date=2020-01-01'))).receipts).toEqual([]);
+    const east = await json(w.owner('/api/b/east/billing/day-report'));
     expect(east).toMatchObject({ totalPaise: 0, receipts: [], pendingAllPaise: 0 });
     expect(east.visits.total).toBe(0);
     expect((await w.desk('/api/b/east/billing/day-report')).status).toBe(404);
     expect((await w.lab('/api/b/main/billing/day-report')).status).toBe(403);
+    expect((await w.desk('/api/b/main/billing/day-report')).status).toBe(403); // reports need their own permission
   });
 });

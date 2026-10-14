@@ -19,11 +19,12 @@ import {
   type PharmacySaleDetail,
   type StockReport,
   type StockReportBatch,
+  prescriptionItemEditSchema,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, printHeaderOf, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { medicine, medicineBatch, opVisit, patient, pharmacySale, pharmacySaleLine, prescriptionItem, purchaseBill, purchaseLine, treatmentDose, user, vendor } from '../db/schema.js';
 import { assertNoDoseGiven, createDoses } from './treatments.js';
-import { dayStamp, localToday, visitOfBranch } from '../lib/clinic.js';
+import { dayStamp, localToday, visitOfBranch, assertPatientActive } from '../lib/clinic.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const doctor = alias(user, 'doctor');
@@ -218,6 +219,7 @@ export async function saleDetail(db: Db, branchId: number, id: number): Promise<
       soldByName: user.name,
       patientName: patient.name,
       patientUhid: patient.uhid,
+      patientPhone: patient.phone,
       visitId: pharmacySale.visitId,
       opNo: opVisit.opNo,
     })
@@ -243,8 +245,8 @@ export async function saleDetail(db: Db, branchId: number, id: number): Promise<
     .innerJoin(medicineBatch, eq(medicineBatch.id, pharmacySaleLine.batchId))
     .where(and(eq(pharmacySaleLine.branchId, branchId), eq(pharmacySaleLine.saleId, s.id)))
     .orderBy(asc(pharmacySaleLine.id));
-  const { patientName, patientUhid, ...rest } = s;
-  const sale: PharmacySaleDetail = { ...rest, patient: patientName != null && patientUhid != null ? { name: patientName, uhid: patientUhid } : null, lines };
+  const { patientName, patientUhid, patientPhone, ...rest } = s;
+  const sale: PharmacySaleDetail = { ...rest, patient: patientName != null && patientUhid != null ? { name: patientName, uhid: patientUhid, phone: patientPhone } : null, lines };
   return sale;
 }
 
@@ -453,6 +455,7 @@ export function createPharmacyRoutes(db: Db) {
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
     if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    await assertPatientActive(db, b.id, v.patientId);
     const med = await medicineOfBranch(b.id, parsed.data.medicineId);
     const today = await localToday(db);
     // Nothing in stock (expired batches do not count): the pharmacy could not give it.
@@ -461,6 +464,8 @@ export function createPharmacyRoutes(db: Db) {
     // Quantity: what the doctor typed, else dose x days (1-0-1 for 5 days = 10).
     const quantity = parsed.data.quantity ?? suggestedQuantity(parsed.data.dose, parsed.data.days);
     if (!quantity) throw new AppError(400, 'validation', 'Enter the quantity for this dose', { quantity: ['Enter the quantity for this dose'] });
+    // More than the pharmacy has: it could not be given in full.
+    if (quantity > inStock.stock) throw new AppError(409, 'not_enough_stock', `Only ${inStock.stock} of ${med.name} in stock. Lower the quantity, or add stock in Inventory first.`, { quantity: [`Only ${inStock.stock} in stock`] });
     const row = await db.transaction(async (tx) => {
       const [created] = await tx
         .insert(prescriptionItem)
@@ -472,6 +477,43 @@ export function createPharmacyRoutes(db: Db) {
     });
     await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'prescription_item', entityId: row.id, detail: { visitId: v.id, ...parsed.data, quantity } });
     return c.json({ id: row.id, quantity }, 201);
+  });
+
+  /**
+   * Change dose, days, quantity or instructions of a line that is still waiting at the pharmacy (typed by the doctor
+   * or put there by a bookmark). A medicine given in the hospital gets its doses made again, unless one was already given.
+   */
+  app.patch('/prescription-items/:id', requirePermission('prescription.write'), async (c) => {
+    const parsed = prescriptionItemEditSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const id = Number(c.req.param('id'));
+    const [item] = Number.isInteger(id)
+      ? await db
+          .select({ id: prescriptionItem.id, status: prescriptionItem.status, visitId: prescriptionItem.visitId, medicineId: prescriptionItem.medicineId, givenHere: prescriptionItem.givenHere, patientId: opVisit.patientId, visitStatus: opVisit.status })
+          .from(prescriptionItem)
+          .innerJoin(opVisit, eq(opVisit.id, prescriptionItem.visitId))
+          .where(and(eq(prescriptionItem.branchId, b.id), eq(prescriptionItem.id, id), isNull(prescriptionItem.deletedAt)))
+      : [];
+    if (!item) throw notFound('Prescription line not found');
+    if (item.status !== 'pending') throw new AppError(409, 'dispensed', 'The pharmacy has already dealt with this medicine; it can no longer be changed');
+    if (item.visitStatus === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    const quantity = parsed.data.quantity ?? suggestedQuantity(parsed.data.dose, parsed.data.days);
+    if (!quantity) throw new AppError(400, 'validation', 'Enter the quantity for this dose', { quantity: ['Enter the quantity for this dose'] });
+    const today = await localToday(db);
+    const [have] = await medicinesWithStock(db, b.id, today, and(eq(medicine.id, item.medicineId)));
+    if (quantity > (have?.stock ?? 0)) throw new AppError(409, 'not_enough_stock', `Only ${have?.stock ?? 0} in stock. Lower the quantity, or add stock in Inventory first.`, { quantity: [`Only ${have?.stock ?? 0} in stock`] });
+    await db.transaction(async (tx) => {
+      if (item.givenHere) {
+        await assertNoDoseGiven(tx, id);
+        await tx.delete(treatmentDose).where(and(eq(treatmentDose.branchId, b.id), eq(treatmentDose.prescriptionItemId, id)));
+        await createDoses(tx, b.id, { id, visitId: item.visitId, patientId: item.patientId, dose: parsed.data.dose, days: parsed.data.days }, today);
+      }
+      await tx.update(prescriptionItem).set({ dose: parsed.data.dose, days: parsed.data.days, quantity, instructions: parsed.data.instructions ?? null, updatedAt: new Date().toISOString() }).where(eq(prescriptionItem.id, id));
+    });
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'prescription_item', entityId: id, detail: { ...parsed.data, quantity } });
+    return c.json({ id, quantity });
   });
 
   /** Only lines not yet dispensed can be removed. */
@@ -620,14 +662,18 @@ export function createPharmacyRoutes(db: Db) {
   /** Sales of a day (default today) with their lines. */
   app.get('/pharmacy/sales', requirePermission('pharmacy.sell'), async (c) => {
     const b = c.get('branch');
+    if (!b.permissions.includes('reports.view')) throw new AppError(403, 'forbidden', 'Your role cannot see the reports');
     const date = c.req.query('date');
     const day = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : await localToday(db);
+    // ?days=7 / 30 / 365: that many days up to `day` (1 = that day only).
+    const days = Math.min(Math.max(Math.floor(Number(c.req.query('days')) || 1), 1), 366);
     const sales = await db
       .select({ id: pharmacySale.id, saleNo: pharmacySale.saleNo, visitId: pharmacySale.visitId, patientName: patient.name, totalPaise: pharmacySale.totalPaise, paymentMode: pharmacySale.paymentMode, createdAt: pharmacySale.createdAt })
       .from(pharmacySale)
       .leftJoin(patient, eq(patient.id, pharmacySale.patientId))
-      .where(and(eq(pharmacySale.branchId, b.id), sql`date(${pharmacySale.createdAt}, '+330 minutes') = ${day}`))
-      .orderBy(desc(pharmacySale.id));
+      .where(and(eq(pharmacySale.branchId, b.id), sql`date(${pharmacySale.createdAt}, '+330 minutes') between date(${day}, ${`-${days - 1} days`}) and ${day}`))
+      .orderBy(desc(pharmacySale.id))
+      .limit(3000);
     const lines = sales.length
       ? await db
           .select({ saleId: pharmacySaleLine.saleId, medicineName: medicine.name, batchNo: medicineBatch.batchNo, quantity: pharmacySaleLine.quantity, unitPricePaise: pharmacySaleLine.unitPricePaise, amountPaise: pharmacySaleLine.amountPaise })

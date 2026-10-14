@@ -19,12 +19,17 @@ export const patient = sqliteTable(
     ageYears: integer('age_years'),
     bloodGroup: text('blood_group'),
     weightKg: real('weight_kg'),
+    heightCm: real('height_cm'),
     address: text('address'),
     /** Long-term conditions (Diabetes, Hypertension …), comma-separated: shown wherever the patient is seen. */
     conditions: text('conditions'),
     emergencyContactName: text('emergency_contact_name'),
     emergencyContactPhone: text('emergency_contact_phone'),
     createdBy: integer('created_by').references(() => user.id),
+    /** Deactivated: everyone still sees the record, but nothing new is made for the patient (no visit, test, bill). */
+    deactivatedAt: text('deactivated_at'),
+    deactivatedReason: text('deactivated_reason'),
+    deactivatedBy: integer('deactivated_by').references(() => user.id),
     ...timestamps,
     deletedAt: text('deleted_at'),
   },
@@ -53,6 +58,8 @@ export const opVisit = sqliteTable(
     /** Doctor seeing the patient (one of this branch's doctors: Doctor role, or listed in branch_doctor). */
     doctorUserId: integer('doctor_user_id').references(() => user.id),
     complaint: text('complaint'),
+    /** An outside doctor who sent the patient (printed on the lab report as "Referred By"). */
+    referredBy: text('referred_by'),
     notes: text('notes'),
     /** The doctor's notes to the counters: shown at the pharmacy and in the lab for this visit. */
     pharmacyNote: text('pharmacy_note'),
@@ -66,6 +73,7 @@ export const opVisit = sqliteTable(
     temperatureF: real('temperature_f'),
     spo2: integer('spo2'),
     weightKg: real('weight_kg'),
+    heightCm: real('height_cm'),
     createdBy: integer('created_by').references(() => user.id),
     ...timestamps,
     deletedAt: text('deleted_at'),
@@ -192,7 +200,7 @@ export const pharmacySale = sqliteTable(
     createdBy: integer('created_by').references(() => user.id),
     createdAt: timestamps.createdAt,
   },
-  (t) => [uniqueIndex('ux_sale_no').on(t.branchId, t.saleNo), index('ix_sale_day').on(t.branchId, t.createdAt)],
+  (t) => [uniqueIndex('ux_sale_no').on(t.branchId, t.saleNo), index('ix_sale_day').on(t.branchId, t.createdAt), index('ix_sale_visit').on(t.branchId, t.visitId)],
 );
 
 export const pharmacySaleLine = sqliteTable(
@@ -436,7 +444,7 @@ export const opBill = sqliteTable(
     createdBy: integer('created_by').references(() => user.id),
     ...timestamps,
   },
-  (t) => [uniqueIndex('ux_op_bill_no').on(t.branchId, t.billNo), index('ix_op_bill_visit').on(t.branchId, t.visitId)],
+  (t) => [uniqueIndex('ux_op_bill_no').on(t.branchId, t.billNo), index('ix_op_bill_visit').on(t.branchId, t.visitId), index('ix_op_bill_patient').on(t.branchId, t.patientId)],
 );
 
 /** A lab test on a bill. A lab order is billed at most once. */
@@ -497,6 +505,10 @@ export const clinicSetting = sqliteTable('clinic_setting', {
   defaultDoctorUserId: integer('default_doctor_user_id').references(() => user.id),
   /** JSON: ready-made extra charges, [{ name, amountPaise }] (Dressing, IV fluids...). */
   chargePresets: text('charge_presets'),
+  /** JSON: consultation fee by time of day, [{ from: '22:00', to: '06:00', feePaise }]; the standard fee the rest of the day. */
+  feeSlots: text('fee_slots'),
+  /** The numbers next to the side menu (how many are waiting on each page). Off = no computer asks for them. */
+  navCounts: integer('nav_counts', { mode: 'boolean' }).notNull().default(true),
   updatedAt: timestamps.updatedAt,
 });
 
@@ -602,4 +614,42 @@ export const visitInstruction = sqliteTable(
     deletedAt: text('deleted_at'),
   },
   (t) => [index('ix_visit_instruction').on(t.branchId, t.visitId)],
+);
+
+/** Money spent on things that are not medicine stock (a keyboard, a chair, a repair), from a listed vendor or any shop. */
+export const expense = sqliteTable(
+  'expense',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    /** Day of the purchase (YYYY-MM-DD). */
+    expenseDate: text('expense_date').notNull(),
+    description: text('description').notNull(),
+    vendorId: integer('vendor_id').references(() => vendor.id),
+    /** The shop's name when it is not a vendor of the list. */
+    vendorName: text('vendor_name'),
+    amountPaise: integer('amount_paise').notNull(),
+    mode: text('mode', { enum: ['cash', 'upi', 'cheque', 'bank'] }).notNull().default('cash'),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => user.id),
+    ...timestamps,
+    deletedAt: text('deleted_at'),
+  },
+  (t) => [index('ix_expense_day').on(t.branchId, t.expenseDate)],
+);
+
+/** A lab package: several tests ordered together at one price (Fever profile...). Prices of the tests are scaled to it. */
+export const labPackage = sqliteTable(
+  'lab_package',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    name: text('name').notNull(),
+    pricePaise: integer('price_paise').notNull(),
+    /** JSON: the lab_test ids, in order. */
+    testIds: text('test_ids').notNull(),
+    ...timestamps,
+    deletedAt: text('deleted_at'),
+  },
+  (t) => [index('ix_lab_package').on(t.branchId)],
 );

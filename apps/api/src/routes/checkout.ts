@@ -16,10 +16,13 @@ import {
   type VisitBillPrint,
   type VisitCheckout,
   ROUND_OFF_LINE,
+  autoRoundOffPaise,
+  DIRECT_BILL_COMPLAINT,
+  DIRECT_LAB_COMPLAINT,
 } from '@platform/shared';
 import { AppError, forbidden, notFound, printHeaderOf, requireAnyPermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
-import { localToday, settledAtCounter, visitsToCollect, withToken } from '../lib/clinic.js';
+import { localToday, settledAtCounter, visitsToCollect, withToken, assertPatientActive } from '../lib/clinic.js';
 import { billOf, consultationFee, createBill, pendingVisitCharges, visitFee, labPaymentState, payBill, unbilledLabOrders, updateBill } from './billing.js';
 import { dispenseItems, prescriptionLines, saleDetail } from './pharmacy.js';
 
@@ -148,6 +151,7 @@ export function createCheckoutRoutes(db: Db) {
 
     const v = await visitHeader(db, b.id, Number(c.req.param('visitId')));
     if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    await assertPatientActive(db, b.id, v.patientId);
     const today = await localToday(db);
     const amountError = (msg: string) => new AppError(400, 'validation', msg, { amountPaise: [msg] });
 
@@ -246,7 +250,11 @@ export function createCheckoutRoutes(db: Db) {
       const balancePaise = canBill ? v.balancePaise : null;
       const billWaiting = canBill && (v.billCount === 0 || v.unbilledLabCount > 0 || v.waitingChargeCount > 0 || v.balancePaise > 0);
       if (!billWaiting && !medicinesWaiting) continue; // nothing this caller can collect
-      const grandTotalPaise = (medicinesPaise ?? 0) + (toBillPaise ?? 0) + (balancePaise ?? 0);
+      // With the round off the counter adds by itself (up to the next ₹5) when the bill can still carry it: the
+      // amount on the closed card is the amount the pharmacist says to the patient.
+      const beforeRound = (medicinesPaise ?? 0) + (toBillPaise ?? 0) + (balancePaise ?? 0);
+      const roundable = canBill && (v.billCount === 0 || v.unbilledLabCount > 0 || v.waitingChargeCount > 0 || v.openBillCount > 0);
+      const grandTotalPaise = beforeRound + (roundable ? autoRoundOffPaise(beforeRound) : 0);
       const summary = [
         medicinesWaiting ? `Medicines waiting ${medicinesWaiting}` : null,
         toBillPaise ? `Consultation + lab due ${formatRupees(toBillPaise)}` : null,
@@ -255,8 +263,8 @@ export function createCheckoutRoutes(db: Db) {
       ]
         .filter(Boolean)
         .join(' · ');
-      const { visitId, opNo, token, visitDate, status, patientId, patientName, patientUhid, doctorName } = v;
-      queue.push({ visitId, opNo, token, visitDate, visitAt: v.visitAt, status, patientId, patientName, patientUhid, doctorName, medicinesWaiting, medicinesPaise, toBillPaise, balancePaise, grandTotalPaise, summary });
+      const { visitId, opNo, token, visitDate, status, patientId, patientName, patientUhid, patientPhone, doctorName } = v;
+      queue.push({ visitId, opNo, token, visitDate, visitAt: v.visitAt, direct: v.complaint === DIRECT_LAB_COMPLAINT ? 'lab' : v.complaint === DIRECT_BILL_COMPLAINT ? 'bill' : null, status, patientId, patientName, patientUhid, patientPhone, doctorName, medicinesWaiting, medicinesPaise, toBillPaise, balancePaise, grandTotalPaise, summary });
     }
     return c.json({ queue, today });
   });

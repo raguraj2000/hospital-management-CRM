@@ -28,7 +28,12 @@ export function PharmacyBillPrint() {
   const s = data.sale;
 
   return (
-    <PrintSheet header={data.header} title="Pharmacy Bill" tabTitle={`Pharmacy Bill ${s.saleNo}`}>
+    <PrintSheet
+      header={data.header}
+      title="Pharmacy Bill"
+      tabTitle={`Pharmacy Bill ${s.saleNo}`}
+      share={{ phone: s.patient?.phone, subject: `Pharmacy bill ${s.saleNo}`, message: `Hello${s.patient ? ` ${s.patient.name}` : ''}, your pharmacy bill ${s.saleNo} from ${data.header.title || 'the hospital'}: ₹${s.totalPaise / 100}. Thank you.` }}
+    >
         <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border border-[#111] px-3 py-2">
           <div>
             <b>Patient:</b> {s.patient?.name ?? 'Walk-in customer'}

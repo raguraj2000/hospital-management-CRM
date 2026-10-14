@@ -6,6 +6,8 @@ import { Avatar, Badge, Button, buttonVariants, Card, CardHeader, cn, EmptyState
 import { api, errorMessage } from '@/api/client';
 import { BarChartSkeleton, MedicineRowsSkeleton, PatientRowsSkeleton } from '@/components/Skeletons';
 import { useBranch, useCan, useMe } from '@/state/auth';
+import { DoctorsTable, PeriodPicker, usePeriodReport, type PeriodDays } from '@/components/PeriodReport';
+import { useState } from 'react';
 import { formatPhone } from './Patients';
 
 interface DashboardData {
@@ -43,6 +45,10 @@ export function Dashboard() {
   const canBilling = useCan('billing.receive');
   const canLab = useCan('lab.view');
   const canInventory = useCan('inventory.view');
+  const canPrescribe = useCan('prescription.write');
+  const [period, setPeriod] = useState<PeriodDays>(1);
+  const canReports = useCan('reports.view');
+  const seen = usePeriodReport(branch, period, canPrescribe || canReports);
   // The branch is in the cache key, so switching branch never shows another branch's numbers.
   const { data, isLoading, error } = useQuery({
     queryKey: ['dashboard', branch],
@@ -137,6 +143,13 @@ export function Dashboard() {
           loading={isLoading}
         />
       </div>
+
+      {canPrescribe && (
+        <Card className="mt-4">
+          <CardHeader title={seen.data?.own ? 'My patients' : 'Patients by doctor'} description="Patients seen, and what was billed and sold on their visits." action={<PeriodPicker value={period} onChange={setPeriod} />} />
+          {seen.isLoading ? <Skeleton className="m-4 h-16" /> : seen.data ? <DoctorsTable doctors={seen.data.doctors} own={seen.data.own} /> : null}
+        </Card>
+      )}
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">

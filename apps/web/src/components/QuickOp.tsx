@@ -11,6 +11,8 @@ import { useCan } from '@/state/auth';
 import { ConditionBadges } from './Conditions';
 import { PatientForm } from './PatientForm';
 import { NewVisitForm } from './Visits';
+import { NewTabs, type NewTabsProps } from './NewMenu';
+import { withUndo } from './undo';
 
 /** Any page opens the window with window.dispatchEvent(new Event(NEW_OP_EVENT)). */
 export const NEW_OP_EVENT = 'hms:new-op-visit';
@@ -18,7 +20,7 @@ export const NEW_OP_EVENT = 'hms:new-op-visit';
 type Step = 'find' | 'register' | 'visit';
 const RECENT = 4;
 
-export function QuickOp({ branch, open, onClose }: { branch: string; open: boolean; onClose: () => void }) {
+export function QuickOp({ branch, open, onClose, tabs }: { branch: string; open: boolean; onClose: () => void; tabs?: NewTabsProps }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const canPrescribe = useCan('prescription.write');
@@ -57,6 +59,7 @@ export function QuickOp({ branch, open, onClose }: { branch: string; open: boole
       title="New OP visit"
       description={step === 'visit' && patient ? `${patient.name} · ${patient.uhid} — the token and OP number are assigned automatically.` : step === 'register' ? 'A UHID is assigned automatically.' : 'Find the patient, or register a new one.'}
     >
+      {tabs && <NewTabs value="op" {...tabs} />}
       <Stepper step={step} />
 
       {step === 'find' && (
@@ -73,7 +76,7 @@ export function QuickOp({ branch, open, onClose }: { branch: string; open: boole
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
                 // Enter takes the first one in the list.
-                if (e.key === 'Enter' && searching && rows.length && !isFetching) {
+                if (e.key === 'Enter' && searching && rows.length && !isFetching && !rows[0]!.deactivatedAt) {
                   e.preventDefault();
                   pick(rows[0]!);
                 }
@@ -93,7 +96,9 @@ export function QuickOp({ branch, open, onClose }: { branch: string; open: boole
                 <li key={p.id} className="flex items-center gap-3 px-3 py-2">
                   <Avatar name={p.name} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-base font-medium">{p.name}</div>
+                    <div className="truncate text-base font-medium">
+                      {p.name} {p.deactivatedAt && <span className="ml-1 rounded bg-critical-soft px-1.5 py-0.5 text-xs font-medium text-critical">Deactivated</span>}
+                    </div>
                     <ConditionBadges conditions={p.conditions} className="my-0.5" />
                     <div className="truncate text-xs text-muted">
                       <span className="font-mono">{p.uhid}</span> · {p.phone ? formatPhone(p.phone) : 'No phone'}
@@ -112,7 +117,7 @@ export function QuickOp({ branch, open, onClose }: { branch: string; open: boole
                   >
                     Open
                   </Button>
-                  <Button size="sm" variant={searching && i === 0 ? 'default' : 'outline'} onClick={() => pick(p)}>
+                  <Button size="sm" variant={searching && i === 0 ? 'default' : 'outline'} disabled={!!p.deactivatedAt} title={p.deactivatedAt ? `Deactivated: ${p.deactivatedReason ?? ''}` : undefined} onClick={() => pick(p)}>
                     <ClipboardPlus /> New OP visit
                   </Button>
                 </li>
@@ -134,7 +139,7 @@ export function QuickOp({ branch, open, onClose }: { branch: string; open: boole
           onCancel={() => setStep('find')}
           onUseExisting={pick}
           onSubmit={async (values) => {
-            const { patient: made } = await api.post<{ patient: Patient }>(`/b/${branch}/patients`, values);
+            const { patient: made } = await withUndo(`Registering ${values.name}`, () => api.post<{ patient: Patient }>(`/b/${branch}/patients`, values));
             qc.invalidateQueries({ queryKey: ['patients', branch] });
             qc.invalidateQueries({ queryKey: ['dashboard', branch] });
             toast.success(`${made.name} registered`, { description: `UHID ${made.uhid}` });
@@ -145,8 +150,8 @@ export function QuickOp({ branch, open, onClose }: { branch: string; open: boole
 
       {step === 'visit' && patient && (
         <div>
-          <button type="button" className="mb-3 inline-flex items-center gap-1 text-xs font-medium text-muted hover:text-ink" onClick={() => setStep('find')}>
-            <ArrowLeft className="size-3.5" /> Another patient
+          <button type="button" className="mb-3 inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-medium text-ink hover:bg-subtle" onClick={() => setStep('find')}>
+            <ArrowLeft className="size-4" /> Another patient
           </button>
           <NewVisitForm
             branch={branch}
