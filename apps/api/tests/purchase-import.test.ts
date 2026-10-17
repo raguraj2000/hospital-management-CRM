@@ -6,6 +6,8 @@ describe('vendor invoice import', () => {
   it('reads expiries as vendors write them', () => {
     expect(parseExpiry('06/31')).toBe('2031-06-30'); // month/year: good until the end of that month
     expect(parseExpiry('02/28')).toBe('2028-02-29');
+    expect(parseExpiry('0631')).toBe('2031-06-30'); // typed fast, no slash
+    expect(parseExpiry('1331')).toBeNull();
     expect(parseExpiry('2-2027')).toBe('2027-02-28');
     expect(parseExpiry('Jun-31')).toBe('2031-06-30');
     expect(parseExpiry('DEC 2027')).toBe('2027-12-31');

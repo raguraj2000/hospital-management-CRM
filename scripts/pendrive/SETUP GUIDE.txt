@@ -60,9 +60,15 @@ It backs up the database first and never deletes patient data.
 The other computers need nothing: they get the new version by themselves.
 
 
-5. BACKUP - DO THIS EVERY DAY
------------------------------
-On the main computer open C:\HMS and double-click  Backup.bat
+5. BACKUP
+---------
+AUTOMATIC: every day HMS makes a full copy by itself in  C:\HMS\backups
+(daily-<date>.db, the last 14 days are kept). If a pendrive with a folder
+named  HMS-Backup  is plugged into the main computer, the day's copy is also
+put there. Plug that pendrive in once a day and keep it away afterwards:
+a copy only on the same computer is lost if that computer is lost.
+
+BY HAND, any time: on the main computer open C:\HMS and double-click  Backup.bat
 With a pendrive plugged in, the copy goes to  <pendrive>\HMS-Backup
 Otherwise it goes to  C:\HMS\backups
 Keep the pendrive away from the computer when it is not in use.

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,6 +19,7 @@ import { Badge, Button, cn, ConfirmDelete, Dialog, Field, Input, Menu, MenuConte
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
 import { isUndone, withUndo } from '@/components/undo';
+import { clearDraft, DraftBar, readDraft, saveDraft } from './drafts';
 
 export const statusTone: Record<VisitStatus, Tone> = { waiting: 'warning', with_doctor: 'brand', at_lab: 'violet', at_counter: 'brand', completed: 'positive', cancelled: 'neutral' };
 export const statusLabel: Record<VisitStatus, string> = {
@@ -167,7 +168,7 @@ export function VisitActions({ branch, visit, label, callIn = true }: { branch: 
           </Button>
         </MenuTrigger>
         <MenuContent align="end">
-          {canEdit && (
+          {canEdit && visit.status !== 'completed' && (
             <MenuItem onSelect={() => setEditing(true)}>
               <Pencil /> Edit visit & vitals
             </MenuItem>
@@ -183,7 +184,7 @@ export function VisitActions({ branch, visit, label, callIn = true }: { branch: 
               <CheckCircle2 /> Mark completed
             </MenuItem>
           )}
-          {canEdit && visit.status !== 'waiting' && <MenuItem onSelect={() => setStatus.mutate('waiting')}>Move back to waiting</MenuItem>}
+          {canEdit && visit.status !== 'waiting' && visit.status !== 'completed' && <MenuItem onSelect={() => setStatus.mutate('waiting')}>Move back to waiting</MenuItem>}
           {canEdit && isOpenVisit(visit.status) && (
             <MenuItem onSelect={() => setStatus.mutate('cancelled')}>
               <XCircle /> Cancel visit
@@ -259,6 +260,7 @@ export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: 
   return (
     <VisitForm
       branch={branch}
+      draftKey={`visit:${branch}:${patientId}`}
       submitLabel="Start OP visit"
       onCancel={onCancel}
       extra={
@@ -307,6 +309,8 @@ interface VisitFormProps {
   onSeeNow?: (values: VisitInput) => Promise<void>;
   /** Extra fields under the doctor (the fee, on a new visit). */
   extra?: ReactNode;
+  /** A new visit: what is typed is kept as a draft under this key until the visit is started. */
+  draftKey?: string;
 }
 
 /** Doctor + complaint + vitals + notes. Same Zod rules as the API. */
@@ -319,19 +323,12 @@ export function VisitForm(props: VisitFormProps) {
   return <VisitFields {...props} doctors={doctors.data?.doctors} defaultDoctorUserId={doctors.data?.defaultDoctorUserId ?? null} />;
 }
 
-function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNow, extra, doctors, defaultDoctorUserId }: VisitFormProps & { doctors?: Doctor[]; defaultDoctorUserId: number | null }) {
+function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNow, extra, draftKey, doctors, defaultDoctorUserId }: VisitFormProps & { doctors?: Doctor[]; defaultDoctorUserId: number | null }) {
   const { data: me } = useMe();
   // A doctor starting a visit themselves: it is theirs unless they pick someone else.
   const myself = doctors?.some((d) => d.userId === me?.user.id) ? me!.user.id : null;
-  const {
-    register,
-    handleSubmit,
-    setError,
-    watch,
-    formState: { errors, isSubmitting },
-  } = useForm<VisitFormValues, unknown, VisitInput>({
-    resolver: zodResolver(visitInputSchema),
-    defaultValues: {
+  const [restored, setRestored] = useState(() => (draftKey ? readDraft<VisitFormValues>(draftKey) : null));
+  const blank: VisitFormValues = {
       // Editing keeps the visit's own doctor; a new visit starts on the branch's default (still changeable).
       doctorUserId: initial ? initial.doctorUserId : (myself ?? defaultDoctorUserId),
       complaint: initial?.complaint ?? '',
@@ -344,8 +341,23 @@ function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNo
       spo2: initial?.spo2 ?? null,
       weightKg: initial?.weightKg ?? null,
       heightCm: initial?.heightCm ?? null,
-    },
+  };
+  const {
+    register,
+    handleSubmit,
+    setError,
+    watch,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<VisitFormValues, unknown, VisitInput>({
+    resolver: zodResolver(visitInputSchema),
+    defaultValues: restored ? { ...blank, ...restored.values } : blank,
   });
+  useEffect(() => {
+    if (!draftKey) return;
+    const sub = watch((values) => saveDraft(draftKey, values));
+    return () => sub.unsubscribe();
+  }, [draftKey, watch]);
 
   // "See now" puts the patient inside at once, so it waits while that doctor still has someone inside.
   const today = useQuery({ queryKey: ['visits', branch, '', ''], queryFn: () => api.get<{ visits: OpVisit[] }>(`/b/${branch}/visits?`), enabled: !!onSeeNow, staleTime: 0 });
@@ -355,6 +367,7 @@ function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNo
     handleSubmit(async (values) => {
       try {
         await fn(values);
+        if (draftKey) clearDraft(draftKey);
       } catch (e) {
         if (isUndone(e)) return; // Undo pressed: nothing was saved
         if (e instanceof ApiError && e.fields) for (const [f, m] of Object.entries(e.fields)) setError(f as keyof VisitFormValues, { message: m[0] });
@@ -364,6 +377,16 @@ function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNo
 
   return (
     <form noValidate className="flex flex-col gap-4" onSubmit={submitWith(onSubmit)}>
+      {draftKey && (
+        <DraftBar
+          restoredAt={restored?.at ?? null}
+          onClear={() => {
+            clearDraft(draftKey);
+            setRestored(null);
+            reset(blank);
+          }}
+        />
+      )}
       <Field
         label="Doctor"
         htmlFor="visit-doctor"

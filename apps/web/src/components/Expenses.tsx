@@ -7,6 +7,7 @@ import { formatRupees, toPaise, VENDOR_PAYMENT_MODES, type Expense, type Vendor,
 import { Button, Card, CardHeader, ConfirmDelete, Field, Input, NativeSelect, Pager, Skeleton, Table, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { fmtDay } from './format';
+import { ListSearch, textMatch } from './ListSearch';
 
 const NEW_SHOP = 'new';
 const MODE: Record<VendorPaymentMode, string> = { cash: 'Cash', upi: 'UPI', cheque: 'Cheque', bank: 'Bank transfer' };
@@ -20,7 +21,9 @@ export function Expenses({ branch, vendors }: { branch: string; vendors: Vendor[
     queryKey: ['expenses', branch, from, to],
     queryFn: () => api.get<{ from: string; to: string; expenses: Expense[]; totalPaise: number }>(`/b/${branch}/expenses?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}`),
   });
-  const { rows, pager } = usePaged(data?.expenses ?? []);
+  const [q, setQ] = useState('');
+  const found = (data?.expenses ?? []).filter((e) => textMatch(q, e.description, e.vendorName, e.notes));
+  const { rows, pager } = usePaged(found, q);
   const [removing, setRemoving] = useState<Expense | null>(null);
 
   // The add form, on one line.
@@ -73,6 +76,7 @@ export function Expenses({ branch, vendors }: { branch: string; vendors: Vendor[
         description="Things bought for the hospital that are not medicines: a keyboard, a chair, a repair, stationery."
         action={
           <div className="flex flex-wrap items-center gap-2 text-sm">
+            <ListSearch className="sm:w-52" label="Search the expenses" placeholder="What or shop…" value={q} onChange={setQ} />
             <Input type="date" aria-label="From" className="w-auto" value={from || data?.from || ''} onChange={(e) => setFrom(e.target.value)} />
             <span className="text-muted">to</span>
             <Input type="date" aria-label="To" className="w-auto" value={to || data?.to || ''} onChange={(e) => setTo(e.target.value)} />
@@ -132,8 +136,8 @@ export function Expenses({ branch, vendors }: { branch: string; vendors: Vendor[
         <Skeleton className="m-4 h-24" />
       ) : error ? (
         <p className="p-4 text-sm text-critical">{errorMessage(error)}</p>
-      ) : !data?.expenses.length ? (
-        <p className="px-4 py-8 text-center text-sm text-muted">No expenses in these dates.</p>
+      ) : !data || !found.length ? (
+        <p className="px-4 py-8 text-center text-sm text-muted">{q ? `Nothing matches “${q}”.` : 'No expenses in these dates.'}</p>
       ) : (
         <>
           <Table>

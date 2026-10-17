@@ -35,7 +35,7 @@ export function VisitBill({ branch, visitId, hideCharges }: { branch: string; vi
 
   return (
     <Card>
-      <CardHeader title="Bill status" description="Shows if the counter has billed this visit, and if it is paid." icon={ReceiptText} iconTone="positive" action={bills.length > 0 && <Link to={`/${branch}/visits/${visitId}/bill/print`} className="text-sm font-medium text-brand hover:underline">Print bill</Link>} />
+      <CardHeader title="Bill status" description="Shows if the counter has billed this visit, and if it is paid." icon={ReceiptText} iconTone="positive" action={bills.length > 0 && <Link to={`/${branch}/visits/${visitId}/bill/print`} className="text-sm font-medium whitespace-nowrap text-brand hover:underline">Print bill</Link>} />
       {isLoading ? (
         <Skeleton className="m-4 h-12" />
       ) : (

@@ -97,6 +97,22 @@ export const rolePermission = sqliteTable(
   (t) => [primaryKey({ columns: [t.roleId, t.permission] })],
 );
 
+/**
+ * A role's permissions in ONE branch, set by the owner (Settings > Permissions). A branch with no rows for a role
+ * uses the role's own list (role_permission). NO_PERMISSIONS is the one row of a set left empty on purpose.
+ */
+export const branchRolePermission = sqliteTable(
+  'branch_role_permission',
+  {
+    branchId: integer('branch_id').notNull().references(() => branch.id),
+    roleId: integer('role_id').notNull().references(() => role.id),
+    permission: text('permission').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.branchId, t.roleId, t.permission] })],
+);
+/** Stored for a branch's role with every box unticked (so it does not fall back to the role's own list). */
+export const NO_PERMISSIONS = '-';
+
 /** A user works in a branch with one role there. */
 export const branchMember = sqliteTable(
   'branch_member',

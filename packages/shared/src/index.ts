@@ -18,6 +18,8 @@ export const CLINIC_PERMISSIONS = [
   'lab.order',
   'billing.receive',
   'lab.view',
+  // Change a lab report after it was completed (with a reason; the print says "Corrected on ...").
+  'lab.correct',
   'pharmacy.sell',
   'inventory.view',
   'inventory.manage',
@@ -25,6 +27,8 @@ export const CLINIC_PERMISSIONS = [
   'treatment.give',
   // Money reports: Billing > Payment reports, Pharmacy > Pharmacy reports, every doctor's line on the dashboard.
   'reports.view',
+  // For people at ease with the computer: Collect, Send, Register... happen at once, without the 5-second Undo wait.
+  'undo.skip',
 ] as const;
 
 /** Only this role (and the owner) may ever hold these: managing staff and roles. */
@@ -32,7 +36,23 @@ export const ADMIN_ROLE_KEY = 'branch_admin';
 export const ADMIN_ONLY_PERMISSIONS = ['users.manage', 'settings.manage'] as const;
 
 export const ALL_PERMISSIONS = [...CORE_PERMISSIONS, ...CLINIC_PERMISSIONS] as const;
+/** Given only by ticking them on a role: not part of a new branch admin role's "everything". */
+export const OPT_IN_PERMISSIONS: readonly string[] = ['undo.skip'];
+/** What the owner has: everything (the owner skips the 5-second Undo too). */
+export const OWNER_PERMISSIONS = [...ALL_PERMISSIONS];
 export type Permission = (typeof ALL_PERMISSIONS)[number];
+
+/**
+ * The menu counts: the small number next to a page of the side menu, and what it counts (one name everywhere:
+ * the menu, its hover text, the tabs of the page and Settings > Branch settings > Menu counts).
+ */
+export const MENU_COUNTS = [
+  { key: 'visits', page: 'OP visits', name: 'Waiting for the doctor', meaning: "Today's patients waiting, with the doctor or at the lab" },
+  { key: 'billing', page: 'Billing', name: 'To collect', meaning: 'Patients the counter still has to collect from' },
+  { key: 'pharmacy', page: 'Pharmacy', name: 'Medicines to give out', meaning: 'Patients waiting for their medicines' },
+  { key: 'lab', page: 'Lab', name: 'Tests to do', meaning: 'Lab tests ordered and not completed yet' },
+  { key: 'treatments', page: "Today's treatments", name: 'Treatments due today', meaning: 'Course sittings and doses still to give today' },
+] as const;
 
 export function isPermission(value: string): value is Permission {
   return (ALL_PERMISSIONS as readonly string[]).includes(value);
@@ -46,7 +66,7 @@ export const DEFAULT_ROLES: { key: string; name: string; permissions: Permission
   {
     key: 'branch_admin',
     name: 'Branch admin',
-    permissions: ALL_PERMISSIONS.filter((p) => p !== 'audit.view'),
+    permissions: OWNER_PERMISSIONS.filter((p) => p !== 'audit.view' && !OPT_IN_PERMISSIONS.includes(p)),
   },
   {
     key: 'doctor',
@@ -147,6 +167,8 @@ export interface RoleInfo {
   key: string;
   name: string;
   permissions: Permission[];
+  /** In one branch: the owner set this branch's own list (else it is the role's list, the same in every branch). */
+  custom?: boolean;
 }
 
 export const branchInputSchema = z.object({
@@ -172,7 +194,7 @@ export interface BranchInfo {
   staffCount: number;
 }
 
-export const rolePermissionsSchema = z.object({ permissions: z.array(z.string()) });
+export const rolePermissionsSchema = z.object({ permissions: z.array(z.string()), /** Owner, "All branches": every branch follows this list. */ allBranches: z.boolean().optional() });
 
 /** Settings → Owner: the owner's own name and login mobile, and the organization's name. */
 export const ownerDetailsSchema = z.object({
@@ -196,7 +218,9 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'lab.order': 'Order lab tests',
   'billing.receive': 'Billing & payments',
   'reports.view': 'Reports: payment & pharmacy reports',
+  'undo.skip': 'Skip the 5-second Undo (for people at ease with the computer)',
   'lab.view': 'Lab queue',
+  'lab.correct': 'Correct completed lab results (with a reason)',
   'treatment.give': 'Give treatments (tick doses given in the hospital)',
   'pharmacy.sell': 'Pharmacy: dispense & sell',
   'inventory.view': 'View medicines & stock',
@@ -235,6 +259,10 @@ export const medicineInputSchema = z.object({
   strength: z.string().trim().max(40).transform((v) => (v === '' ? null : v)).nullable().optional(),
   pricePaise: z.number({ error: 'Enter the price' }).int().min(0, 'Enter the price').max(10_000_000),
   reorderLevel: z.number().int().min(0).max(100_000).optional(),
+  /** The usual line when a doctor picks it: dose, instruction, days (all optional). */
+  defaultDose: z.string().trim().max(40).transform((v) => (v === '' ? null : v)).nullable().optional(),
+  defaultInstructions: z.string().trim().max(200).transform((v) => (v === '' ? null : v)).nullable().optional(),
+  defaultDays: z.number().int().min(1, 'At least 1 day').max(365).nullable().optional(),
 });
 export type MedicineInput = z.output<typeof medicineInputSchema>;
 
@@ -245,6 +273,9 @@ export interface Medicine {
   strength: string | null;
   pricePaise: number;
   reorderLevel: number;
+  defaultDose: string | null;
+  defaultInstructions: string | null;
+  defaultDays: number | null;
   /** Units in stock that have not expired. */
   stock: number;
   /** Earliest expiry among batches still in stock. */
@@ -349,6 +380,23 @@ export const prescriptionItemSchema = z.object({
   /** Given in the hospital, dose by dose (an injection, a drip): the nurse ticks each dose on the Treatments page. */
   givenHere: z.boolean().optional(),
 });
+/** A new order for a list (drag and drop): every id of it, in the new order. */
+export const reorderSchema = z.object({ ids: z.array(z.number().int().positive()).min(1).max(500) });
+
+/** A note or an instruction between the medicines of a prescription (never sold or billed). */
+export const prescriptionNoteSchema = z.object({
+  kind: z.enum(['note', 'instruction']),
+  text: z.string().trim().min(1, 'Type the note').max(300),
+  /** The medicine it comes after; null = at the top. */
+  afterItemId: z.number().int().positive().nullable().optional(),
+});
+export interface PrescriptionNote {
+  id: number;
+  kind: 'note' | 'instruction';
+  text: string;
+  afterItemId: number | null;
+}
+
 /** Changing a line already on the prescription (also one a bookmark put there): the medicine itself stays. */
 export const prescriptionItemEditSchema = prescriptionItemSchema.omit({ medicineId: true, givenHere: true });
 export type PrescriptionItemInput = z.output<typeof prescriptionItemSchema>;
@@ -361,6 +409,8 @@ export type PrescriptionStatus = (typeof PRESCRIPTION_STATUSES)[number];
 export interface PrescriptionSuggestions {
   doses: string[];
   instructions: string[];
+  /** Each medicine's usual line: how it was written the last time (filled in when the doctor picks it). */
+  usual: { medicineId: number; dose: string; instructions: string | null; days: number }[];
 }
 
 export interface PrescriptionItem {
@@ -536,6 +586,8 @@ export const directSaleSchema = z.object({
     }),
   paymentMode: z.enum(PAYMENT_MODES),
   patientId: z.number().int().positive().nullable().optional(),
+  /** Added on top so the customer pays a round figure. 1000 = ROUND_OFF_MAX_PAISE of billing.ts (not imported: that file imports this one). */
+  roundOffPaise: z.number().int().min(0).max(1000, 'Round off can be ₹10 at most').optional(),
 });
 
 export interface PharmacyQueueEntry {
@@ -577,7 +629,9 @@ export interface PharmacySaleDetail {
   /** UTC, ISO 8601. */
   createdAt: string;
   paymentMode: PaymentMode;
+  /** What was paid: the lines plus the round off. */
   totalPaise: number;
+  roundOffPaise: number;
   soldByName: string | null;
   /** null for a walk-in customer. */
   patient: { name: string; uhid: string; phone?: string | null } | null;
@@ -679,6 +733,8 @@ export const labResultsSchema = z.object({
   complete: z.boolean().optional(),
   /** Lines the lab unticked "Required" on for this one result: they may stay empty when completing. */
   notRequired: z.array(z.number().int().positive()).max(200).optional(),
+  /** Changing a completed test: why (needs "Correct completed lab results"). */
+  reason: z.string().trim().max(200).optional(),
 });
 
 export interface LabReportParameter {
@@ -705,6 +761,8 @@ export interface LabReportTest {
   status: LabOrderStatus;
   sampleCollectedAt: string | null;
   completedAt: string | null;
+  /** Changed after it was completed: when (the last time). */
+  correctedAt: string | null;
   parameters: LabReportParameter[];
 }
 
@@ -1154,3 +1212,4 @@ export interface Customer {
   ownerName: string | null;
   ownerMobile: string | null;
 }
+export * from './course.js';

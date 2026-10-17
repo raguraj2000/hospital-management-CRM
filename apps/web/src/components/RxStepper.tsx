@@ -1,20 +1,20 @@
-// The doctor's OP tab as four steps: medicines -> note to the pharmacy -> other charges -> preview and send.
+// The doctor's OP tab as four plain buttons: medicines, note to the pharmacy, charges, preview and send.
 import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Check, Hourglass, Pill } from 'lucide-react';
-import { FORM_UNIT, formatRupees, prettyDose, type OpVisit, type PrescriptionItem, type VisitCharges, type VisitFee } from '@platform/shared';
+import { ArrowLeft, ArrowRight, Hourglass, Pill } from 'lucide-react';
+import { FORM_UNIT, formatRupees, prettyDose, type OpVisit, type PrescriptionItem, type PrescriptionNote, type VisitCharges, type VisitFee } from '@platform/shared';
 import { Button, Card, CardHeader, cn } from '@platform/ui';
 import { api } from '@/api/client';
 import { useCan } from '@/state/auth';
-import { BookmarkSearch, VisitInstructions } from './Bookmarks';
 import { CounterNote } from './CounterNote';
 import { Prescription } from './Prescription';
 import { KeyHint } from './Shortcuts';
 import { VisitChargesBox } from './VisitCharges';
-import type { PatientBills } from '@platform/shared';
 import { VisitFeeEditor } from './VisitFee';
 import { useVisitLab } from './VisitLab';
 import { useVisitSend } from './VisitNext';
+import { NoteLine, withNotes } from './PrescriptionNotes';
+import type { PatientBills } from '@platform/shared';
 
 const STEPS = ['Medicines', 'Note to pharmacy', 'Charges', 'Preview & send'];
 
@@ -25,7 +25,7 @@ export function RxStepper({ branch, visit, patientName, fee, onAdded }: { branch
   const [step, setStep] = useState(0);
   const open = visit.status !== 'cancelled' && visit.status !== 'completed';
   // The same queries (and cache) as the cards of the steps: the preview follows every add and remove.
-  const rx = useQuery({ queryKey: ['prescription', branch, visit.id], queryFn: () => api.get<{ items: PrescriptionItem[] }>(`/b/${branch}/visits/${visit.id}/prescription`) });
+  const rx = useQuery({ queryKey: ['prescription', branch, visit.id], queryFn: () => api.get<{ items: PrescriptionItem[]; notes: PrescriptionNote[] }>(`/b/${branch}/visits/${visit.id}/prescription`) });
   const charges = useQuery({ queryKey: ['visit-charges', branch, visit.id], queryFn: () => api.get<VisitCharges>(`/b/${branch}/visits/${visit.id}/charges`), staleTime: 0 });
   const lab = useVisitLab(branch, visit.id);
   const send = useVisitSend(branch, visit, patientName);
@@ -42,7 +42,11 @@ export function RxStepper({ branch, visit, patientName, fee, onAdded }: { branch
   const medicinesList = (
     <ul className="divide-y divide-border">
       {items.length === 0 && <li className="px-4 py-3 text-sm text-muted">No medicines prescribed.</li>}
-      {items.map((i) => (
+      {withNotes(items, rx.data?.notes ?? []).map((r) => r.type === 'note' ? (
+        <li key={`n${r.note.id}`} className="px-4 py-2">
+          <NoteLine note={r.note} />
+        </li>
+      ) : ((i) => (
         <li key={i.id} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
           <span className="min-w-0">
             <span className="font-medium">
@@ -58,52 +62,58 @@ export function RxStepper({ branch, visit, patientName, fee, onAdded }: { branch
             <span className="block text-xs text-muted">{formatRupees(i.quantity * i.pricePaise)}</span>
           </span>
         </li>
-      ))}
+      ))(r.item))}
     </ul>
   );
 
   return (
     <div>
-      <ol className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {STEPS.map((label, i) => (
-          <li key={label}>
+      {/* Four steps across the full width, any order: the one you are on is raised. A small figure says what is in each. */}
+      <div role="tablist" aria-label="Prescription" className="mb-4 grid grid-cols-2 gap-1 rounded-xl border border-border bg-subtle/60 p-1 sm:grid-cols-4">
+        {STEPS.map((x, i) => {
+          const figure = [items.length || null, visit.pharmacyNote ? '✓' : null, extra.length ? extra.length : null, null][i];
+          return (
             <button
+              key={x}
               type="button"
-              aria-current={i === step ? 'step' : undefined}
+              role="tab"
+              aria-selected={i === step}
               onClick={() => setStep(i)}
-              className={cn('flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors', i === step ? 'border-brand bg-brand-soft text-brand' : 'border-border text-muted hover:bg-subtle')}
+              className={cn(
+                'flex h-9 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium whitespace-nowrap transition-colors',
+                i === step ? 'bg-surface text-ink shadow-sm ring-1 ring-border' : 'text-muted hover:text-ink',
+              )}
             >
-              <span className={cn('flex size-6 shrink-0 items-center justify-center rounded-full text-xs', i < step ? 'bg-brand text-white' : i === step ? 'border-2 border-brand' : 'border border-border')}>{i < step ? <Check className="size-3.5" /> : i + 1}</span>
-              <span className="min-w-0 truncate">{label}</span>
+              <span aria-hidden className={cn('flex size-5 items-center justify-center rounded-full text-[11px] font-semibold', i === step ? 'bg-brand text-white' : 'border border-border bg-surface text-muted')}>{i + 1}</span>
+              {x}
+              {figure != null && <span className={cn('rounded-full px-1.5 text-xs tabular-nums', i === step ? 'bg-brand-soft text-brand' : 'bg-border/70 text-muted')}>{figure}</span>}
             </button>
-          </li>
-        ))}
-      </ol>
+          );
+        })}
+      </div>
 
       {step === 0 && (
         <>
-          {open && <BookmarkSearch branch={branch} visitId={visit.id} onApplied={onAdded} />}
-          <Prescription branch={branch} visit={visit} onAdded={onAdded} hideNote />
-          <VisitInstructions branch={branch} visitId={visit.id} />
+          <Prescription branch={branch} visit={visit} onAdded={onAdded} hideNote withBookmarks={open} />
         </>
       )}
 
       {step === 1 && (
         <>
-        <Prescription branch={branch} visit={visit} onAdded={onAdded} hideNote readOnly />
-        <Card className="mt-4">
-          <CardHeader title="Note to the pharmacy" description="Optional. The pharmacy reads it with these medicines." icon={Pill} iconTone="violet" />
-          <CounterNote branch={branch} visit={visit} field="pharmacyNote" label="Note to pharmacy (optional)" placeholder="e.g. Give the generic brand. Explain the inhaler to the patient." canEdit={canWrite} />
-        </Card>
+          <Prescription branch={branch} visit={visit} onAdded={onAdded} hideNote readOnly />
+          <Card className="mt-4">
+            <CardHeader title="Note to the pharmacy" description="Optional. The pharmacy reads it with these medicines." icon={Pill} iconTone="violet" />
+            <CounterNote branch={branch} visit={visit} field="pharmacyNote" label="Note to pharmacy (optional)" placeholder="e.g. Give the generic brand. Explain the inhaler to the patient." canEdit={canWrite} />
+          </Card>
         </>
       )}
 
       {step === 2 && (
-        <div className="grid items-start gap-4 lg:grid-cols-2">
+        <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
           <Card>
             <CardHeader title="Charges" description="The consultation fee of this visit, and other charges if needed (dressing, IV, injection…). The counter makes the bill and collects." />
             <div className="border-b border-border px-4 py-3">
-              <VisitFeeEditor branch={branch} visitId={visit.id} fee={fee} cancelled={visit.status === 'cancelled'} />
+              <VisitFeeEditor branch={branch} visitId={visit.id} fee={fee} cancelled={visit.status === 'cancelled' || visit.status === 'completed'} />
             </div>
             <div className="bg-subtle/40 px-4 py-1 text-xs font-semibold tracking-wide text-muted uppercase">Other charges</div>
             <VisitChargesBox branch={branch} visitId={visit.id} />
@@ -189,7 +199,7 @@ function Section({ title, amount, children }: { title: string; amount?: number; 
   );
 }
 
-/** Right of the charges: what this patient still owes, bill by bill. Only to see; the counter collects it. */
+/** Right of the charges: what this patient still owes, bill by bill, with the date. Only to see; the counter collects it. */
 function BalanceDue({ branch, patientId }: { branch: string; patientId: number }) {
   const { data, isLoading } = useQuery({ queryKey: ['patient-bills', branch, patientId], queryFn: () => api.get<PatientBills>(`/b/${branch}/patients/${patientId}/bills`), staleTime: 0 });
   const due = data?.summary.balancePaise ?? 0;

@@ -20,16 +20,34 @@ import {
   type StaffMember,
 } from '@platform/shared';
 import type { Db } from './db/index.js';
-import { branch, branchMember, organization, role, rolePermission, user } from './db/schema.js';
+import { branch, branchMember, branchRolePermission, NO_PERMISSIONS, organization, role, rolePermission, user } from './db/schema.js';
 import { AppError, notFound, validationError } from './errors.js';
 import { hashPassword } from './password.js';
 import { meResponse, permissionsForRole, requireOwner, revokeUserSessions, type AuthEnv } from './auth.js';
 import { requirePermission, type BranchEnv } from './branch.js';
 import { writeAudit } from './audit.js';
 
-async function rolesOf(db: Db, organizationId: number): Promise<RoleInfo[]> {
+async function rolesOf(db: Db, organizationId: number, branchId?: number): Promise<RoleInfo[]> {
   const rows = await db.select({ id: role.id, key: role.key, name: role.name }).from(role).where(eq(role.organizationId, organizationId)).orderBy(role.id);
-  return Promise.all(rows.map(async (r) => ({ ...r, permissions: await permissionsForRole(db, r.id) })));
+  const custom = branchId != null ? new Set((await db.selectDistinct({ roleId: branchRolePermission.roleId }).from(branchRolePermission).where(eq(branchRolePermission.branchId, branchId))).map((r) => r.roleId)) : new Set<number>();
+  return Promise.all(rows.map(async (r) => ({ ...r, permissions: await permissionsForRole(db, r.id, branchId), custom: custom.has(r.id) })));
+}
+
+/**
+ * Sets a role's permissions in ONE branch ({ reset: true } = back to the role's own list). Managing staff stays
+ * with the Branch admin role. Used by the owner (any branch) and by a branch admin (their branch).
+ */
+async function setBranchRole(db: Db, me: { id: number; organizationId: number }, branchId: number, r: { id: number; key: string }, body: { permissions?: string[]; reset?: boolean }) {
+  const parsed = body.reset ? null : rolePermissionsSchema.safeParse(body);
+  if (parsed && !parsed.success) throw validationError(parsed.error);
+  const adminOnly: readonly string[] = ADMIN_ONLY_PERMISSIONS;
+  const permissions = parsed ? [...new Set(parsed.data!.permissions.filter(isPermission))].filter((p) => r.key === ADMIN_ROLE_KEY || !adminOnly.includes(p)) : [];
+  await db.transaction(async (tx) => {
+    await tx.delete(branchRolePermission).where(and(eq(branchRolePermission.branchId, branchId), eq(branchRolePermission.roleId, r.id)));
+    if (parsed) await tx.insert(branchRolePermission).values((permissions.length ? permissions : [NO_PERMISSIONS]).map((permission) => ({ branchId, roleId: r.id, permission })));
+    await writeAudit(tx, { organizationId: me.organizationId, branchId, userId: me.id, action: 'update_permissions', entity: 'role', entityId: r.id, detail: parsed ? { permissions } : { reset: true } });
+  });
+  return permissionsForRole(db, r.id, branchId);
 }
 
 async function roleInOrg(db: Db, organizationId: number, roleId: number) {
@@ -100,7 +118,17 @@ export function createStaffRoutes(db: Db) {
     }
   }
 
-  app.get('/roles', manage, async (c) => c.json({ roles: await rolesOf(db, c.get('user').organizationId) }));
+  app.get('/roles', manage, async (c) => c.json({ roles: await rolesOf(db, c.get('user').organizationId, c.get('branch').id) }));
+
+  /** The branch admin's Permissions tab: this branch only. The Branch admin role itself is the owner's to change. */
+  app.put('/roles/:roleId/permissions', manage, async (c) => {
+    const me = c.get('user');
+    const [r] = await db.select({ id: role.id, key: role.key }).from(role).where(and(eq(role.id, Number(c.req.param('roleId'))), eq(role.organizationId, me.organizationId)));
+    if (!r) throw notFound('Role not found');
+    if (r.key === ADMIN_ROLE_KEY && !me.isOwner) throw new AppError(403, 'forbidden', 'Only the owner changes what the Branch admin role may do');
+    const body = (await c.req.json().catch(() => ({}))) as { permissions?: string[]; reset?: boolean };
+    return c.json({ ok: true, permissions: await setBranchRole(db, me, c.get('branch').id, r, body) });
+  });
 
   app.get('/staff', manage, async (c) => {
     const staff: StaffMember[] = await db
@@ -269,12 +297,37 @@ export function createOrgRoutes(db: Db) {
     // Managing staff and roles stays with the Branch admin role (and the owner) -- never other roles.
     const adminOnly: readonly string[] = ADMIN_ONLY_PERMISSIONS;
     const permissions = [...new Set(parsed.data.permissions.filter(isPermission))].filter((p) => r.key === ADMIN_ROLE_KEY || !adminOnly.includes(p));
+    // "All branches": every branch follows this list (their own lists for this role go).
+    const allBranches = (parsed.data as { allBranches?: boolean }).allBranches === true;
     await db.transaction(async (tx) => {
       await tx.delete(rolePermission).where(eq(rolePermission.roleId, id));
       if (permissions.length) await tx.insert(rolePermission).values(permissions.map((permission) => ({ roleId: id, permission })));
-      await writeAudit(tx, { organizationId: me.organizationId, userId: me.id, action: 'update_permissions', entity: 'role', entityId: id, detail: { permissions } });
+      if (allBranches) await tx.delete(branchRolePermission).where(eq(branchRolePermission.roleId, id));
+      await writeAudit(tx, { organizationId: me.organizationId, userId: me.id, action: 'update_permissions', entity: 'role', entityId: id, detail: { permissions, allBranches } });
     });
     return c.json({ ok: true, permissions });
+  });
+
+  /** One branch's permissions, role by role (Settings > Permissions, owner only). */
+  app.get('/branches/:id/roles', async (c) => {
+    const me = c.get('user');
+    const [b] = await db.select({ id: branch.id }).from(branch).where(and(eq(branch.id, Number(c.req.param('id'))), eq(branch.organizationId, me.organizationId)));
+    if (!b) throw notFound('Branch not found');
+    return c.json({ roles: await rolesOf(db, me.organizationId, b.id) });
+  });
+
+  /**
+   * A role's permissions in one branch only. { reset: true } = back to the role's list (the same as every branch
+   * without its own). Staff get it on their next page load.
+   */
+  app.put('/branches/:id/roles/:roleId/permissions', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { permissions?: string[]; reset?: boolean };
+    const me = c.get('user');
+    const [b] = await db.select({ id: branch.id }).from(branch).where(and(eq(branch.id, Number(c.req.param('id'))), eq(branch.organizationId, me.organizationId)));
+    if (!b) throw notFound('Branch not found');
+    const [r] = await db.select({ id: role.id, key: role.key }).from(role).where(and(eq(role.id, Number(c.req.param('roleId'))), eq(role.organizationId, me.organizationId)));
+    if (!r) throw notFound('Role not found');
+    return c.json({ ok: true, permissions: await setBranchRole(db, me, b.id, r, body) });
   });
 
   /** The owner's own name and login mobile, and the organization's name (Settings → Owner). */

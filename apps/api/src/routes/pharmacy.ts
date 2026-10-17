@@ -20,11 +20,15 @@ import {
   type StockReport,
   type StockReportBatch,
   prescriptionItemEditSchema,
+  prescriptionNoteSchema,
+  reorderSchema,
+  type PrescriptionNote,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, printHeaderOf, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { medicine, medicineBatch, opVisit, patient, pharmacySale, pharmacySaleLine, prescriptionItem, purchaseBill, purchaseLine, treatmentDose, user, vendor } from '../db/schema.js';
+import { medicine, medicineBatch, opVisit, patient, pharmacySale, pharmacySaleLine, prescriptionItem, prescriptionNote, purchaseBill, purchaseLine, treatmentDose, user, vendor } from '../db/schema.js';
 import { assertNoDoseGiven, createDoses } from './treatments.js';
-import { dayStamp, localToday, visitOfBranch, assertPatientActive } from '../lib/clinic.js';
+import { assertVisitOpen, dayStamp, localToday, visitOfBranch, assertPatientActive } from '../lib/clinic.js';
+import { periodOf } from '../lib/clinic.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const doctor = alias(user, 'doctor');
@@ -45,6 +49,9 @@ export async function medicinesWithStock(db: Db, branchId: number, today: string
       strength: medicine.strength,
       pricePaise: medicine.pricePaise,
       reorderLevel: medicine.reorderLevel,
+      defaultDose: medicine.defaultDose,
+      defaultInstructions: medicine.defaultInstructions,
+      defaultDays: medicine.defaultDays,
       stock: sql<number>`coalesce(sum(case when ${medicineBatch.expiryDate} >= ${today} and ${medicineBatch.quantity} > 0 then ${medicineBatch.quantity} end), 0)`,
       nextExpiry: sql<string | null>`min(case when ${medicineBatch.expiryDate} >= ${today} and ${medicineBatch.quantity} > 0 then ${medicineBatch.expiryDate} end)`,
       // Same order as the sale itself (FEFO): earliest expiry, then oldest batch.
@@ -143,7 +150,8 @@ export async function prescriptionLines(db: Db | Tx, branchId: number, today: st
     .innerJoin(medicine, eq(medicine.id, prescriptionItem.medicineId))
     .leftJoin(stock, eq(stock.medicineId, prescriptionItem.medicineId))
     .where(and(eq(prescriptionItem.branchId, branchId), isNull(prescriptionItem.deletedAt), where))
-    .orderBy(asc(prescriptionItem.id));
+    // The doctor's order: placed lines first (1, 2, 3...), then the ones never moved, as they were added.
+    .orderBy(sql`case when ${prescriptionItem.sortOrder} = 0 then 1 else 0 end`, asc(prescriptionItem.sortOrder), asc(prescriptionItem.id));
   return rows;
 }
 
@@ -216,6 +224,7 @@ export async function saleDetail(db: Db, branchId: number, id: number): Promise<
       createdAt: pharmacySale.createdAt,
       paymentMode: pharmacySale.paymentMode,
       totalPaise: pharmacySale.totalPaise,
+      roundOffPaise: pharmacySale.roundOffPaise,
       soldByName: user.name,
       patientName: patient.name,
       patientUhid: patient.uhid,
@@ -437,7 +446,11 @@ export function createPharmacyRoutes(db: Db) {
           .orderBy(sql`count(*) desc`, col)
           .limit(8)
       ).map((r) => r.value as string);
-    const result: PrescriptionSuggestions = { doses: await top(prescriptionItem.dose), instructions: await top(prescriptionItem.instructions) };
+    // The last line written for each medicine here (not the course lines the nurse's sittings make).
+    const usual = await db.all<{ medicineId: number; dose: string; instructions: string | null; days: number }>(sql`
+      select medicine_id as medicineId, dose, instructions, days from prescription_item
+      where id in (select max(id) from prescription_item where branch_id = ${b.id} and deleted_at is null and dose <> 'Course' group by medicine_id)`);
+    const result: PrescriptionSuggestions = { doses: await top(prescriptionItem.dose), instructions: await top(prescriptionItem.instructions), usual };
     return c.json(result);
   });
 
@@ -445,7 +458,77 @@ export function createPharmacyRoutes(db: Db) {
     const b = c.get('branch');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
     const items = await prescriptionLines(db, b.id, await localToday(db), and(eq(prescriptionItem.visitId, v.id)));
-    return c.json({ items });
+    return c.json({ items, notes: await prescriptionNotes(db, b.id, v.id) });
+  });
+
+  /** The doctor dragged the medicines into another order. */
+  app.put('/visits/:visitId/prescription/order', requirePermission('prescription.write'), async (c) => {
+    const parsed = reorderSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    assertVisitOpen(v.status);
+    const have = await db.select({ id: prescriptionItem.id }).from(prescriptionItem).where(and(eq(prescriptionItem.branchId, b.id), eq(prescriptionItem.visitId, v.id), isNull(prescriptionItem.deletedAt)));
+    const ids = parsed.data.ids;
+    if (ids.length !== have.length || new Set(ids).size !== ids.length || !ids.every((id) => have.some((h) => h.id === id))) throw new AppError(400, 'validation', 'Send every medicine of this prescription once');
+    await db.transaction(async (tx) => {
+      for (const [i, id] of ids.entries()) await tx.update(prescriptionItem).set({ sortOrder: i + 1 }).where(eq(prescriptionItem.id, id));
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'reorder', entity: 'prescription_item', entityId: v.id, detail: { ids } });
+    });
+    return c.json({ ok: true });
+  });
+
+  // ---- notes and instructions between the medicines (prescription_note)
+
+  async function noteOfBranch(branchId: number, id: number) {
+    const [n] = Number.isInteger(id)
+      ? await db.select({ id: prescriptionNote.id, visitId: prescriptionNote.visitId, visitStatus: opVisit.status }).from(prescriptionNote).innerJoin(opVisit, eq(opVisit.id, prescriptionNote.visitId)).where(and(eq(prescriptionNote.branchId, branchId), eq(prescriptionNote.id, id), isNull(prescriptionNote.deletedAt)))
+      : [];
+    if (!n) throw notFound('Note not found');
+    return n;
+  }
+  /** The medicine a note goes after must be on the same visit. */
+  async function assertAfter(branchId: number, visitId: number, afterItemId: number | null | undefined) {
+    if (afterItemId == null) return;
+    const [i] = await db.select({ id: prescriptionItem.id }).from(prescriptionItem).where(and(eq(prescriptionItem.branchId, branchId), eq(prescriptionItem.visitId, visitId), eq(prescriptionItem.id, afterItemId), isNull(prescriptionItem.deletedAt)));
+    if (!i) throw new AppError(400, 'validation', 'Choose a medicine of this prescription', { afterItemId: ['Choose a medicine of this prescription'] });
+  }
+
+  app.post('/visits/:visitId/prescription-notes', requirePermission('prescription.write'), async (c) => {
+    const parsed = prescriptionNoteSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    assertVisitOpen(v.status);
+    await assertAfter(b.id, v.id, parsed.data.afterItemId);
+    const [row] = await db.insert(prescriptionNote).values({ branchId: b.id, visitId: v.id, kind: parsed.data.kind, text: parsed.data.text, afterItemId: parsed.data.afterItemId ?? null, createdBy: u.id }).returning({ id: prescriptionNote.id });
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'prescription_note', entityId: row!.id, detail: { visitId: v.id, ...parsed.data } });
+    return c.json({ id: row!.id }, 201);
+  });
+
+  app.patch('/prescription-notes/:id', requirePermission('prescription.write'), async (c) => {
+    const parsed = prescriptionNoteSchema.partial().safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const n = await noteOfBranch(b.id, Number(c.req.param('id')));
+    assertVisitOpen(n.visitStatus);
+    await assertAfter(b.id, n.visitId, parsed.data.afterItemId);
+    await db.update(prescriptionNote).set({ ...parsed.data, updatedAt: new Date().toISOString() }).where(eq(prescriptionNote.id, n.id));
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'prescription_note', entityId: n.id, detail: parsed.data });
+    return c.json({ ok: true });
+  });
+
+  app.delete('/prescription-notes/:id', requirePermission('prescription.write'), async (c) => {
+    const b = c.get('branch');
+    const u = c.get('user');
+    const n = await noteOfBranch(b.id, Number(c.req.param('id')));
+    assertVisitOpen(n.visitStatus);
+    await db.update(prescriptionNote).set({ deletedAt: new Date().toISOString() }).where(eq(prescriptionNote.id, n.id));
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'delete', entity: 'prescription_note', entityId: n.id });
+    return c.json({ ok: true });
   });
 
   app.post('/visits/:visitId/prescription', requirePermission('prescription.write'), async (c) => {
@@ -454,7 +537,7 @@ export function createPharmacyRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    assertVisitOpen(v.status);
     await assertPatientActive(db, b.id, v.patientId);
     const med = await medicineOfBranch(b.id, parsed.data.medicineId);
     const today = await localToday(db);
@@ -498,7 +581,7 @@ export function createPharmacyRoutes(db: Db) {
       : [];
     if (!item) throw notFound('Prescription line not found');
     if (item.status !== 'pending') throw new AppError(409, 'dispensed', 'The pharmacy has already dealt with this medicine; it can no longer be changed');
-    if (item.visitStatus === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    assertVisitOpen(item.visitStatus);
     const quantity = parsed.data.quantity ?? suggestedQuantity(parsed.data.dose, parsed.data.days);
     if (!quantity) throw new AppError(400, 'validation', 'Enter the quantity for this dose', { quantity: ['Enter the quantity for this dose'] });
     const today = await localToday(db);
@@ -522,10 +605,12 @@ export function createPharmacyRoutes(db: Db) {
     const u = c.get('user');
     const id = Number(c.req.param('id'));
     const [item] = await db
-      .select({ id: prescriptionItem.id, status: prescriptionItem.status })
+      .select({ id: prescriptionItem.id, status: prescriptionItem.status, visitStatus: opVisit.status })
       .from(prescriptionItem)
+      .innerJoin(opVisit, eq(opVisit.id, prescriptionItem.visitId))
       .where(and(eq(prescriptionItem.branchId, b.id), eq(prescriptionItem.id, id), isNull(prescriptionItem.deletedAt)));
     if (!item) throw notFound('Prescription line not found');
+    assertVisitOpen(item.visitStatus);
     if (item.status === 'dispensed') throw new AppError(409, 'dispensed', 'Already dispensed — it can no longer be removed');
     await db.transaction(async (tx) => {
       await assertNoDoseGiven(tx, id);
@@ -593,6 +678,7 @@ export function createPharmacyRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const { items, paymentMode } = parsed.data;
+    const roundOffPaise = parsed.data.roundOffPaise ?? 0;
     const patientId = parsed.data.patientId ?? null;
     if (patientId != null) {
       const [p] = await db.select({ id: patient.id }).from(patient).where(and(eq(patient.branchId, b.id), eq(patient.id, patientId), isNull(patient.deletedAt)));
@@ -614,13 +700,13 @@ export function createPharmacyRoutes(db: Db) {
 
       const n = await nextNumber(tx, b.id, `sale:${today}`);
       const saleNo = `PH-${dayStamp(today)}-${String(n).padStart(3, '0')}`;
-      const totalPaise = chosen.reduce((s, i) => s + i.quantity * i.pricePaise, 0);
+      const totalPaise = chosen.reduce((s, i) => s + i.quantity * i.pricePaise, 0) + roundOffPaise;
       const [s] = await tx
         .insert(pharmacySale)
-        .values({ branchId: b.id, saleNo, visitId: null, patientId, totalPaise, paymentMode, createdBy: u.id })
+        .values({ branchId: b.id, saleNo, visitId: null, patientId, totalPaise, roundOffPaise, paymentMode, createdBy: u.id })
         .returning({ id: pharmacySale.id });
       for (const { item, takes } of plan) await sellTakes(tx, b.id, s.id, item, takes, null);
-      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'sell', entity: 'pharmacy_sale', entityId: s.id, detail: { saleNo, patientId, items, totalPaise, paymentMode } });
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'sell', entity: 'pharmacy_sale', entityId: s.id, detail: { saleNo, patientId, items, totalPaise, roundOffPaise, paymentMode } });
       return { id: s.id, saleNo, totalPaise };
     });
     return c.json({ sale }, 201);
@@ -663,15 +749,14 @@ export function createPharmacyRoutes(db: Db) {
   app.get('/pharmacy/sales', requirePermission('pharmacy.sell'), async (c) => {
     const b = c.get('branch');
     if (!b.permissions.includes('reports.view')) throw new AppError(403, 'forbidden', 'Your role cannot see the reports');
+    // ?days=1|7|30|365 ending today, ?from=&to= for chosen dates, or ?date= for one day.
     const date = c.req.query('date');
-    const day = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : await localToday(db);
-    // ?days=7 / 30 / 365: that many days up to `day` (1 = that day only).
-    const days = Math.min(Math.max(Math.floor(Number(c.req.query('days')) || 1), 1), 366);
+    const { from, to } = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? { from: date, to: date } : await periodOf(db, c.req.query());
     const sales = await db
       .select({ id: pharmacySale.id, saleNo: pharmacySale.saleNo, visitId: pharmacySale.visitId, patientName: patient.name, totalPaise: pharmacySale.totalPaise, paymentMode: pharmacySale.paymentMode, createdAt: pharmacySale.createdAt })
       .from(pharmacySale)
       .leftJoin(patient, eq(patient.id, pharmacySale.patientId))
-      .where(and(eq(pharmacySale.branchId, b.id), sql`date(${pharmacySale.createdAt}, '+330 minutes') between date(${day}, ${`-${days - 1} days`}) and ${day}`))
+      .where(and(eq(pharmacySale.branchId, b.id), sql`date(${pharmacySale.createdAt}, '+330 minutes') between ${from} and ${to}`))
       .orderBy(desc(pharmacySale.id))
       .limit(3000);
     const lines = sales.length
@@ -687,8 +772,17 @@ export function createPharmacyRoutes(db: Db) {
       patientName: s.patientName ?? 'Walk-in', // a direct sale with no patient attached
       lines: lines.filter((l) => l.saleId === s.id).map(({ saleId: _saleId, ...l }) => l),
     }));
-    return c.json({ date: day, sales: result, totalPaise: result.reduce((t, s) => t + s.totalPaise, 0) });
+    return c.json({ date: to, from, to, sales: result, totalPaise: result.reduce((t, s) => t + s.totalPaise, 0) });
   });
 
   return app;
+}
+
+/** A visit's notes and instructions between the medicines, in the order they were written. */
+export async function prescriptionNotes(db: Db, branchId: number, visitId: number): Promise<PrescriptionNote[]> {
+  return db
+    .select({ id: prescriptionNote.id, kind: prescriptionNote.kind, text: prescriptionNote.text, afterItemId: prescriptionNote.afterItemId })
+    .from(prescriptionNote)
+    .where(and(eq(prescriptionNote.branchId, branchId), eq(prescriptionNote.visitId, visitId), isNull(prescriptionNote.deletedAt)))
+    .orderBy(asc(prescriptionNote.id));
 }

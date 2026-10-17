@@ -11,6 +11,7 @@
     "dev:web": "npm run dev -w @platform/web",
     "seed": "npm run seed -w @platform/api",
     "test": "npm run test -w @platform/api",
+    "e2e": "npm run build && node scripts/e2e/smoke.mjs",
     "typecheck": "tsc -p apps/api && tsc -p apps/web",
     "build": "npm run build -w @platform/web",
     "e2e:screens": "node e2e/screens.mjs",

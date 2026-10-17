@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams, Link } from 'react-router';
 import { z } from 'zod';
 import { Boxes, CalendarClock, IndianRupee, MoreHorizontal, PackageCheck, Pencil, PackagePlus, PackageX, Plus, Printer, Search, Trash2, TriangleAlert, ChevronDown, ChevronUp } from 'lucide-react';
-import { batchInputSchema, FORM_UNIT, formatRupees, MEDICINE_FORMS, toPaise, type BatchInput, type Medicine, type MedicineBatch, type StockReport, type StockReportBatch } from '@platform/shared';
+import { batchInputSchema, FORM_UNIT, parseExpiry, formatRupees, MEDICINE_FORMS, toPaise, type BatchInput, type Medicine, type MedicineBatch, type StockReport, type StockReportBatch } from '@platform/shared';
 import {
   Badge,
   Button,
@@ -42,6 +42,8 @@ import { api, ApiError, errorMessage } from '@/api/client';
 import { Vendors } from './Vendors';
 import { useBranch, useCan } from '@/state/auth';
 import { fmtDay } from '@/components/format';
+import { INSTRUCTIONS, START_DOSES } from '@/components/Prescription';
+import { ListSearch, textMatch } from '@/components/ListSearch';
 
 const daysUntil = (iso: string) => Math.round((new Date(`${iso}T00:00:00`).getTime() - new Date(`${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })}T00:00:00`).getTime()) / 86_400_000);
 
@@ -286,26 +288,31 @@ const medicineFormSchema = z.object({
   strength: z.string().trim().max(40),
   price: z.number({ error: 'Enter the price' }).min(0, 'Enter the price').max(100_000),
   reorderLevel: z.number().int().min(0).max(100_000),
+  defaultDose: z.string().trim().max(40),
+  defaultInstructions: z.string().trim().max(200),
+  defaultDays: z.number().int().min(1, 'At least 1 day').max(365).optional(),
 });
 type MedicineFormValues = z.infer<typeof medicineFormSchema>;
 
 /** Add a medicine, or edit one (`initial`). */
-function MedicineForm({ initial, onSubmit, onCancel }: { initial?: Medicine; onSubmit: (v: { name: string; form: MedicineFormValues['form']; strength: string; pricePaise: number; reorderLevel: number }) => Promise<void>; onCancel: () => void }) {
+function MedicineForm({ initial, onSubmit, onCancel }: { initial?: Medicine; onSubmit: (v: { name: string; form: MedicineFormValues['form']; strength: string; pricePaise: number; reorderLevel: number; defaultDose: string; defaultInstructions: string; defaultDays: number | null }) => Promise<void>; onCancel: () => void }) {
   const {
     register,
     handleSubmit,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm<MedicineFormValues>({ resolver: zodResolver(medicineFormSchema), defaultValues: initial ? { name: initial.name, form: initial.form, strength: initial.strength ?? '', price: initial.pricePaise / 100, reorderLevel: initial.reorderLevel } : { form: 'tablet', strength: '', reorderLevel: 20 },
+  } = useForm<MedicineFormValues>({ resolver: zodResolver(medicineFormSchema), defaultValues: initial
+      ? { name: initial.name, form: initial.form, strength: initial.strength ?? '', price: initial.pricePaise / 100, reorderLevel: initial.reorderLevel, defaultDose: initial.defaultDose ?? '', defaultInstructions: initial.defaultInstructions ?? '', defaultDays: initial.defaultDays ?? undefined }
+      : { form: 'tablet', strength: '', reorderLevel: 20, defaultDose: '', defaultInstructions: '' },
   });
   const num = (v: unknown) => (v === '' || v == null ? undefined : Number(v));
   return (
     <form
       noValidate
       className="grid gap-4 sm:grid-cols-2"
-      onSubmit={handleSubmit(async ({ price, ...v }) => {
+      onSubmit={handleSubmit(async ({ price, defaultDays, ...v }) => {
         try {
-          await onSubmit({ ...v, pricePaise: toPaise(price) });
+          await onSubmit({ ...v, pricePaise: toPaise(price), defaultDays: defaultDays ?? null });
         } catch (e) {
           if (e instanceof ApiError && e.fields) for (const [f, m] of Object.entries(e.fields)) setError(f === 'pricePaise' ? 'price' : (f as keyof MedicineFormValues), { message: m[0] });
           else setError('root', { message: errorMessage(e) });
@@ -333,6 +340,29 @@ function MedicineForm({ initial, onSubmit, onCancel }: { initial?: Medicine; onS
       <Field label="Warn when stock is at or below" htmlFor="med-reorder" error={errors.reorderLevel?.message}>
         <Input id="med-reorder" inputMode="numeric" {...register('reorderLevel', { setValueAs: num })} />
       </Field>
+      <fieldset className="grid gap-3 rounded-lg border border-border p-3 sm:col-span-2 sm:grid-cols-[1fr_1.3fr_6rem]">
+        <legend className="px-1 text-sm font-semibold">Usual prescription <span className="font-normal text-muted">(optional)</span></legend>
+        <p className="-mt-1 text-xs text-muted sm:col-span-3">Filled in when a doctor picks this drug. The doctor can still change it for one patient.</p>
+        <Field label="Dose" htmlFor="med-dose" hint="e.g. 1-0-1, SOS">
+          <Input id="med-dose" list="med-dose-list" placeholder="1-0-1" {...register('defaultDose')} />
+          <datalist id="med-dose-list">
+            {START_DOSES.map((d) => (
+              <option key={d} value={d} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="Instruction" htmlFor="med-ins">
+          <Input id="med-ins" list="med-ins-list" placeholder="After food" {...register('defaultInstructions')} />
+          <datalist id="med-ins-list">
+            {INSTRUCTIONS.map((d) => (
+              <option key={d} value={d} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="Days" htmlFor="med-days" error={errors.defaultDays?.message}>
+          <Input id="med-days" inputMode="numeric" placeholder="3" {...register('defaultDays', { setValueAs: num })} />
+        </Field>
+      </fieldset>
       {errors.root && <p className="text-sm text-critical sm:col-span-2">{errors.root.message}</p>}
       <div className="flex flex-col-reverse gap-2 pt-2 sm:col-span-2 sm:flex-row sm:justify-end">
         <Button variant="outline" onClick={onCancel}>
@@ -369,8 +399,8 @@ function StockForm({ unit, onSubmit, onCancel }: { unit: string; onSubmit: (v: B
       <Field required label="Batch no." htmlFor="batch-no" error={errors.batchNo?.message}>
         <Input id="batch-no" autoFocus className="font-mono uppercase" {...register('batchNo')} />
       </Field>
-      <Field required label="Expiry date" htmlFor="batch-expiry" error={errors.expiryDate?.message}>
-        <Input id="batch-expiry" type="date" {...register('expiryDate')} />
+      <Field required label="Expiry (MM/YY)" htmlFor="batch-expiry" error={errors.expiryDate?.message && 'Type it as MM/YY, e.g. 06/28'}>
+        <Input id="batch-expiry" placeholder="MM/YY" inputMode="numeric" {...register('expiryDate', { setValueAs: (v: string) => parseExpiry(v) ?? v })} />
       </Field>
       <Field required label={`Quantity (${unit})`} htmlFor="batch-qty" error={errors.quantity?.message}>
         <Input id="batch-qty" inputMode="numeric" {...register('quantity', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })} />
@@ -646,7 +676,9 @@ function PurchaseProfit({ branch }: { branch: string }) {
     queryKey: ['purchases', branch, 'profit', from, to],
     queryFn: () => api.get<ProfitReport>(`/b/${branch}/purchases/profit?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}`),
   });
-  const { rows, pager } = usePaged(data?.lines ?? []);
+  const [q, setQ] = useState('');
+  const found = (data?.lines ?? []).filter((l) => textMatch(q, l.medicineName, l.vendorName, l.vendorBillNo, l.batchNo));
+  const { rows, pager } = usePaged(found, q);
   const money = (p: number) => <span className={p < 0 ? 'text-critical' : ''}>{formatRupees(p)}</span>;
   return (
     <Card>
@@ -655,6 +687,7 @@ function PurchaseProfit({ branch }: { branch: string }) {
         description="Every medicine bought from vendors in these dates. Profit is counted at today's selling price."
         action={
           <div className="flex flex-wrap items-center gap-2 text-sm">
+            <ListSearch className="sm:w-52" label="Search the purchases" placeholder="Drug, vendor or bill no.…" value={q} onChange={setQ} />
             <Input type="date" aria-label="From" className="w-auto" value={from || data?.from || ''} onChange={(e) => setFrom(e.target.value)} />
             <span className="text-muted">to</span>
             <Input type="date" aria-label="To" className="w-auto" value={to || data?.to || ''} onChange={(e) => setTo(e.target.value)} />
@@ -665,6 +698,8 @@ function PurchaseProfit({ branch }: { branch: string }) {
         <Skeleton className="m-4 h-24" />
       ) : error ? (
         <p className="p-4 text-sm text-critical">{errorMessage(error)}</p>
+      ) : data?.lines.length && !found.length ? (
+        <p className="px-4 py-8 text-center text-sm text-muted">Nothing matches “{q}”.</p>
       ) : !data?.lines.length ? (
         <p className="px-4 py-8 text-center text-sm text-muted">Nothing was bought from vendors in these dates.</p>
       ) : (

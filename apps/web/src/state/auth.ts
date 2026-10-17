@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import type { LoginInput, MeBranch, MeResponse, Permission } from '@platform/shared';
 import { api, ApiError } from '@/api/client';
+import { clearAllDrafts } from '@/components/drafts';
 
 export const ME_KEY = ['me'] as const;
 
@@ -35,6 +36,7 @@ export function useLogout() {
   return useMutation({
     mutationFn: () => api.post('/auth/logout'),
     onSettled: () => {
+      clearAllDrafts(); // what was typed in forms stays with the person who typed it
       qc.clear(); // drop every cached record of the old session
       qc.setQueryData(ME_KEY, null);
     },

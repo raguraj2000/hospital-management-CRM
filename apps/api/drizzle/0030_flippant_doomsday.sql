@@ -1,0 +1,1 @@
+ALTER TABLE `prescription_item` ADD `sort_order` integer DEFAULT 0 NOT NULL;

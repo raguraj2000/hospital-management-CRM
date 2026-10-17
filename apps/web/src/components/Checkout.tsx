@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { AlertTriangle, ChevronDown, ChevronUp, FlaskConical, PackageCheck, Pencil, Printer, Search, Wallet, X } from 'lucide-react';
-import { CHECKOUT_LOOKBACK_DAYS, FORM_UNIT, formatRupees, toPaise, type BillPaymentMode, type CheckoutInput, type CheckoutQueueEntry, type CheckoutResult, type VisitCheckout, ROUND_OFF_LINE, ROUND_OFF_MAX_PAISE, autoRoundOffPaise } from '@platform/shared';
-import { Avatar, Badge, Button, Card, Dialog, EmptyState, Field, Input, Skeleton, Table, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+import { CHECKOUT_LOOKBACK_DAYS, FORM_UNIT, formatRupees, toPaise, type BillPaymentMode, type CheckoutInput, type CheckoutQueueEntry, type CheckoutResult, type PrescriptionItem, type PrescriptionNote, type VisitCheckout, ROUND_OFF_LINE, ROUND_OFF_MAX_PAISE, autoRoundOffPaise } from '@platform/shared';
+import { Avatar, Badge, Button, Card, Dialog, EmptyState, Field, Input, Pager, Skeleton, Table, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { PrintLink } from './print';
 import { useCan } from '@/state/auth';
@@ -13,6 +13,7 @@ import { fmtDateTime, fmtDay } from '@/components/format';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
 import { VisitChargesBox } from '@/components/VisitCharges';
 import { isUndone, withUndo } from '@/components/undo';
+import { NoteLine } from '@/components/PrescriptionNotes';
 
 /** What is typed in a ₹ box, as paise (empty or not a number = 0). */
 const paiseOf = (rupees: string) => Math.max(0, toPaise(Number(rupees) || 0));
@@ -34,9 +35,9 @@ interface LastCollected {
   result: CheckoutResult;
 }
 
-/** The counter's list. The same query on both pages; refetches on focus and every 20 s. */
+/** The counter's list. The same query on both pages; refetches on focus, and when something changed in the branch (AppShell's change watch). */
 export function useCheckoutQueue(branch: string | undefined, enabled = true) {
-  return useQuery({ queryKey: ['checkout-queue', branch], queryFn: () => api.get<Queue>(`/b/${branch}/checkout-queue`), refetchInterval: 20_000, refetchOnWindowFocus: true, enabled });
+  return useQuery({ queryKey: ['checkout-queue', branch], queryFn: () => api.get<Queue>(`/b/${branch}/checkout-queue`), refetchOnWindowFocus: true, enabled });
 }
 
 /** Visits with something to collect: sent by the doctor first, then today's, then earlier days'. */
@@ -58,8 +59,6 @@ export function CheckoutList({ branch }: { branch: string }) {
   const lastKey = ['checkout-last', branch];
   const { data: last } = useQuery<LastCollected | null>({ queryKey: lastKey, queryFn: () => null, staleTime: Infinity, gcTime: Infinity });
 
-  if (queue.isLoading) return <Skeleton className="h-48" />;
-  if (queue.error) return <Card className="p-4 text-base text-critical">{errorMessage(queue.error)}</Card>;
   const all = queue.data?.queue ?? [];
   // Find a patient without scrolling: name, UHID, phone, token or OP number.
   const q = search.trim().toLowerCase();
@@ -71,6 +70,11 @@ export function CheckoutList({ branch }: { branch: string }) {
   const yesterday = queue.data ? new Date(Date.parse(`${queue.data.today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10) : '';
   const recent = entries.filter((e) => e.visitDate >= yesterday);
   const older = entries.filter((e) => e.visitDate < yesterday);
+  // A busy day (200 waiting): 30 cards a page, the search finds anyone at once.
+  const { rows: page, pager } = usePaged(recent, search, 30);
+
+  if (queue.isLoading) return <Skeleton className="h-48" />;
+  if (queue.error) return <Card className="p-4 text-base text-critical">{errorMessage(queue.error)}</Card>;
 
   return (
     <div className="space-y-4">
@@ -115,11 +119,12 @@ export function CheckoutList({ branch }: { branch: string }) {
         </Card>
       ) : (
         <>
-        {recent.map((e, i) => [
+        {page.map((e, i) => [
           // A new day starts here: yesterday's tokens and today's are never mixed up.
-          (i === 0 ? recent.some((x) => x.visitDate !== e.visitDate) : recent[i - 1]!.visitDate !== e.visitDate) && <DayHeading key={`d${e.visitDate}`} day={e.visitDate} today={queue.data!.today} count={recent.filter((x) => x.visitDate === e.visitDate).length} />,
+          (i === 0 ? recent.some((x) => x.visitDate !== e.visitDate) : page[i - 1]!.visitDate !== e.visitDate) && <DayHeading key={`d${e.visitDate}`} day={e.visitDate} today={queue.data!.today} count={recent.filter((x) => x.visitDate === e.visitDate).length} />,
           <CheckoutCard key={e.visitId} branch={branch} entry={e} today={queue.data!.today} open={openId === e.visitId} onToggle={() => setOpenId((id) => (id === e.visitId ? null : e.visitId))} onCollected={(result) => qc.setQueryData(lastKey, { visitId: e.visitId, patientName: e.patientName, result })} />,
         ])}
+        <Pager {...pager} />
         {older.length > 0 && (
           <div className="rounded-lg border border-dashed border-warning/50">
             <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-base font-semibold text-warning" onClick={() => setShowOlder((x) => !x)}>
@@ -185,7 +190,11 @@ function CheckoutCard({ branch, entry, today, open, onToggle, onCollected }: { b
               )}
               {entry.direct ? (
                 <Badge tone="brand" dot className="text-sm">
-                  {entry.direct === 'lab' ? 'Lab test only' : 'Bill only'}
+                  {entry.direct === 'course' ? entry.courseLabel : entry.direct === 'lab' ? 'Lab test only' : 'Bill only'}
+                </Badge>
+              ) : entry.labAdvance ? (
+                <Badge tone="warning" dot className="text-sm">
+                  Lab advance · still with the doctor
                 </Badge>
               ) : (
                 sent && (
@@ -355,6 +364,7 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
   return (
     <div className="border-t border-border text-base">
       {data.medicines && <PharmacyNote branch={branch} visitId={data.visitId} note={data.medicines.pharmacyNote} />}
+      {data.medicines && <RxNotes branch={branch} visitId={data.visitId} />}
 
       {bill && (
         <section aria-label="Consultation and lab" className="border-b border-border">
@@ -646,5 +656,23 @@ function MoneyInput({ label, value, onChange }: { label: string; value: string; 
       <span className="text-muted">₹</span>
       <Input aria-label={label} inputMode="decimal" className="h-11 w-28 text-right text-base" value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
+  );
+}
+
+/** The doctor's notes and instructions between the medicines, for the counter to read (and tell the patient). */
+export function RxNotes({ branch, visitId }: { branch: string; visitId: number }) {
+  const { data } = useQuery({ queryKey: ['prescription', branch, visitId], queryFn: () => api.get<{ items: PrescriptionItem[]; notes: PrescriptionNote[] }>(`/b/${branch}/visits/${visitId}/prescription`), staleTime: 30_000 });
+  const notes = data?.notes ?? [];
+  if (!notes.length) return null;
+  const nameOf = (id: number | null) => (id == null ? null : data!.items.find((i) => i.id === id)?.medicineName ?? null);
+  return (
+    <ul className="space-y-1 border-b border-border px-4 py-2.5">
+      {notes.map((n) => (
+        <li key={n.id} className="flex flex-wrap items-baseline gap-x-2">
+          <NoteLine note={n} />
+          {nameOf(n.afterItemId) && <span className="text-xs text-muted">· with {nameOf(n.afterItemId)}</span>}
+        </li>
+      ))}
+    </ul>
   );
 }

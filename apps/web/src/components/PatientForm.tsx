@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { Link, useParams } from 'react-router';
@@ -8,9 +9,11 @@ import { api, ApiError, errorMessage } from '@/api/client';
 import { ageOf } from '@/pages/Patients';
 import { ConditionsPicker } from './Conditions';
 import { isUndone } from '@/components/undo';
+import { clearDraft, DraftBar, readDraft, saveDraft } from './drafts';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const emptyToNull = (v: unknown) => (v === '' ? null : v);
+const phoneDigits = (v: string | null | undefined) => (v ?? '').replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
 /** The order this browser's date box expects, e.g. "mm/dd/yyyy" or "dd/mm/yyyy". */
 const DATE_ORDER = new Intl.DateTimeFormat(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' })
   .formatToParts(new Date(2000, 0, 1))
@@ -24,26 +27,31 @@ export function PatientForm({
   onSubmit,
   onCancel,
   onUseExisting,
+  prefill,
 }: {
   initial?: Patient;
+  /** A new patient: what was already typed in the search (the mobile number or the name). */
+  prefill?: { phone?: string; name?: string };
   /** Given: a patient already registered with the typed number can be picked instead of making a second record. */
   onUseExisting?: (p: Patient) => void;
   submitLabel: string;
   onSubmit: (values: PatientInput) => Promise<unknown>;
   onCancel: () => void;
 }) {
-  const {
-    register,
-    handleSubmit,
-    setError,
-    watch,
-    setValue,
-    formState: { errors, isSubmitting },
-  } = useForm<PatientFormValues, unknown, PatientInput>({
-    resolver: zodResolver(patientInputSchema),
-    defaultValues: {
-      name: initial?.name ?? '',
-      phone: initial?.phone?.replace(/^\+91/, '') ?? '',
+  const { branch } = useParams();
+  // A new patient only: what is typed is kept as a draft (per branch) until it is saved.
+  const draftKey = !initial && branch ? `patient:${branch}` : null;
+  const [restored, setRestored] = useState(() => {
+    const d = draftKey ? readDraft<PatientFormValues>(draftKey) : null;
+    if (!d) return null;
+    // The search says another number or name: that is another patient, not this draft.
+    if (prefill?.phone && d.values.phone && phoneDigits(d.values.phone) !== phoneDigits(prefill.phone)) return null;
+    if (prefill?.name && d.values.name && d.values.name.trim().toLowerCase() !== prefill.name.trim().toLowerCase()) return null;
+    return d;
+  });
+  const blank: PatientFormValues = {
+    name: initial?.name ?? prefill?.name ?? '',
+    phone: initial?.phone?.replace(/^\+91/, '') ?? phoneDigits(prefill?.phone),
       email: initial?.email ?? '',
       gender: initial?.gender ?? null,
       dob: initial?.dob ?? '',
@@ -55,12 +63,28 @@ export function PatientForm({
       conditions: initial?.conditions ?? '',
       emergencyContactName: initial?.emergencyContactName ?? '',
       emergencyContactPhone: initial?.emergencyContactPhone?.replace(/^\+91/, '') ?? '',
-    },
+  };
+  const {
+    register,
+    handleSubmit,
+    setError,
+    watch,
+    setValue,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<PatientFormValues, unknown, PatientInput>({
+    resolver: zodResolver(patientInputSchema),
+    defaultValues: restored ? { ...blank, ...restored.values } : blank,
   });
+  // Every change goes to the draft (only while the switch is on: saveDraft checks it).
+  useEffect(() => {
+    if (!draftKey) return;
+    const sub = watch((values) => saveDraft(draftKey, values));
+    return () => sub.unsubscribe();
+  }, [draftKey, watch]);
 
   // Same mobile number as someone already registered: most often the same person typed in twice.
-  const { branch } = useParams();
-  const digits = (watch('phone') ?? '').replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
+  const digits = phoneDigits(watch('phone'));
   const same = useQuery({
     queryKey: ['patients', branch, 'same-phone', digits],
     queryFn: () => api.get<{ patients: Patient[] }>(`/b/${branch}/patients?${new URLSearchParams({ q: digits, limit: '5' })}`),
@@ -76,6 +100,7 @@ export function PatientForm({
   async function submit(values: PatientInput) {
     try {
       await onSubmit(values);
+      if (draftKey) clearDraft(draftKey);
     } catch (err) {
       if (isUndone(err)) return; // Undo pressed: nothing was saved, the form stays as typed
       // Server-side rule broken? Show it on the right field.
@@ -89,6 +114,18 @@ export function PatientForm({
 
   return (
     <form onSubmit={handleSubmit(submit)} noValidate className="grid gap-4 sm:grid-cols-2">
+      {draftKey && (
+        <div className="sm:col-span-2">
+          <DraftBar
+            restoredAt={restored?.at ?? null}
+            onClear={() => {
+              clearDraft(draftKey);
+              setRestored(null);
+              reset({ ...blank, name: '', phone: '' });
+            }}
+          />
+        </div>
+      )}
       <div className="sm:col-span-2">
         <Field required label="Full name" htmlFor="name" error={errors.name?.message}>
           <Input id="name" autoFocus aria-invalid={!!errors.name} {...register('name')} />

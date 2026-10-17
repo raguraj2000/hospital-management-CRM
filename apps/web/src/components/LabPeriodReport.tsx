@@ -6,7 +6,7 @@ import { FlaskConical } from 'lucide-react';
 import { formatRupees } from '@platform/shared';
 import { Card, CardHeader, EmptyState, Skeleton, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
-import { PeriodPicker, type PeriodDays } from './PeriodReport';
+import { PeriodPicker, periodQuery, type PeriodDays } from './PeriodReport';
 
 interface LabReportData {
   days: number;
@@ -19,7 +19,7 @@ interface LabReportData {
 
 export function LabPeriodReport({ branch }: { branch: string }) {
   const [days, setDays] = useState<PeriodDays>(1);
-  const { data, isLoading, error } = useQuery({ queryKey: ['lab-period', branch, days], queryFn: () => api.get<LabReportData>(`/b/${branch}/lab/report?days=${days}`) });
+  const { data, isLoading, error } = useQuery({ queryKey: ['lab-period', branch, periodQuery(days)], queryFn: () => api.get<LabReportData>(`/b/${branch}/lab/report?${periodQuery(days)}`) });
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">

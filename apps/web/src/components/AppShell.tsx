@@ -1,6 +1,6 @@
 import { api } from '@/api/client';
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import {
   Link,
   NavLink,
@@ -35,6 +35,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from '@platform/ui';
+import { MENU_COUNTS } from '@platform/shared';
 import { NAV, NAV_GROUPS, type NavItem } from '@/nav';
 import { useLogout, useMe } from '@/state/auth';
 import { useTheme, type Theme } from '@/state/theme';
@@ -43,6 +44,7 @@ import { useBranchLogo } from './BranchLogo';
 import { NEW_OP_EVENT, QuickOp } from './QuickOp';
 import type { NewChoice } from './NewMenu';
 import { DirectLab } from './DirectLab';
+import { setSkipUndo } from './undo';
 import { Shortcuts } from './Shortcuts';
 
 const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
@@ -52,7 +54,10 @@ const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
 ];
 
 /** What the number next to a page of the side menu counts. */
-const WAITING_TITLE: Record<string, string> = { visits: 'Patients waiting, with the doctor or at the lab', billing: 'Patients to collect from', pharmacy: 'Patients waiting for medicines', lab: 'Lab tests to do', treatments: 'Doses still to give today' };
+const WAITING_TITLE: Record<string, string> = Object.fromEntries(MENU_COUNTS.map((c) => [c.key, `${c.name}: ${c.meaning.toLowerCase()}`]));
+
+/** Lists that reload only when asked (the nurse's Refresh / Auto refresh), and the change watch itself. */
+const MANUAL_REFRESH = new Set(['changes', 'treatments', 'treatments-due']);
 
 export function AppShell() {
   const { data: me } = useMe();
@@ -68,10 +73,23 @@ export function AppShell() {
   const navCounts = useQuery({ queryKey: ['nav-counts', branch], queryFn: () => api.get<{ enabled?: boolean; counts: Record<string, number> }>(`/b/${branch}/nav-counts`),
     enabled: !!branch && !!me,
     // Switched off in Settings: asked once, then left alone (switching it on again refreshes this).
-    refetchInterval: (q) => (q.state.data?.enabled === false ? false : 20_000),
+    // Reloaded when something changed (see the watch below), not on a clock.
     refetchOnWindowFocus: (q) => q.state.data?.enabled !== false,
     staleTime: 10_000,
   });
+  // Every 15 s one tiny question: "has anything changed in this branch?". Only when the answer moves, the lists on
+  // screen reload (OP visits, billing, lab, pharmacy, the side-menu numbers). The nurse's page keeps its own Refresh.
+  const queryClient = useQueryClient();
+  const changes = useQuery({ queryKey: ['changes', branch], queryFn: () => api.get<{ version: string }>(`/b/${branch}/changes`), enabled: !!branch && !!me, refetchInterval: 15_000, refetchOnWindowFocus: true, staleTime: 0 });
+  const seen = useRef<string | null>(null);
+  useEffect(() => {
+    const v = changes.data?.version;
+    if (!v) return;
+    if (seen.current && seen.current !== v) {
+      void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[1] === branch && !MANUAL_REFRESH.has(String(q.queryKey[0])) });
+    }
+    seen.current = v;
+  }, [changes.data?.version, branch, queryClient]);
   const waiting: Record<string, number> = navCounts.data?.counts ?? {};
   const [quickOp, setQuickOp] = useState(false);
   const [direct, setDirect] = useState<'lab' | 'bill' | null>(null);
@@ -98,6 +116,7 @@ export function AppShell() {
   const items = NAV.filter((n) => current.permissions.includes(n.permission) && !(n.foldedWith && current.permissions.includes(n.foldedWith)));
   const to = (path: string) => `/${current.slug}${path ? `/${path}` : ''}`;
   const can = (p: string) => current.permissions.includes(p as never);
+  setSkipUndo(can('undo.skip'));
   // Ctrl+K / "New": what this role can start. Only one thing: it opens straight away.
   const newChoices: NewChoice[] = [
     ...(can('patient.create') ? (['op'] as const) : []),
