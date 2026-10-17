@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, CheckCircle2, Printer, Save } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Lock, Pencil, Printer, Save } from 'lucide-react';
 import { flagResult, type LabReport, type LabReportTest } from '@platform/shared';
 import { Avatar, Badge, Button, Card, CardHeader, ConfirmDialog, EmptyState, Input, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
@@ -111,7 +111,12 @@ function differentialTotal(params: Param[], values: Record<number, string>) {
 }
 
 function TestCard({ branch, visitId, test, othersPending }: { branch: string; visitId: string; test: LabReportTest; othersPending: number }) {
-  const canEnter = useCan('lab.view');
+  const canCorrect = useCan('lab.correct');
+  // A completed report is locked: only "Correct completed lab results" opens it again, with a reason.
+  const [correcting, setCorrecting] = useState(false);
+  const [reason, setReason] = useState('');
+  const locked = test.status === 'completed' && !correcting;
+  const canEnter = useCan('lab.view') && !locked;
   // The patient's last 3 results of the same lines on earlier visits (shared by the cards of this visit).
   const history = useQuery({ queryKey: ['lab-history', branch, visitId], queryFn: () => api.get<{ history: Record<number, { at: string; value: string; flag: string | null }[]> }>(`/b/${branch}/visits/${visitId}/lab-history`), staleTime: 60_000 });
   const qc = useQueryClient();
@@ -145,13 +150,18 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
         results: test.parameters.map((p) => ({ parameterId: p.id, value: (values[p.id] ?? '').trim() })),
         complete,
         notRequired: test.parameters.filter((p) => !p.optional && !required[p.id]).map((p) => p.id),
+        ...(test.status === 'completed' ? { reason: reason.trim() } : {}),
       });
       // Completing waits 5 seconds (Undo on the toast); a plain Save goes at once.
       await (complete ? withUndo(`Completing ${test.name}`, put) : put());
       await qc.invalidateQueries({ queryKey: ['lab-report', branch, visitId] });
       qc.invalidateQueries({ queryKey: ['lab-queue', branch] });
       qc.invalidateQueries({ queryKey: ['patient-lab', branch] });
-      if (!complete) toast.success(`${test.name} saved`);
+      if (test.status === 'completed') {
+        toast.success(`${test.name} corrected`, { description: 'The printed report says when it was corrected.' });
+        setCorrecting(false);
+        setReason('');
+      } else if (!complete) toast.success(`${test.name} saved`);
       else if (othersPending > 0) toast.success(`${test.name} completed`, { description: `${othersPending} more test${othersPending > 1 ? 's' : ''} on this visit to complete.` });
       else {
         // Every test of the visit is done: back to the lab, on the Completed list, where the report prints.
@@ -169,7 +179,7 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
     <Card>
       <CardHeader
         title={test.name}
-        description={`${test.department}${test.kind === 'card' ? ' · card test' : ''} · ${filled}/${test.parameters.length} filled`}
+        description={`${test.department}${test.kind === 'card' ? ' · card test' : ''} · ${filled}/${test.parameters.length} filled${test.correctedAt ? ` · corrected ${new Date(test.correctedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })}` : ''}`}
         action={
           <Badge tone={labTone[test.status]} dot>
             {statusLabel[test.status]}
@@ -243,7 +253,40 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
           </div>
         )}
       </div>
-      {canEnter && (
+      {locked && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border p-3 text-sm text-muted">
+          <span className="flex items-center gap-1.5">
+            <Lock className="size-4" /> Completed: locked.{!canCorrect && ' The owner or branch admin can correct it.'}
+          </span>
+          {canCorrect && (
+            <Button variant="outline" onClick={() => setCorrecting(true)}>
+              <Pencil /> Correct results
+            </Button>
+          )}
+        </div>
+      )}
+      {correcting && (
+        <div className="flex flex-wrap items-end justify-end gap-2 border-t border-border bg-warning-soft/50 p-3">
+          <label className="min-w-64 flex-1 text-sm font-medium">
+            Why is it corrected? <span className="text-critical">*</span>
+            <Input className="mt-1" autoFocus placeholder="e.g. Typing mistake: 13.5 not 1.35" value={reason} onChange={(e) => setReason(e.target.value)} />
+          </label>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setCorrecting(false);
+              setReason('');
+              setRaw(Object.fromEntries(test.parameters.map((p) => [p.id, p.value])));
+            }}
+          >
+            Cancel
+          </Button>
+          <Button disabled={saving || !dirty || reason.trim().length < 3} onClick={() => save(false)}>
+            <Save /> Save correction
+          </Button>
+        </div>
+      )}
+      {canEnter && test.status !== 'completed' && (
         <div className="flex flex-wrap justify-end gap-2 border-t border-border p-3">
           <Button variant="outline" disabled={saving || !dirty} onClick={() => save(false)}>
             <Save /> Save
@@ -257,7 +300,7 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
               setConfirming(true);
             }}
           >
-            <CheckCircle2 /> {test.status === 'completed' ? 'Save (completed)' : 'Save & complete'} <KeyHint>Alt+S</KeyHint>
+            <CheckCircle2 /> Save & complete <KeyHint>Alt+S</KeyHint>
           </Button>
         </div>
       )}

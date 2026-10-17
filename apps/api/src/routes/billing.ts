@@ -30,7 +30,8 @@ import {
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, user, vendorPayment, visitCharge } from '../db/schema.js';
-import { dayStamp, exclusively, localToday, patientOfBranch, visitOfBranch, visitsToCollect, withToken, assertPatientActive } from '../lib/clinic.js';
+import { assertVisitOpen, dayStamp, exclusively, localToday, patientOfBranch, textSearch, visitOfBranch, visitsToCollect, withToken, assertPatientActive } from '../lib/clinic.js';
+import { periodOf } from '../lib/clinic.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const doctor = alias(user, 'doctor');
@@ -223,6 +224,22 @@ export async function createBill(tx: Tx, branchId: number, u: Who, v: { id: numb
 }
 
 /** Change fees/discount; also pulls in lab tests ordered since. Only before the first payment. */
+/**
+ * A charge for a visit, as POST /visits/:id/charges puts it: on the visit's unpaid bill when it has one (at most
+ * 20 there), else waiting on the visit for its next bill. (Used by treatment courses too.)
+ */
+export async function addChargeToVisit(tx: Tx, branchId: number, u: Who, visitId: number, charge: { description: string; amountPaise: number }) {
+  const ids = await tx.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, branchId), eq(opBill.visitId, visitId))).orderBy(asc(opBill.id));
+  const bills = await Promise.all(ids.map((r) => billOf(tx, branchId, r.id)));
+  const open = bills.find((x) => x.editable);
+  if (open) {
+    if (billCharges(open).length >= 20) throw new AppError(400, 'validation', 'At most 20 extra charges on a bill');
+    await updateBill(tx, branchId, u, open, { charges: [...billCharges(open), charge] });
+    return;
+  }
+  await tx.insert(visitCharge).values({ ...charge, branchId, visitId, createdBy: u.id });
+}
+
 export async function updateBill(tx: Tx, branchId: number, u: Who, bill: OpBill, data: z.infer<typeof billUpdateSchema>) {
   if (!bill.editable) throw new AppError(409, 'has_payments', 'This bill has payments and can no longer be changed');
   const unbilled = await unbilledLabOrders(tx, branchId, bill.visitId);
@@ -306,6 +323,7 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    assertVisitOpen(v.status);
     await db.update(opVisit).set({ pharmacyNote: note || null, updatedAt: new Date().toISOString() }).where(and(eq(opVisit.branchId, b.id), eq(opVisit.id, v.id)));
     await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: v.id, detail: { pharmacyNote: note } });
     return c.json({ pharmacyNote: note || null });
@@ -316,9 +334,15 @@ export function createBillingRoutes(db: Db) {
     const bills = await Promise.all(ids.map((r) => billOfBranch(branchId, r.id)));
     const open = bills.find((x) => x.editable) ?? null;
     const presets = await chargePresets(db, branchId);
-    if (open) return { open, presets, locked: null, charges: billCharges(open).map((x, i) => ({ ...x, key: `b${i}`, pending: false })) };
-    return { open, presets, locked: null, charges: (await pendingVisitCharges(db, branchId, visitId)).map((p) => ({ description: p.description, amountPaise: p.amountPaise, key: `v${p.id}`, pending: true })) };
+    // A completed visit is final: its charges are shown, not changed.
+    const [vs] = await db.select({ status: opVisit.status }).from(opVisit).where(eq(opVisit.id, visitId));
+    const locked = vs?.status === 'completed' ? 'This visit is completed: its charges can no longer change.' : null;
+    if (open) return { open, presets, locked, charges: billCharges(open).map((x, i) => ({ ...x, key: `b${i}`, pending: false })) };
+    return { open, presets, locked, charges: (await pendingVisitCharges(db, branchId, visitId)).map((p) => ({ description: p.description, amountPaise: p.amountPaise, key: `v${p.id}`, pending: true })) };
   }
+
+  /** The ready-made charges alone (course templates pick from them; no visit needed). */
+  app.get('/charge-presets', requireAnyPermission('prescription.write', 'billing.receive', 'settings.manage'), async (c) => c.json({ presets: await chargePresets(db, c.get('branch').id) }));
 
   app.get('/visits/:visitId/charges', requireAnyPermission('prescription.write', 'billing.receive', 'patient.view'), async (c) => {
     const b = c.get('branch');
@@ -333,7 +357,7 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    assertVisitOpen(v.status);
     await assertPatientActive(db, b.id, v.patientId);
     const now = await chargesOfVisit(b.id, v.id);
     if (now.locked) throw new AppError(409, 'has_payments', now.locked);
@@ -356,6 +380,7 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    assertVisitOpen(v.status);
     const now = await chargesOfVisit(b.id, v.id);
     if (now.locked) throw new AppError(409, 'has_payments', now.locked);
     const key = c.req.param('key');
@@ -377,6 +402,7 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
+    assertVisitOpen(v.status);
     const now = await chargesOfVisit(b.id, v.id);
     if (now.locked) throw new AppError(409, 'has_payments', now.locked);
     const key = c.req.param('key');
@@ -419,7 +445,7 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    assertVisitOpen(v.status);
     const fee = parsed.data.consultationFeePaise;
     await db.transaction(async (tx) => {
       const now = await visitFee(tx, b.id, v.id);
@@ -530,7 +556,10 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const status = c.req.query('status') ?? 'due';
     const asked = c.req.query('date');
-    const date = status === 'paid' && !(asked && /^\d{4}-\d{2}-\d{2}$/.test(asked)) ? await localToday(db) : asked;
+    // ?q=: a name, phone, UHID, bill or OP no. -- then every day (newest 200), not one day.
+    const q = c.req.query('q');
+    const found = textSearch(q, [patient.name, patient.uhid, opBill.billNo, opVisit.opNo], patient.phone);
+    const date = found ? undefined : status === 'paid' && !(asked && /^\d{4}-\d{2}-\d{2}$/.test(asked)) ? await localToday(db) : asked;
     const paid = db
       .select({ billId: billPayment.billId, paid: sql<number>`sum(${billPayment.amountPaise})`.as('paid') })
       .from(billPayment)
@@ -558,6 +587,7 @@ export function createBillingRoutes(db: Db) {
           eq(opBill.branchId, b.id),
           status === 'due' ? sql`coalesce(${paid.paid}, 0) < ${opBill.totalPaise}` : status === 'paid' ? sql`coalesce(${paid.paid}, 0) >= ${opBill.totalPaise}` : undefined,
           date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? sql`date(${opBill.createdAt}, '+330 minutes') = ${date}` : undefined,
+          found,
         ),
       )
       .orderBy(desc(opBill.id))
@@ -607,9 +637,7 @@ export function createBillingRoutes(db: Db) {
     const u = c.get('user');
     // The whole report needs reports.view; a doctor without it sees only their own line.
     const all = b.permissions.includes('reports.view');
-    const days = Math.min(Math.max(Math.floor(Number(c.req.query('days')) || 1), 1), 366);
-    const to = await localToday(db);
-    const { from } = (await db.get<{ from: string }>(sql`select date(${to}, ${`-${days - 1} days`}) as "from"`))!;
+    const { from, to, days } = await periodOf(db, c.req.query());
     const inRange = (col: string) => sql.raw(`date(${col}, '+330 minutes') between '${from}' and '${to}'`);
     const one = async <T,>(q: ReturnType<typeof sql>) => (await db.all<T>(q))[0]!;
 
@@ -635,10 +663,12 @@ export function createBillingRoutes(db: Db) {
       ) group by mode`);
     const byMode = { cash: 0, upi: 0, card: 0 } as Record<'cash' | 'upi' | 'card', number>;
     for (const m of modes) byMode[m.mode] = m.paise;
-    const got = await one<{ billsPaise: number; pharmacyOpPaise: number; pharmacyDirectPaise: number }>(sql`select
+    // Medicines are the medicine lines only; a direct sale's round off is counted with the round off below.
+    const got = await one<{ billsPaise: number; pharmacyOpPaise: number; pharmacyDirectPaise: number; pharmacyRoundOffPaise: number }>(sql`select
       (select coalesce(sum(bp.amount_paise), 0) from bill_payment bp where bp.branch_id = ${b.id} and ${inRange('bp.created_at')}) as billsPaise,
-      (select coalesce(sum(ps.total_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.visit_id is not null and ${inRange('ps.created_at')}) as pharmacyOpPaise,
-      (select coalesce(sum(ps.total_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.visit_id is null and ${inRange('ps.created_at')}) as pharmacyDirectPaise`);
+      (select coalesce(sum(ps.total_paise - ps.round_off_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.visit_id is not null and ${inRange('ps.created_at')}) as pharmacyOpPaise,
+      (select coalesce(sum(ps.total_paise - ps.round_off_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.visit_id is null and ${inRange('ps.created_at')}) as pharmacyDirectPaise,
+      (select coalesce(sum(ps.round_off_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ${inRange('ps.created_at')}) as pharmacyRoundOffPaise`);
     const billed = await one<{ consultationPaise: number; labPaise: number; otherPaise: number; roundOffPaise: number; discountPaise: number; bills: number; duePaise: number }>(sql`select
       coalesce(sum(ob.consultation_fee_paise), 0) as consultationPaise,
       coalesce(sum((select sum(l.amount_paise) from op_bill_line l where l.bill_id = ob.id and l.lab_order_id is not null)), 0) as labPaise,
@@ -662,7 +692,8 @@ export function createBillingRoutes(db: Db) {
       discounts,
       days, from, to, own: false, doctors,
       received: { ...byMode, totalPaise: byMode.cash + byMode.upi + byMode.card, ...got },
-      billed, ...out,
+      // Round off of the OP bills and of the direct sales together: all the money that rounding added.
+      billed: { ...billed, roundOffPaise: billed.roundOffPaise + got.pharmacyRoundOffPaise }, ...out,
     });
   });
 
@@ -693,7 +724,8 @@ export function createBillingRoutes(db: Db) {
     const [lab] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, sql`${opBillLine.labOrderId} is not null`));
     const [charges] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, isNull(opBillLine.labOrderId), ne(opBillLine.description, ROUND_OFF_LINE)));
     const [rounded] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, isNull(opBillLine.labOrderId), eq(opBillLine.description, ROUND_OFF_LINE)));
-    const [sold] = await db.select({ sum: sum(pharmacySale.totalPaise) }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt)));
+    // Pharmacy = the medicine lines; a direct sale's round off is counted with the bills' round off.
+    const [sold] = await db.select({ sum: sql<number>`coalesce(sum(${pharmacySale.totalPaise} - ${pharmacySale.roundOffPaise}), 0)`, rounded: sum(pharmacySale.roundOffPaise) }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt)));
     const paidOnBill = sql<number>`(select coalesce(sum(${billPayment.amountPaise}), 0) from ${billPayment} where ${billPayment.billId} = ${opBill.id})`;
     const due = sql<number>`coalesce(sum(max(0, ${opBill.totalPaise} - ${paidOnBill})), 0)`;
     const [pendingDay] = await db.select({ due }).from(opBill).where(billsOfDay);
@@ -726,7 +758,7 @@ export function createBillingRoutes(db: Db) {
       ...(await collectionOf(b.id, day)),
       visits: { total: count(seen), completed: count(seen.filter((r) => r.status === 'completed')), cancelled: count(visitRows) - count(seen), newPatients: newPatients!.n, byDoctor: [...byDoctor.values()] },
       labTests: labTests!.n,
-      billed: { consultationPaise: heads!.consultation, labPaise: lab!.sum, otherPaise: heads!.other + charges!.sum, roundOffPaise: rounded!.sum, discountPaise: heads!.discount, pharmacyPaise: sold!.sum },
+      billed: { consultationPaise: heads!.consultation, labPaise: lab!.sum, otherPaise: heads!.other + charges!.sum, roundOffPaise: rounded!.sum + sold!.rounded, discountPaise: heads!.discount, pharmacyPaise: sold!.sum },
       pendingDayPaise: pendingDay!.due,
       pendingAllPaise: pendingAll!.due,
       receipts,

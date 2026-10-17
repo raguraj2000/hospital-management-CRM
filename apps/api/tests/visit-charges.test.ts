@@ -47,21 +47,11 @@ describe('visit charges', () => {
     expect(paid.bill.totalPaise).toBe(35000);
     expect(paid.bill.lines.filter((l: any) => l.labOrderId == null).map((l: any) => [l.description, l.amountPaise])).toEqual([['Dressing', 15000]]);
 
-    // A charge added after the bill was paid waits on the visit, brings the patient back onto the counter's
-    // list, and is collected on a second bill that carries no consultation fee.
+    // Paid in full, the visit is completed: it is final, nothing more goes on it (a new visit is made instead).
     expect((await json(owner('/api/b/main/checkout-queue'))).queue.some((q: any) => q.visitId === v.id)).toBe(false);
-    expect((await post(doc, `/api/b/main/visits/${v.id}/charges`, { description: 'Second dressing', amountPaise: 10000 })).status).toBe(201);
-    expect((await json(doc(`/api/b/main/visits/${v.id}/charges`))).charges).toMatchObject([{ description: 'Second dressing', pending: true }]);
-    const again = (await json(owner('/api/b/main/checkout-queue'))).queue.find((q: any) => q.visitId === v.id);
-    expect(again.grandTotalPaise).toBe(10000);
-    const co2 = await json(owner(`/api/b/main/visits/${v.id}/checkout`));
-    expect(co2.bill).toMatchObject({ editable: true, consultationFeePaise: 0, charges: [{ description: 'Second dressing', amountPaise: 10000 }] });
-    expect(co2.totals.grandTotalPaise).toBe(10000);
-    const paid2 = await json(post(owner, `/api/b/main/visits/${v.id}/checkout`, { paymentMode: 'upi', amountPaise: 10000, itemIds: [], consultationFeePaise: 0, discountPaise: 0 }));
-    expect(paid2.bill).toMatchObject({ totalPaise: 10000, consultationFeePaise: 0, status: 'paid' });
-    expect(paid2.bill.id).not.toBe(paid.bill.id);
-    expect((await json(owner(`/api/b/main/visits/${v.id}/bills`))).bills).toHaveLength(2);
-    expect((await json(owner('/api/b/main/checkout-queue'))).queue.some((q: any) => q.visitId === v.id)).toBe(false);
+    const late = await post(doc, `/api/b/main/visits/${v.id}/charges`, { description: 'Second dressing', amountPaise: 10000 });
+    expect(late.status).toBe(409);
+    expect((await late.json()).code).toBe('visit_completed');
   });
 
   it('only who prescribes changes the note to the pharmacy: not the counter, not the lab, not through another branch', async () => {

@@ -197,8 +197,9 @@ describe('checkout: one payment for the whole visit', () => {
     expect((await w.lab(`/api/b/main/visits/${v.id}/lab-report?print=1`)).status).toBe(402); // until paid, or released by an admin
     expect((await json(w.owner('/api/b/main/dashboard'))).collectionToday).toMatchObject({ upiPaise: 30000, totalPaise: 30000 });
 
-    // It stays on the counter's list until settled; the part-paid bill can no longer be edited.
-    expect((await queueOf(w.desk)).map((q) => [q.visitId, q.status, q.medicinesWaiting, q.toBillPaise, q.balancePaise, q.summary])).toEqual([[v.id, 'completed', 0, 0, 39000, 'Balance due ₹390 · Total ₹390']]);
+    // Part paid, nothing new: not on "To collect" (fresh only) but under Pending payments; the bill can no longer be edited.
+    expect((await queueOf(w.desk)).map((q) => q.visitId)).not.toContain(v.id);
+    expect((await json(w.desk('/api/b/main/bills?status=due'))).bills.map((b: any) => [b.visitId, b.totalPaise - b.paidPaise])).toEqual([[v.id, 39000]]);
     expect(await toBillOf(w.desk)).toEqual([]); // billed; the balance is under "Bills with balance due"
     expect((await checkout(w.desk, v.id, { discountPaise: 39000, paymentMode: 'cash', amountPaise: 0 })).status).toBe(409);
     expect((await checkout(w.desk, v.id, { paymentMode: 'cash', amountPaise: 39001 })).status).toBe(400);
@@ -208,17 +209,15 @@ describe('checkout: one payment for the whole visit', () => {
     expect((await w.lab(`/api/b/main/visits/${v.id}/lab-report?print=1`)).status).toBe(200);
   });
 
-  it('a lab test ordered after the bill was paid goes on a new bill, collected with the old balance', async () => {
+  it('a completed visit is final: no lab test after it; its old balance is still collected', async () => {
     const w = await world();
     const v = await visit(w, 'Ravi Kumar', { labs: false, rx: false, sent: true });
     await checkout(w.desk, v.id, { paymentMode: 'cash', amountPaise: 5000 }); // ₹150 of the fee stays due
-    await w.doc(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [w.sugar] } });
-    const before = await json(w.desk(`/api/b/main/visits/${v.id}/checkout`));
-    expect(before.bill).toMatchObject({ billId: null, editable: true, consultationFeePaise: 0, duePaise: 23000, earlierBills: [{ balancePaise: 15000 }] });
-    expect((await toBillOf(w.desk)).map((x) => [x.visitId, x.hasBill, x.unbilledLabCount, x.unbilledLabPaise])).toEqual([[v.id, true, 1, 8000]]);
-    const done = await json(checkout(w.desk, v.id, { paymentMode: 'cash', amountPaise: 23000 }));
-    expect(done.paidBills.map((p: any) => p.amountPaise)).toEqual([15000, 8000]); // oldest bill first
-    expect(done.bill).toMatchObject({ consultationFeePaise: 0, totalPaise: 8000, status: 'paid' });
+    expect(await statusOf(v.id)).toBe('completed');
+    const late = await w.doc(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [w.sugar] } });
+    expect(late.status).toBe(409);
+    expect((await late.json()).code).toBe('visit_completed');
+    const done = await json(checkout(w.desk, v.id, { paymentMode: 'cash', amountPaise: 15000 }));
     expect(done.totals.balancePaise).toBe(0);
   });
 
@@ -410,5 +409,53 @@ describe('combined bill (one print for the visit)', () => {
     const forLab = await json(w.lab(`/api/b/main/visits/${v.id}/combined-bill`));
     expect(forLab.sales).toBeNull();
     expect(forLab.totals).toMatchObject({ grandTotalPaise: 50000, paidPaise: 30000, balancePaise: 20000 });
+  });
+});
+
+describe('lab advance: pay the lab once the sample is taken, while the doctor is not done', () => {
+  it('listed for the bill part only (no medicines), paid without completing the visit; medicines later', async () => {
+    const w = await world();
+    const v = await visit(w, 'Advance Patient');
+    expect((await queueOf(w.desk)).find((e) => e.visitId === v.id)).toBeUndefined(); // waiting, no sample yet
+    const orders = (await json(w.lab(`/api/b/main/visits/${v.id}/lab-orders`))).orders;
+    expect((await w.lab(`/api/b/main/lab/orders/${orders[0].id}`, { method: 'PATCH', body: { status: 'sample_collected' } })).status).toBe(200);
+    const entry = (await queueOf(w.desk)).find((e) => e.visitId === v.id);
+    expect(entry).toMatchObject({ labAdvance: true, medicinesWaiting: 0, toBillPaise: 20000 + 30000 + 8000 });
+    expect((await queueOf(w.owner, 'east')).find((e) => e.visitId === v.id)).toBeUndefined(); // another branch
+    const co = await json(w.desk(`/api/b/main/visits/${v.id}/checkout`));
+    expect(co.medicines.items).toEqual([]);
+    // Medicines cannot be given out before the doctor is done.
+    expect((await checkout(w.desk, v.id, { paymentMode: 'cash', amountPaise: co.totals.grandTotalPaise, itemIds: v.items, roundOffPaise: 0 })).status).toBe(409);
+    expect((await checkout(w.desk, v.id, { paymentMode: 'cash', amountPaise: co.totals.grandTotalPaise, itemIds: [], roundOffPaise: 0 })).status).toBe(201);
+    expect(await statusOf(v.id)).toBe('waiting'); // still the doctor's patient
+    expect((await queueOf(w.desk)).find((e) => e.visitId === v.id)).toBeUndefined(); // nothing more until sent out
+    // The doctor sends the patient out: the medicines are collected then.
+    await setStatus(v.id, 'at_counter');
+    const later = (await queueOf(w.desk)).find((e) => e.visitId === v.id);
+    expect(later).toMatchObject({ labAdvance: false, medicinesWaiting: 2, toBillPaise: 0 });
+  });
+});
+
+describe('search on the server: bills of every day, all completed lab tests', () => {
+  it('finds by name, phone digits or bill no.; another branch finds nothing', async () => {
+    const w = await world();
+    const { patient } = await json(w.desk('/api/b/main/patients', { method: 'POST', body: { name: 'Searchable Selvi', phone: '9876512399' } }));
+    const { visit } = await json(w.desk(`/api/b/main/patients/${patient.id}/visits`, { method: 'POST', body: {} }));
+    await w.doc(`/api/b/main/visits/${visit.id}/lab-orders`, { method: 'POST', body: { testIds: [w.cbc] } });
+    await setStatus(visit.id, 'at_counter');
+    const co = await json(w.desk(`/api/b/main/visits/${visit.id}/checkout`));
+    expect((await checkout(w.desk, visit.id, { paymentMode: 'cash', amountPaise: co.totals.grandTotalPaise, itemIds: [], roundOffPaise: 0 })).status).toBe(201);
+    // An old day: the search still finds it (no ?date needed).
+    await t.db.run((await import('drizzle-orm')).sql`update op_bill set created_at = '2026-01-05T06:00:00.000Z' where visit_id = ${visit.id}`);
+    const paid = async (q: string, who = w.desk, br = 'main') => (await json(who(`/api/b/${br}/bills?status=paid&q=${encodeURIComponent(q)}`))).bills ?? [];
+    expect((await paid('selvi')).map((b: any) => b.patientName)).toEqual(['Searchable Selvi']);
+    expect(await paid('12399')).toHaveLength(1);
+    expect(await paid('nobody here')).toHaveLength(0);
+    expect(await paid('selvi', w.owner, 'east')).toHaveLength(0);
+    // Completed lab tests: by test name.
+    const t0 = (await json(w.lab(`/api/b/main/visits/${visit.id}/lab-report`))).tests[0];
+    expect((await w.lab(`/api/b/main/lab/orders/${t0.orderId}/results`, { method: 'PUT', body: { results: t0.parameters.map((p: any) => ({ parameterId: p.id, value: '12' })), complete: true } })).status).toBe(200);
+    const lab = (await json(w.lab('/api/b/main/lab/orders?status=completed&q=selvi'))).orders;
+    expect(lab.map((o: any) => o.patientName)).toEqual(['Searchable Selvi']);
   });
 });

@@ -11,6 +11,21 @@ export const config = {
   migrationsFolder: process.env.MIGRATIONS_DIR ?? path.join(apiDir, 'drizzle'),
   /** Built web app, served by this same server in production. */
   webDir: process.env.WEB_DIR ?? path.resolve(apiDir, '..', 'web', 'dist'),
+  /**
+   * Daily backups: BACKUP_DIR, or on an installed PC (NODE_ENV=production) the "backups" folder next to the data
+   * folder (C:\HMS\backups). In development none.
+   */
+  backupDir:
+    process.env.BACKUP_DIR ??
+    (process.env.NODE_ENV === 'production' && (process.env.DATABASE_URL ?? '').startsWith('file:')
+      ? path.resolve(path.dirname((process.env.DATABASE_URL ?? '').slice('file:'.length)), '..', 'backups')
+      : null),
+  /** The server's own log (the service writes it there on an installed PC): the owner downloads it for support. */
+  logFile:
+    process.env.LOG_FILE ??
+    (process.env.NODE_ENV === 'production' && (process.env.DATABASE_URL ?? '').startsWith('file:')
+      ? path.resolve(path.dirname((process.env.DATABASE_URL ?? '').slice('file:'.length)), '..', 'logs', 'server.log')
+      : null),
 };
 
 export function ensureDataDir() {

@@ -1,4 +1,4 @@
-import { StrictMode, type ReactNode } from 'react';
+import { lazy, StrictMode, Suspense, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -13,31 +13,44 @@ import { NAV } from './nav';
 import { AppShell } from './components/AppShell';
 import { AppShellSkeleton, LoginSkeleton, PageSkeleton } from './components/Skeletons';
 import { Login } from './pages/Login';
-import { Dashboard } from './pages/Dashboard';
-import { Patients } from './pages/Patients';
-import { PatientDetail } from './pages/PatientDetail';
-import { OpVisits } from './pages/OpVisits';
-import { Settings } from './pages/Settings';
-import { VisitDetail } from './pages/VisitDetail';
-import { Pharmacy } from './pages/Pharmacy';
-import { PharmacyBillPrint } from './pages/PharmacyBillPrint';
-import { Inventory } from './pages/Inventory';
-import { Lab } from './pages/Lab';
-import { LabResults } from './pages/LabResults';
-import { LabReportPrint } from './pages/LabReportPrint';
-import { Billing } from './pages/Billing';
-import { BillPage, BillPrint } from './pages/BillPage';
-import { DayReportPrint, ReceiptPrint } from './pages/BillingPrints';
-import { Treatments } from './pages/Treatments';
-import { BookmarksPage } from './pages/Bookmarks';
-import { Help } from './pages/Help';
-import { VisitBillPrint } from './pages/VisitBillPrint';
-import { Vendors } from './pages/Vendors';
-import { PurchaseBillPage } from './pages/PurchaseBill';
-import { NewPurchaseBill } from './pages/NewPurchaseBill';
-import { Platform } from './pages/Platform';
+const Dashboard = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })));
+const Patients = lazy(() => import('./pages/Patients').then((m) => ({ default: m.Patients })));
+const PatientDetail = lazy(() => import('./pages/PatientDetail').then((m) => ({ default: m.PatientDetail })));
+const OpVisits = lazy(() => import('./pages/OpVisits').then((m) => ({ default: m.OpVisits })));
+const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
+const VisitDetail = lazy(() => import('./pages/VisitDetail').then((m) => ({ default: m.VisitDetail })));
+const Pharmacy = lazy(() => import('./pages/Pharmacy').then((m) => ({ default: m.Pharmacy })));
+const PharmacyBillPrint = lazy(() => import('./pages/PharmacyBillPrint').then((m) => ({ default: m.PharmacyBillPrint })));
+const Inventory = lazy(() => import('./pages/Inventory').then((m) => ({ default: m.Inventory })));
+const Lab = lazy(() => import('./pages/Lab').then((m) => ({ default: m.Lab })));
+const LabResults = lazy(() => import('./pages/LabResults').then((m) => ({ default: m.LabResults })));
+const LabReportPrint = lazy(() => import('./pages/LabReportPrint').then((m) => ({ default: m.LabReportPrint })));
+const Billing = lazy(() => import('./pages/Billing').then((m) => ({ default: m.Billing })));
+const BillPage = lazy(() => import('./pages/BillPage').then((m) => ({ default: m.BillPage })));
+const BillPrint = lazy(() => import('./pages/BillPage').then((m) => ({ default: m.BillPrint })));
+const DayReportPrint = lazy(() => import('./pages/BillingPrints').then((m) => ({ default: m.DayReportPrint })));
+const ReceiptPrint = lazy(() => import('./pages/BillingPrints').then((m) => ({ default: m.ReceiptPrint })));
+const Treatments = lazy(() => import('./pages/Treatments').then((m) => ({ default: m.Treatments })));
+const BookmarksPage = lazy(() => import('./pages/Bookmarks').then((m) => ({ default: m.BookmarksPage })));
+const Help = lazy(() => import('./pages/Help').then((m) => ({ default: m.Help })));
+const VisitBillPrint = lazy(() => import('./pages/VisitBillPrint').then((m) => ({ default: m.VisitBillPrint })));
+const Vendors = lazy(() => import('./pages/Vendors').then((m) => ({ default: m.Vendors })));
+const PurchaseBillPage = lazy(() => import('./pages/PurchaseBill').then((m) => ({ default: m.PurchaseBillPage })));
+const NewPurchaseBill = lazy(() => import('./pages/NewPurchaseBill').then((m) => ({ default: m.NewPurchaseBill })));
+const Platform = lazy(() => import('./pages/Platform').then((m) => ({ default: m.Platform })));
 
 initTheme();
+
+// A screen that crashes is written in the server's log (Settings > Backup > Download log), once a minute per message.
+const reported = new Map<string, number>();
+function reportError(message: string, stack?: string) {
+  const now = Date.now();
+  if ((reported.get(message) ?? 0) > now - 60_000) return;
+  reported.set(message, now);
+  void fetch('/api/client-error', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, stack, url: location.pathname }) }).catch(() => {});
+}
+window.addEventListener('error', (e) => reportError(e.message, e.error?.stack));
+window.addEventListener('unhandledrejection', (e) => reportError(String(e.reason?.message ?? e.reason), e.reason?.stack));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: true } },
@@ -88,29 +101,34 @@ function ThemedToaster() {
 
 const pages: Record<string, ReactNode> = { '': <Dashboard />, patients: <Patients />, visits: <OpVisits />, settings: <Settings />, pharmacy: <Pharmacy />, inventory: <Inventory />, lab: <Lab />, billing: <Billing />, treatments: <Treatments />, bookmarks: <BookmarksPage />, help: <Help />, vendors: <Vendors /> };
 
+/** A page that is downloaded when first opened: the skeleton shows meanwhile. */
+const Page = ({ children }: { children: ReactNode }) => <Suspense fallback={<PageSkeleton />}>{children}</Suspense>;
+
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
-  { path: '/platform', element: <Platform /> },
+  { path: '/platform', element: <Page><Platform /></Page> },
   // Print page: full screen, no menus.
-  { path: '/:branch/lab/visits/:visitId/print', element: <LabReportPrint /> },
-  { path: '/:branch/billing/:billId/print', element: <BillPrint /> },
-  { path: '/:branch/billing/:billId/receipts/:paymentId/print', element: <ReceiptPrint /> },
-  { path: '/:branch/billing/day-report/print', element: <DayReportPrint /> },
-  { path: '/:branch/pharmacy/sales/:saleId/print', element: <PharmacyBillPrint /> },
-  { path: '/:branch/visits/:visitId/bill/print', element: <VisitBillPrint /> },
+  { path: '/:branch/lab/visits/:visitId/print', element: <Page><LabReportPrint /></Page> },
+  { path: '/:branch/billing/:billId/print', element: <Page><BillPrint /></Page> },
+  { path: '/:branch/billing/:billId/receipts/:paymentId/print', element: <Page><ReceiptPrint /></Page> },
+  { path: '/:branch/billing/day-report/print', element: <Page><DayReportPrint /></Page> },
+  { path: '/:branch/pharmacy/sales/:saleId/print', element: <Page><PharmacyBillPrint /></Page> },
+  { path: '/:branch/visits/:visitId/bill/print', element: <Page><VisitBillPrint /></Page> },
   {
     path: '/:branch',
     element: <AppShell />,
     children: [
       ...NAV.map((n) => ({
         ...(n.path === '' ? { index: true } : { path: n.path }),
-        element: <RequirePermission permission={n.permission}>{pages[n.path] ?? <ComingNext title={n.label} />}</RequirePermission>,
+        element: <RequirePermission permission={n.permission}><Page>{pages[n.path] ?? <ComingNext title={n.label} />}</Page></RequirePermission>,
       })),
       {
         path: 'billing/:billId',
         element: (
           <RequirePermission permission="billing.receive">
-            <BillPage />
+            <Page>
+              <BillPage />
+            </Page>
           </RequirePermission>
         ),
       },
@@ -118,7 +136,9 @@ const router = createBrowserRouter([
         path: 'vendors/purchases/new',
         element: (
           <RequirePermission permission="inventory.view">
-            <NewPurchaseBill />
+            <Page>
+              <NewPurchaseBill />
+            </Page>
           </RequirePermission>
         ),
       },
@@ -126,7 +146,9 @@ const router = createBrowserRouter([
         path: 'vendors/purchases/:id',
         element: (
           <RequirePermission permission="inventory.view">
-            <PurchaseBillPage />
+            <Page>
+              <PurchaseBillPage />
+            </Page>
           </RequirePermission>
         ),
       },
@@ -134,7 +156,9 @@ const router = createBrowserRouter([
         path: 'lab/visits/:visitId',
         element: (
           <RequirePermission permission="lab.view">
-            <LabResults />
+            <Page>
+              <LabResults />
+            </Page>
           </RequirePermission>
         ),
       },
@@ -142,7 +166,9 @@ const router = createBrowserRouter([
         path: 'visits/:visitId',
         element: (
           <RequirePermission permission="patient.view">
-            <VisitDetail />
+            <Page>
+              <VisitDetail />
+            </Page>
           </RequirePermission>
         ),
       },
@@ -150,7 +176,9 @@ const router = createBrowserRouter([
         path: 'patients/:id',
         element: (
           <RequirePermission permission="patient.view">
-            <PatientDetail />
+            <Page>
+              <PatientDetail />
+            </Page>
           </RequirePermission>
         ),
       },

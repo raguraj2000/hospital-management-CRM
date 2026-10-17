@@ -1,31 +1,66 @@
+import { CourseSittingsToday } from '@/components/Courses';
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router';
-import { CheckCheck, CheckCircle2, Syringe, Undo2 } from 'lucide-react';
-import { FORM_UNIT, prettyDose, type TreatmentDose, type TreatmentList } from '@platform/shared';
-import { Avatar, Badge, Button, Card, CardHeader, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
+import { Link, useParams, useSearchParams } from 'react-router';
+import { CheckCheck, CheckCircle2, Syringe, Undo2, RefreshCw } from 'lucide-react';
+import { FORM_UNIT, indiaDay, prettyDose, type DueSitting, type TreatmentDose, type TreatmentList } from '@platform/shared';
+import { Avatar, Badge, Button, Card, CardHeader, cn, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { ConditionBadges } from '@/components/Conditions';
 import { fmtDay, fmtTime } from '@/components/format';
 import { useBranch, useCan } from '@/state/auth';
+import { ListSearch, textMatch } from '@/components/ListSearch';
 
 /** "1 tablet" / "½ tablet" / "" for a typed dose. */
 const amountText = (d: TreatmentDose) => (d.amount ? `${prettyDose(d.amount)} ${FORM_UNIT[d.form]}` : d.dose);
 
 /** The nurse's list: every dose to give in the hospital today (and the ones missed on the last days), ticked when given. */
+/** "Auto refresh" on this page: remembered on this computer, off at first. */
+const AUTO_KEY = 'hms-treatments-auto-refresh';
+const AUTO_EVERY_MS = 60_000;
+
 export function Treatments() {
   const { branch } = useParams();
   const current = useBranch();
   const canGive = useCan('treatment.give');
   const qc = useQueryClient();
+  // Auto refresh (off unless ticked; remembered on this computer): both lists every minute.
+  const [auto, setAutoState] = useState(() => {
+    try {
+      return localStorage.getItem(AUTO_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const setAuto = (on: boolean) => {
+    setAutoState(on);
+    try {
+      localStorage.setItem(AUTO_KEY, on ? '1' : '0');
+    } catch {
+      /* private window: this time only */
+    }
+  };
+  // Refresh: this list and the course sittings, together.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = async () => {
+    setRefreshing(true);
+    await Promise.all([qc.refetchQueries({ queryKey: ['treatments', branch] }), qc.refetchQueries({ queryKey: ['treatments-due', branch] })]).finally(() => setRefreshing(false));
+  };
   const [date, setDate] = useState('');
   const [giving, setGiving] = useState<TreatmentDose | null>(null);
   const [givingAll, setGivingAll] = useState(false);
+  const [q, setQ] = useState('');
+  // Two tabs, each with its count (the same "Treatments due today" as the side menu, split in two).
+  const [params, setParams] = useSearchParams();
+  // Shares the course list's request (same key): no second call.
+  const due = useQuery({ queryKey: ['treatments-due', branch], queryFn: () => api.get<{ today: string; sittings: DueSitting[] }>(`/b/${branch}/treatments/due`), refetchInterval: auto ? AUTO_EVERY_MS : false, refetchOnWindowFocus: false });
+  const sittingsLeft = (due.data?.sittings ?? []).filter((s) => (s.status === 'planned' || s.status === 'started' || s.status === 'missed') && indiaDay(s.dueAt) <= due.data!.today).length;
   const { data, isLoading, error } = useQuery({
     queryKey: ['treatments', branch, date],
     queryFn: () => api.get<TreatmentList>(`/b/${branch}/treatments${date ? `?date=${date}` : ''}`),
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: 'always',
+    // No polling unless Auto refresh is ticked: the nurse presses Refresh when she wants the latest.
+    refetchInterval: auto ? AUTO_EVERY_MS : false,
+    refetchOnWindowFocus: false,
   });
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['treatments', branch] });
@@ -40,7 +75,12 @@ export function Treatments() {
     onError: (e) => toast.error(errorMessage(e)),
   });
 
-  const doses = data?.doses ?? [];
+  const found = (d: TreatmentDose) => textMatch(q, d.patientName, d.patientUhid, d.medicineName);
+  const doses = (data?.doses ?? []).filter(found);
+  const missed = (data?.missed ?? []).filter(found);
+  const missedLeft = missed.filter((d) => !d.givenAt).length;
+  // Opens on the list that has something to do (the course sittings when both have).
+  const tab = params.get('tab') === 'doses' || (params.get('tab') == null && sittingsLeft === 0 && (data?.doses.length ?? 0) > 0) ? 'doses' : 'courses';
   const left = doses.filter((d) => !d.givenAt).length;
   // "Mark all" leaves out a medicine the patient did not buy: there is nothing to give.
   const toGive = doses.filter((d) => !d.givenAt && d.itemStatus !== 'declined');
@@ -50,32 +90,51 @@ export function Treatments() {
   return (
     <div>
       <PageHeader
-        title="Doses to give"
-        description={data ? `Medicines given in the hospital · ${fmtDay(data.date)} · ${current?.name}` : current?.name}
+        title="Today's treatments"
+        description={data ? `Course sittings and medicines given in the hospital · ${fmtDay(data.date)} · ${current?.name}` : current?.name}
         actions={
           <>
+            <ListSearch className="sm:w-56" label="Search the patients" placeholder="Patient or medicine…" value={q} onChange={setQ} />
             <Input type="date" aria-label="Day" className="w-auto" value={data?.date ?? date} onChange={(e) => setDate(e.target.value)} />
             {date && (
               <Button variant="ghost" onClick={() => setDate('')}>
                 Today
               </Button>
             )}
+            <label className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-sm font-medium" title="Gets the latest list every minute by itself">
+              <input type="checkbox" role="switch" className="size-4 accent-[var(--color-primary)]" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+              Auto refresh
+            </label>
+            <Button variant="outline" onClick={refreshAll} disabled={refreshing} title="Get the latest list">
+              <RefreshCw className={refreshing ? 'animate-spin' : undefined} /> Refresh
+            </Button>
           </>
         }
       />
+      <Tabs value={tab} onValueChange={(t) => setParams(t === 'courses' ? {} : { tab: t }, { replace: true })}>
+        <TabsList className="mb-4 h-11 max-w-full overflow-x-auto">
+          <TabsTrigger value="courses" className="h-9 px-4 text-base">
+            Course sittings <CountPill n={sittingsLeft} />
+          </TabsTrigger>
+          <TabsTrigger value="doses" className="h-9 px-4 text-base">
+            Medicines to give <CountPill n={left + missedLeft} tone={missedLeft ? 'critical' : undefined} />
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {tab === 'courses' && current && <CourseSittingsToday branch={current.slug} autoRefreshMs={auto ? AUTO_EVERY_MS : false} search={q} />}
 
-      {error ? (
+      {tab !== 'doses' ? null : error ? (
         <Card className="p-4 text-sm text-critical">{errorMessage(error)}</Card>
       ) : isLoading || !data ? (
         <Skeleton className="h-64" />
       ) : (
         <div className="space-y-4">
-          {data.missed.length > 0 && (
+          {missed.length > 0 && (
             <DoseTable
-              title={`Missed on earlier days (${data.missed.length})`}
+              title={`Missed on earlier days (${missed.length})`}
               description="Not ticked on their day. Give them now, or leave them if the patient did not come."
               tone="critical"
-              doses={data.missed}
+              doses={missed}
               branch={branch!}
               showDay
               canGive={canGive}
@@ -85,7 +144,7 @@ export function Treatments() {
           )}
           {doses.length === 0 ? (
             <Card>
-              <EmptyState icon={Syringe} title={isToday ? 'No treatments to give today' : 'No treatments on this day'} description="The doctor ticks “Give here in the hospital” on a medicine to put it on this list." />
+              <EmptyState icon={Syringe} title={q ? `Nobody matches “${q}”` : isToday ? 'No treatments to give today' : 'No treatments on this day'} description="The doctor ticks “Give here in the hospital” on a medicine to put it on this list." />
             </Card>
           ) : (
             <DoseTable
@@ -295,4 +354,10 @@ function GiveDialog({ branch, dose, onClose, onGiven }: { branch: string; dose: 
       </form>
     </Dialog>
   );
+}
+
+/** The number on a tab: how many still to do there. */
+function CountPill({ n, tone }: { n: number; tone?: 'critical' }) {
+  if (!n) return null;
+  return <span className={cn('rounded-full px-1.5 text-xs leading-5 font-semibold tabular-nums', tone === 'critical' ? 'bg-critical text-white' : 'bg-primary text-primary-foreground')}>{n}</span>;
 }

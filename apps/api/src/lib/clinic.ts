@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, sql, type AnyColumn } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { CHECKOUT_LOOKBACK_DAYS, opToken } from '@platform/shared';
 import { notFound, type Db, AppError } from '@platform/core';
@@ -9,6 +9,25 @@ type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 /** Today's date in India (IST = UTC+5:30, whatever time zone the server computer is set to), YYYY-MM-DD. */
 export async function localToday(db: Pick<Db, 'get'>): Promise<string> {
   return (await db.get<{ d: string }>(sql`select date('now', '+330 minutes') as d`))!.d;
+}
+
+/**
+ * The days a report covers (India dates, both ends included): ?from=2026-10-06&to=2026-10-09 for chosen dates,
+ * else ?days=1|7|30|365 ending today. At most 366 days.
+ */
+export async function periodOf(db: Pick<Db, 'get'>, q: { days?: string; from?: string; to?: string }): Promise<{ from: string; to: string; days: number }> {
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  const today = await localToday(db);
+  const real = (d: string | undefined): d is string => !!d && iso.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
+  if (real(q.from) && real(q.to)) {
+    const [a, b] = q.from <= q.to ? [q.from, q.to] : [q.to, q.from];
+    const span = Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000) + 1;
+    const days = Math.min(span, 366);
+    const from = days === span ? a : new Date(Date.parse(`${b}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+    return { from, to: b, days };
+  }
+  const days = Math.min(Math.max(Math.floor(Number(q.days) || 1), 1), 366);
+  return { from: new Date(Date.parse(`${today}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10), to: today, days };
 }
 
 /** "2026-10-02" -> "261002", used in OP / sale numbers. */
@@ -98,9 +117,32 @@ export async function balanceDueOf(db: Db | Tx, branchId: number, visitId: numbe
  * or a bill with a balance due, or prescription lines still pending.
  * Earlier days stay listed until settled, but only CHECKOUT_LOOKBACK_DAYS back.
  * Today's patients are listed only once the doctor has sent them to the counter (or the visit is completed with
- * something still owed): while they wait, are with the doctor or at the lab, the counter does not see them yet.
+ * something still owed): while they wait, are with the doctor or at the lab, the counter does not see them yet --
+ * except to pay the lab in advance: once a sample is taken, the bill part (fee, lab, charges) can be collected.
+ * Their medicines wait until the doctor sends them out (labAdvance: medicines left out).
  * Order: yesterday and today first (day by day), then older days; within a day, sent by the doctor first, then token order.
  */
+/**
+ * ?q= on a list: every typed word found in the same column (any case, any order): "ravi 02" finds "Ravi Kumar 02",
+ * not anyone whose OP number has a 02. Digits alone (3+) also match a phone written with spaces. Undefined when
+ * nothing was typed. instr() instead of LIKE, so a typed % or _ is just a character.
+ */
+export function textSearch(q: string | undefined, cols: AnyColumn[], phone?: AnyColumn) {
+  const typed = (q ?? '').trim().toLowerCase();
+  const words = typed.split(/\s+/).filter(Boolean).slice(0, 5);
+  if (!words.length) return undefined;
+  const inColumn = cols.map((c) => sql`(${sql.join(words.map((w) => sql`instr(lower(coalesce(${c}, '')), ${w}) > 0`), sql` and `)})`);
+  const digits = typed.replace(/[\s+-]/g, '');
+  if (phone && /^\d{3,}$/.test(digits)) inColumn.push(sql`instr(replace(coalesce(${phone}, ''), ' ', ''), ${digits}) > 0`);
+  return sql`(${sql.join(inColumn, sql` or `)})`;
+}
+
+/** A completed visit is final: nothing on it changes any more (a new visit is made instead). Cancelled too. */
+export function assertVisitOpen(status: string) {
+  if (status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+  if (status === 'completed') throw new AppError(409, 'visit_completed', 'This visit is completed: it can no longer be changed. Start a new visit for the patient.');
+}
+
 export async function visitsToCollect(db: Db, branchId: number, today: string) {
   // With the branch: the tables are indexed by (branch, visit), so each lookup is a seek, not a scan of the table.
   const ofVisit = <T extends { visitId: unknown; branchId: unknown }>(t: T) => sql`${t.branchId} = ${branchId} and ${t.visitId} = ${opVisit.id}`;
@@ -120,14 +162,22 @@ export async function visitsToCollect(db: Db, branchId: number, today: string) {
       doctorName: doctor.name,
       complaint: opVisit.complaint,
       visitAt: opVisit.createdAt,
+      /** A course sitting's visit: the course's name, when it started and when this sitting was due. */
+      courseName: sql<string | null>`(select c.name from course_sitting cs inner join treatment_course c on c.id = cs.course_id where cs.branch_id = ${branchId} and cs.visit_id = "op_visit"."id" limit 1)`,
+      courseCreatedAt: sql<string | null>`(select coalesce(c.start_day || 'T00:00:00+05:30', (select min(x.due_at) from course_sitting x where x.course_id = c.id), c.created_at) from course_sitting cs inner join treatment_course c on c.id = cs.course_id where cs.branch_id = ${branchId} and cs.visit_id = "op_visit"."id" limit 1)`,
+      sittingDueAt: sql<string | null>`(select cs.due_at from course_sitting cs where cs.branch_id = ${branchId} and cs.visit_id = "op_visit"."id" limit 1)`,
       /** The doctor's own fee for this visit; null = the branch's standard fee. */
       visitFeePaise: opVisit.consultationFeePaise,
       billCount: sql<number>`(select count(*) from ${opBill} where ${ofVisit(opBill)})`,
       /** Bills with no payment yet: the counter can still change them (round off). */
       openBillCount: sql<number>`(select count(*) from ${opBill} where ${ofVisit(opBill)} and not exists (select 1 from ${billPayment} where ${billPayment.billId} = ${opBill.id}))`,
+      /** Bills with something to pay and no payment at all yet: fresh, for the counter's "To collect". */
+      unpaidBillCount: sql<number>`(select count(*) from ${opBill} where ${ofVisit(opBill)} and ${opBill.totalPaise} > 0 and not exists (select 1 from ${billPayment} where ${billPayment.billId} = ${opBill.id}))`,
       balancePaise: sql<number>`(select coalesce(sum(${balance}), 0) from ${opBill} where ${ofVisit(opBill)})`,
       unbilledLabCount: sql<number>`(select count(*) from ${labOrder} where ${unbilledLab})`,
       unbilledLabPaise: sql<number>`(select coalesce(sum(${labOrder.pricePaise}), 0) from ${labOrder} where ${unbilledLab})`,
+      /** Lab tests not on a bill whose sample is already taken: paid in advance while the doctor is not done. */
+      sampledLabCount: sql<number>`(select count(*) from ${labOrder} where ${unbilledLab} and ${labOrder.status} in ('sample_collected', 'completed'))`,
       /** Extra charges (dressing, IV...) put on the visit that are on no bill yet. */
       waitingChargePaise: sql<number>`(select coalesce(sum(vc.amount_paise), 0) from visit_charge vc where vc.branch_id = ${branchId} and vc.visit_id = "op_visit"."id" and vc.deleted_at is null and vc.bill_id is null)`,
       waitingChargeCount: sql<number>`(select count(*) from visit_charge vc where vc.branch_id = ${branchId} and vc.visit_id = "op_visit"."id" and vc.deleted_at is null and vc.bill_id is null)`,
@@ -151,5 +201,10 @@ export async function visitsToCollect(db: Db, branchId: number, today: string) {
     // Within a day: sent by the doctor first, then in number order.
     .orderBy(sql`case when ${opVisit.visitDate} >= date(${today}, '-1 day') then 0 else 1 end`, asc(opVisit.visitDate), sql`case when ${opVisit.status} = 'at_counter' then 0 else 1 end`, asc(opVisit.id));
   const stillWithDoctor = (r: (typeof rows)[number]) => r.visitDate === today && (r.status === 'waiting' || r.status === 'with_doctor' || r.status === 'at_lab');
-  return rows.filter((r) => !stillWithDoctor(r) && (r.billCount === 0 || r.unbilledLabCount > 0 || r.waitingChargeCount > 0 || r.balancePaise > 0 || r.medicinesWaiting > 0)).map(withToken);
+  return rows
+    .map((r) => (stillWithDoctor(r) ? { ...r, labAdvance: r.sampledLabCount > 0, medicinesWaiting: 0, medicinesPaise: 0 } : { ...r, labAdvance: false }))
+    // Something fresh to collect: nothing billed yet, a new test or charge, a bill with no payment yet, or medicines.
+    // A bill already part paid (and nothing new) is a pending payment: it is in Billing > Pending payments, not here.
+    .filter((r) => (!stillWithDoctor(r) || r.labAdvance) && (r.billCount === 0 || r.unbilledLabCount > 0 || r.waitingChargeCount > 0 || r.unpaidBillCount > 0 || r.medicinesWaiting > 0))
+    .map(withToken);
 }

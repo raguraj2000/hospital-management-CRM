@@ -2,13 +2,14 @@ import { useDeferredValue, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { AlertTriangle, PackageCheck, Pill, Printer, ReceiptText, RotateCcw, Search, ShoppingCart, Trash2, X } from 'lucide-react';
-import { FORM_UNIT, formatRupees, type LastPurchase, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
+import { autoRoundOffPaise, FORM_UNIT, formatRupees, ROUND_OFF_MAX_PAISE, toPaise, type LastPurchase, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
 import { Avatar, Badge, Button, Card, CardHeader, EmptyState, Field, Input, PageHeader, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, Pager, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
-import { PeriodPicker, PeriodSummary, type PeriodDays } from '@/components/PeriodReport';
+import { PeriodPicker, PeriodSummary, periodQuery, type PeriodDays } from '@/components/PeriodReport';
 import { visitLabel } from '@/components/Visits';
-import { CheckoutList, useCheckoutQueue, PharmacyNote } from '@/components/Checkout';
+import { CheckoutList, useCheckoutQueue, PharmacyNote, RxNotes } from '@/components/Checkout';
+import { ListSearch, textMatch } from '@/components/ListSearch';
 import { fmtDate, fmtDay, modeLabel } from '@/components/format';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
 import { KeyHint } from '@/components/Shortcuts';
@@ -26,7 +27,6 @@ export function Pharmacy() {
   const queue = useQuery({
     queryKey: ['pharmacy-queue', branch],
     queryFn: () => api.get<{ queue: PharmacyQueueEntry[] }>(`/b/${branch}/pharmacy/queue`),
-    refetchInterval: 20_000, // new prescriptions appear without reloading
     enabled: !fullCheckout,
   });
   const canReports = useCan('reports.view');
@@ -34,8 +34,11 @@ export function Pharmacy() {
   const tab = params.get('tab') === 'direct' ? 'direct' : params.get('tab') === 'sales' && canReports ? 'sales' : 'queue';
   const [period, setPeriod] = useState<PeriodDays>(1);
   const sales = useQuery({
-    enabled: canReports, queryKey: ['pharmacy-sales', branch, period], queryFn: () => api.get<{ sales: PharmacySale[]; totalPaise: number }>(`/b/${branch}/pharmacy/sales?days=${period}`) });
-  const { rows: saleRows, pager: salePager } = usePaged(sales.data?.sales ?? []);
+    enabled: canReports, queryKey: ['pharmacy-sales', branch, periodQuery(period)], queryFn: () => api.get<{ sales: PharmacySale[]; totalPaise: number }>(`/b/${branch}/pharmacy/sales?${periodQuery(period)}`) });
+  const [saleQ, setSaleQ] = useState('');
+  const foundSales = (sales.data?.sales ?? []).filter((s) => textMatch(saleQ, s.saleNo, s.patientName, ...s.lines.map((l) => l.medicineName)));
+  const { rows: saleRows, pager: salePager } = usePaged(foundSales, saleQ);
+  const [queueQ, setQueueQ] = useState('');
   const waiting = (fullCheckout ? checkout.data?.queue.length : queue.data?.queue.length) ?? 0;
 
   return (
@@ -65,7 +68,10 @@ export function Pharmacy() {
               <EmptyState icon={PackageCheck} title="Nothing waiting" description="Prescriptions written by doctors show up here automatically." />
             </Card>
           ) : (
-            queue.data!.queue.map((entry) => <QueueCard key={entry.visitId} branch={branch!} entry={entry} />)
+            <>
+              <ListSearch label="Find a patient" placeholder="Name, UHID or OP no.…" value={queueQ} onChange={setQueueQ} />
+              {queue.data!.queue.filter((e) => textMatch(queueQ, e.patientName, e.patientUhid, e.opNo)).map((entry) => <QueueCard key={entry.visitId} branch={branch!} entry={entry} />)}
+            </>
           )}
         </TabsContent>
 
@@ -77,7 +83,10 @@ export function Pharmacy() {
         <TabsContent value="sales" className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="text-sm text-muted">Medicines sold: to OP patients and directly over the counter.</span>
-            <PeriodPicker value={period} onChange={setPeriod} />
+            <div className="flex flex-wrap items-center gap-2">
+              <ListSearch className="sm:w-60" label="Search the sales" placeholder="Bill no., patient or medicine…" value={saleQ} onChange={setSaleQ} />
+              <PeriodPicker value={period} onChange={setPeriod} />
+            </div>
           </div>
           {fullCheckout && <PeriodSummary branch={branch!} days={period} pharmacyOnly />}
           <Card>
@@ -87,6 +96,8 @@ export function Pharmacy() {
               <p className="p-4 text-sm text-critical">{errorMessage(sales.error)}</p>
             ) : !sales.data?.sales.length ? (
               <EmptyState icon={ReceiptText} title={period === 1 ? 'No sales yet today' : 'No sales in this period'} />
+            ) : !foundSales.length ? (
+              <EmptyState icon={ReceiptText} title={`Nothing matches “${saleQ}”`} />
             ) : (
               <Table>
                 <THead>
@@ -178,6 +189,7 @@ function QueueCard({ branch, entry }: { branch: string; entry: PharmacyQueueEntr
         description={`${visitLabel(entry)} · ${entry.patientUhid}${entry.doctorName ? ` · ${entry.doctorName}` : ''}`}
       />
       <PharmacyNote branch={branch} visitId={entry.visitId} note={entry.pharmacyNote} />
+      <RxNotes branch={branch} visitId={entry.visitId} />
       <Table>
         <THead>
           <tr>
@@ -257,6 +269,8 @@ function DirectSale({ branch }: { branch: string }) {
   const [patient, setPatient] = useState<PickedPatient | null>(null);
   const [mode, setMode] = useState<PaymentMode>('cash');
   const [lastSale, setLastSale] = useState<{ id: number; saleNo: string; totalPaise: number } | null>(null);
+  /** Round off typed by hand; null = worked out by HMS (up to the next ₹5, like OP bills). */
+  const [round, setRound] = useState<string | null>(null);
   const meds = useQuery({ queryKey: ['medicines', branch], queryFn: () => api.get<{ medicines: Medicine[] }>(`/b/${branch}/medicines`) });
   // A regular customer (heart, sugar, BP tablets every month): what they bought last time, to sell the same again.
   const last = useQuery({ queryKey: ['last-purchase', branch, patient?.id], queryFn: () => api.get<{ purchase: LastPurchase | null }>(`/b/${branch}/patients/${patient!.id}/last-purchase`), enabled: !!patient, staleTime: 0 });
@@ -288,8 +302,13 @@ function DirectSale({ branch }: { branch: string }) {
             : null;
     return { ...c, med, quantity: qty, problem, amountPaise: med && !problem ? qty * med.pricePaise : 0 };
   });
-  const total = rows.reduce((s, r) => s + r.amountPaise, 0);
-  const invalid = rows.some((r) => r.problem);
+  const medicinesPaise = rows.reduce((s, r) => s + r.amountPaise, 0);
+  const typedRound = round == null ? null : round.trim() === '' ? 0 : toPaise(Number(round));
+  const roundOff = typedRound == null ? autoRoundOffPaise(medicinesPaise) : typedRound;
+  const roundProblem = roundOff == null || Number.isNaN(roundOff) || roundOff < 0 ? 'Round off: type an amount in rupees' : roundOff > ROUND_OFF_MAX_PAISE ? `Round off can be ${formatRupees(ROUND_OFF_MAX_PAISE)} at most` : null;
+  const roundOffPaise = roundProblem ? 0 : roundOff!;
+  const total = medicinesPaise + roundOffPaise;
+  const invalid = rows.some((r) => r.problem) || !!roundProblem;
 
   function add(m: Medicine) {
     // Each medicine is one row: picking it again adds one more.
@@ -305,6 +324,7 @@ function DirectSale({ branch }: { branch: string }) {
         items: rows.map((r) => ({ medicineId: r.medicineId, quantity: r.quantity })),
         paymentMode: mode,
         patientId: patient?.id ?? null,
+        roundOffPaise,
       }),
     onSuccess: ({ sale }) => {
       toast.success(`Sold · ${sale.saleNo}`, {
@@ -312,6 +332,7 @@ function DirectSale({ branch }: { branch: string }) {
         action: { label: 'Print bill', onClick: () => window.open(printUrl(branch, sale.id), '_blank', 'noopener') },
       });
       setLastSale(sale);
+      setRound(null);
       setCart([]);
       setPatient(null);
       for (const k of ['pharmacy-sales', 'pharmacy-queue', 'medicines', 'batches', 'dashboard', 'collection', 'patient-bills', 'last-purchase']) qc.invalidateQueries({ queryKey: [k, branch] });
@@ -340,30 +361,6 @@ function DirectSale({ branch }: { branch: string }) {
           </span>
         </div>
       )}
-
-      {/* Who is buying comes first: a regular customer's last purchase is offered right away. */}
-      <div className="border-b border-border p-3">
-        <div className="sm:max-w-md">
-          <PatientPicker branch={branch} value={patient} onChange={setPatient} />
-        </div>
-        {patient &&
-          last.data &&
-          (last.data.purchase ? (
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand/30 bg-brand-soft px-3 py-2.5 text-sm">
-              <div className="min-w-0">
-                <div className="font-medium">
-                  Last bought on {fmtDate(last.data.purchase.createdAt)} <span className="font-mono text-xs font-normal text-muted">{last.data.purchase.saleNo}</span>
-                </div>
-                <div className="text-muted">{last.data.purchase.items.map((i) => `${i.medicineName}${i.strength ? ` ${i.strength}` : ''} ×${i.quantity}`).join(', ')}</div>
-              </div>
-              <Button variant="brand" data-shortcut="alt+r" onClick={() => repeatLast(last.data!.purchase!)}>
-                <RotateCcw /> Add the same again <KeyHint>Alt+R</KeyHint>
-              </Button>
-            </div>
-          ) : (
-            <p className="mt-2 text-sm text-muted">{patient.name} has not bought at this pharmacy before.</p>
-          ))}
-      </div>
 
       <div className="border-b border-border p-3">
         <div className="relative w-full sm:max-w-md">
@@ -491,19 +488,55 @@ function DirectSale({ branch }: { branch: string }) {
         </>
       )}
 
+      {/* One line: who is buying (optional, walk-in by default) on the left, the total and Sell on the right. */}
       <div className="border-t border-border p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between md:justify-end md:gap-6">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between lg:gap-6">
+          <div className="min-w-0 lg:max-w-md lg:flex-1">
+            <div>
+          <PatientPicker branch={branch} value={patient} onChange={setPatient} />
+        </div>
+        {patient &&
+          last.data &&
+          (last.data.purchase ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand/30 bg-brand-soft px-3 py-2.5 text-sm">
+              <div className="min-w-0">
+                <div className="font-medium">
+                  Last bought on {fmtDate(last.data.purchase.createdAt)} <span className="font-mono text-xs font-normal text-muted">{last.data.purchase.saleNo}</span>
+                </div>
+                <div className="text-muted">{last.data.purchase.items.map((i) => `${i.medicineName}${i.strength ? ` ${i.strength}` : ''} ×${i.quantity}`).join(', ')}</div>
+              </div>
+              <Button variant="brand" data-shortcut="alt+r" onClick={() => repeatLast(last.data!.purchase!)}>
+                <RotateCcw /> Add the same again <KeyHint>Alt+R</KeyHint>
+              </Button>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-muted">{patient.name} has not bought at this pharmacy before.</p>
+          ))}
+      
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end sm:gap-6">
           <div>
             <div className="text-xs text-muted">
               Total for {rows.length} medicine{rows.length === 1 ? '' : 's'}
             </div>
             <div className="text-3xl font-semibold tracking-tight tabular-nums">{formatRupees(total)}</div>
+            {rows.length > 0 && (
+              <div className="mt-1 flex items-center gap-2 text-xs text-muted">
+                <span className="tabular-nums">Medicines {formatRupees(medicinesPaise)} +</span>
+                <label htmlFor="sale-round" className="font-medium">
+                  Round off {round == null && '(auto)'}
+                </label>
+                <Input id="sale-round" inputMode="decimal" placeholder="0" aria-invalid={!!roundProblem} className="h-7 w-16 px-2 text-right text-xs tabular-nums" value={round ?? (roundOffPaise ? String(roundOffPaise / 100) : '')} onChange={(e) => setRound(e.target.value)} />
+              </div>
+            )}
+            {roundProblem && <div className="mt-1 text-xs font-medium text-critical">{roundProblem}</div>}
           </div>
           <div className="flex items-center gap-2">
             <PaymentModeSelect aria-label="Paid by" value={mode} onChange={setMode} className="w-28" />
             <Button size="lg" data-shortcut="alt+s" disabled={!rows.length || invalid || sell.isPending} onClick={() => sell.mutate()}>
               <PackageCheck /> {sell.isPending ? 'Selling…' : `Sell ${formatRupees(total)}`} <KeyHint>Alt+S</KeyHint>
             </Button>
+          </div>
           </div>
         </div>
       </div>

@@ -11,7 +11,7 @@ import { useCan } from '@/state/auth';
  */
 export function CounterNote({ branch, visit, field, label, placeholder, canEdit }: { branch: string; visit: OpVisit; field: 'pharmacyNote' | 'labNote'; label: string; placeholder: string; canEdit: boolean }) {
   const qc = useQueryClient();
-  const canSave = useCan('patient.edit') && canEdit && visit.status !== 'cancelled'; // the visit update route needs patient.edit
+  const canSave = useCan('patient.edit') && canEdit && visit.status !== 'cancelled' && visit.status !== 'completed'; // the visit update route needs patient.edit
   const saved = visit[field] ?? '';
   const [text, setText] = useState(saved);
   const id = `note-${field}`;

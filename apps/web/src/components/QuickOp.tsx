@@ -27,6 +27,10 @@ export function QuickOp({ branch, open, onClose, tabs }: { branch: string; open:
   const [step, setStep] = useState<Step>('find');
   const [patient, setPatient] = useState<Patient | null>(null);
   const [search, setSearch] = useState('');
+  // What was searched goes into the new patient's form: a number as the mobile, words as the name.
+  const typed = search.trim();
+  const typedPhone = typed.replace(/[\s-]/g, '').replace(/^\+?91(?=\d{10}$)/, '');
+  const prefill = /^\d{3,10}$/.test(typedPhone) ? { phone: typedPhone } : /[a-z]/i.test(typed) && !/\d/.test(typed) ? { name: typed } : undefined;
   // Every opening starts at the search.
   useEffect(() => {
     if (open) {
@@ -89,7 +93,14 @@ export function QuickOp({ branch, open, onClose, tabs }: { branch: string; open:
           ) : !data ? (
             <Skeleton className="h-40" />
           ) : rows.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted">{searching ? 'No patient with this name, UHID or phone.' : 'No patients registered yet.'}</p>
+            <div className="py-6 text-center text-sm text-muted">
+              <p>{searching ? (prefill?.phone ? `No patient with the number ${typed}.` : 'No patient with this name, UHID or phone.') : 'No patients registered yet.'}</p>
+              {searching && (
+                <Button className="mt-3" onClick={() => setStep('register')}>
+                  <UserPlus /> {prefill?.phone ? `Register a new patient with ${typed}` : prefill?.name ? `Register “${typed}” as a new patient` : 'Register a new patient'}
+                </Button>
+              )}
+            </div>
           ) : (
             <ul className={cn('divide-y divide-border rounded-lg border border-border transition-opacity', isFetching && 'opacity-60')}>
               {rows.map((p, i) => (
@@ -135,6 +146,7 @@ export function QuickOp({ branch, open, onClose, tabs }: { branch: string; open:
 
       {step === 'register' && (
         <PatientForm
+          prefill={prefill}
           submitLabel="Save & continue to the visit"
           onCancel={() => setStep('find')}
           onUseExisting={pick}

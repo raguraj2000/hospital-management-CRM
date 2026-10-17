@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { MiddlewareHandler } from 'hono';
-import { ALL_PERMISSIONS, type Permission } from '@platform/shared';
+import { OWNER_PERMISSIONS, type Permission } from '@platform/shared';
 import type { Db } from './db/index.js';
 import { branch, branchMember, role } from './db/schema.js';
 import { AppError, forbidden } from './errors.js';
@@ -38,7 +38,7 @@ export function branchContext(db: Db): MiddlewareHandler<BranchEnv> {
 
     let info: BranchInfo;
     if (u.isOwner) {
-      info = { id: b.id, slug: b.slug, name: b.name, codePrefix: b.codePrefix, roleName: 'Owner', permissions: [...ALL_PERMISSIONS] };
+      info = { id: b.id, slug: b.slug, name: b.name, codePrefix: b.codePrefix, roleName: 'Owner', permissions: [...OWNER_PERMISSIONS] };
     } else {
       const [m] = await db
         .select({ roleId: role.id, roleName: role.name })
@@ -47,7 +47,7 @@ export function branchContext(db: Db): MiddlewareHandler<BranchEnv> {
         .where(and(eq(branchMember.branchId, b.id), eq(branchMember.userId, u.id), eq(branchMember.isActive, true)))
         .limit(1);
       if (!m) throw notFound;
-      info = { id: b.id, slug: b.slug, name: b.name, codePrefix: b.codePrefix, roleName: m.roleName, permissions: await permissionsForRole(db, m.roleId) };
+      info = { id: b.id, slug: b.slug, name: b.name, codePrefix: b.codePrefix, roleName: m.roleName, permissions: await permissionsForRole(db, m.roleId, b.id) };
     }
     c.set('branch', info);
     await next();

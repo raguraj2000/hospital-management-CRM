@@ -42,8 +42,15 @@ function Countdown() {
   );
 }
 
+/** Roles with "Skip the 5-second Undo" (Settings > Roles): set by the app shell for the branch on screen. */
+let skipUndo = false;
+export const setSkipUndo = (skip: boolean) => {
+  skipUndo = skip;
+};
+
 /** Runs `send` after UNDO_SECONDS unless Undo is pressed on the toast. `what`: "Collecting Rs 500 from Kavitha". */
 export function withUndo<T>(what: string, send: () => Promise<T>): Promise<T> {
+  if (skipUndo) return send();
   return new Promise<T>((resolve, reject) => {
     let done = false;
     const id = `undo-${Math.random().toString(36).slice(2)}`;

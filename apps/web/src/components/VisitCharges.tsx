@@ -152,7 +152,7 @@ export function VisitChargesBox({ branch, visitId, big }: { branch: string; visi
             </div>
             <div className="flex items-center justify-end gap-2">
               {canSettings && (
-                <Link to={`/${branch}/settings?tab=print#ready-made-charges`} className="mr-auto text-xs font-medium text-brand hover:underline" title="Settings > Branch settings > Ready-made charges">
+                <Link to={`/${branch}/settings?tab=print&section=charges`} className="mr-auto text-xs font-medium text-brand hover:underline" title="Settings > Branch settings > Ready-made charges">
                   Edit this list of charges
                 </Link>
               )}

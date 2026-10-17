@@ -61,7 +61,7 @@ const fullYear = (y: number) => (y < 100 ? 2000 + y : y);
 
 /**
  * An expiry as vendors write it -> YYYY-MM-DD, or null if it can't be read.
- * "06/31", "6-2031", "Jun-31", "JUN 2031" = the end of that month; "30/06/2031", "2031-06-30" and Excel dates = that day.
+ * "06/31", "0631", "6-2031", "Jun-31", "JUN 2031" = the end of that month; "30/06/2031", "2031-06-30" and Excel dates = that day.
  */
 export function parseExpiry(v: ImportCell): string | null {
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
@@ -70,8 +70,8 @@ export function parseExpiry(v: ImportCell): string | null {
   if (m) return `${m[1]}-${pad(Number(m[2]))}-${pad(Number(m[3]))}`;
   m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/.exec(s); // day first, as in India
   if (m && Number(m[2]) <= 12 && Number(m[1]) <= 31) return `${fullYear(Number(m[3]))}-${pad(Number(m[2]))}-${pad(Number(m[1]))}`;
-  m = /^(\d{1,2})\s*[/.-]\s*(\d{2}|\d{4})$/.exec(s);
-  if (m) return monthEnd(fullYear(Number(m[2])), Number(m[1]));
+  m = /^(\d{1,2})\s*[/.-]\s*(\d{2}|\d{4})$/.exec(s) ?? /^(\d{2})(\d{2})$/.exec(s); // "06/31", or typed fast as "0631"
+  if (m && Number(m[1]) >= 1 && Number(m[1]) <= 12) return monthEnd(fullYear(Number(m[2])), Number(m[1]));
   m = /^([a-z]{3})[a-z]*\W*(\d{2}|\d{4})$/.exec(s);
   if (m && MONTHS.includes(m[1]!)) return monthEnd(fullYear(Number(m[2])), MONTHS.indexOf(m[1]!) + 1);
   return null;

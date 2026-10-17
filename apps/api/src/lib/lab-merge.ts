@@ -2,7 +2,7 @@
 // lab test of their own; they are now lines of the Complete Blood Count.
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { writeAudit, type Db } from '@platform/core';
-import { DEFAULT_ROLES } from '@platform/shared';
+import { DEFAULT_ROLES, type Permission } from '@platform/shared';
 import { branch, labTest, labTestParameter, organization, role, rolePermission } from '../db/schema.js';
 
 const CBC = 'complete blood count';
@@ -119,17 +119,21 @@ async function addSugarTestOfItsOwn(db: Db, NAME: string, lineName: string | nul
  * Hospitals set up before the reports permission existed: their Branch admin role gets it once (a note in the
  * history log marks it, so an owner who unticks it later keeps it unticked). Returns how many roles got it.
  */
-export async function addReportsPermission(db: Db): Promise<number> {
+export const addReportsPermission = (db: Db) => addAdminPermission(db, 'reports.view', 'permission_added_reports_view');
+/** Hospitals set up before "Correct completed lab results" existed: the Branch admin role gets it once. */
+export const addLabCorrectPermission = (db: Db) => addAdminPermission(db, 'lab.correct', 'permission_added_lab_correct');
+
+async function addAdminPermission(db: Db, permission: Permission, marker: string): Promise<number> {
   const orgs = await db.select({ id: organization.id }).from(organization);
   let added = 0;
   for (const org of orgs) {
-    const [done] = await db.all<{ id: number }>(sql`select id from audit_log where organization_id = ${org.id} and entity = 'role' and action = 'permission_added_reports_view' limit 1`);
+    const [done] = await db.all<{ id: number }>(sql`select id from audit_log where organization_id = ${org.id} and entity = 'role' and action = ${marker} limit 1`);
     if (done) continue;
     const [admin] = await db.select({ id: role.id }).from(role).where(and(eq(role.organizationId, org.id), eq(role.key, 'branch_admin')));
-    const [has] = admin ? await db.select({ roleId: rolePermission.roleId }).from(rolePermission).where(and(eq(rolePermission.roleId, admin.id), eq(rolePermission.permission, 'reports.view'))) : [];
+    const [has] = admin ? await db.select({ roleId: rolePermission.roleId }).from(rolePermission).where(and(eq(rolePermission.roleId, admin.id), eq(rolePermission.permission, permission))) : [];
     await db.transaction(async (tx) => {
-      if (admin && !has) await tx.insert(rolePermission).values({ roleId: admin.id, permission: 'reports.view' });
-      await writeAudit(tx, { organizationId: org.id, action: 'permission_added_reports_view', entity: 'role', detail: { added: !!admin && !has } });
+      if (admin && !has) await tx.insert(rolePermission).values({ roleId: admin.id, permission });
+      await writeAudit(tx, { organizationId: org.id, action: marker, entity: 'role', detail: { added: !!admin && !has } });
     });
     if (admin && !has) added++;
   }

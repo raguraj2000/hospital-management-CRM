@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Pill, Plus, Syringe, Trash2 } from 'lucide-react';
+import { GripVertical, Pencil, Pill, Plus, Syringe, Trash2 } from 'lucide-react';
 import {
   FORM_UNIT,
   formatRupees,
@@ -12,6 +12,7 @@ import {
   type Medicine,
   type OpVisit,
   type PrescriptionItem,
+  type PrescriptionNote,
   type PrescriptionItemFormValues,
   type PrescriptionItemInput,
   type PrescriptionSuggestions, } from '@platform/shared';
@@ -20,16 +21,46 @@ import { Badge, Button, Card, CardHeader, Combobox, EmptyState, Field, Input, Na
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
 import { CounterNote } from './CounterNote';
+import { AddNoteBar, NoteLine, NoteRowEditor, useMoveNote, withNotes } from './PrescriptionNotes';
+import { BookmarkSearch, VisitInstructions } from './Bookmarks';
 
 const rxTone = { pending: 'warning', dispensed: 'positive', declined: 'neutral' } as const;
 const rxLabel = { pending: 'At pharmacy', dispensed: 'Dispensed', declined: 'Not bought' } as const;
 
-export function Prescription({ branch, visit, onAdded, hideNote, readOnly }: { branch: string; visit: OpVisit; onAdded: () => void; /** The note to the pharmacy is shown elsewhere (the doctor's steps). */ hideNote?: boolean; /** Only the table: nothing to add or remove. */ readOnly?: boolean }) {
-  const canWrite = useCan('prescription.write') && !readOnly;
+export function Prescription({ branch, visit, onAdded, hideNote, readOnly, withBookmarks }: { branch: string; visit: OpVisit; onAdded: () => void; /** The note to the pharmacy is shown elsewhere (the doctor's steps). */ hideNote?: boolean; /** Only the table: nothing to add or remove. */ readOnly?: boolean; /** The bookmark search as the first row of the card. */ withBookmarks?: boolean }) {
+  // A completed (or cancelled) visit is final: only to read.
+  const canWrite = useCan('prescription.write') && !readOnly && visit.status !== 'completed' && visit.status !== 'cancelled';
   const qc = useQueryClient();
   const key = ['prescription', branch, visit.id];
-  const { data, isLoading } = useQuery({ queryKey: key, queryFn: () => api.get<{ items: PrescriptionItem[] }>(`/b/${branch}/visits/${visit.id}/prescription`) });
+  const { data, isLoading } = useQuery({ queryKey: key, queryFn: () => api.get<{ items: PrescriptionItem[]; notes: PrescriptionNote[] }>(`/b/${branch}/visits/${visit.id}/prescription`) });
   const items = data?.items ?? [];
+  const notes = data?.notes ?? [];
+  // A note dragged onto a medicine goes after that medicine.
+  const move = useMoveNote(branch);
+  const [dragNote, setDragNote] = useState<number | null>(null);
+  // A medicine dragged onto another takes its place (the doctor's order; the pharmacy and the print follow it).
+  const [dragItem, setDragItem] = useState<number | null>(null);
+  const reorder = useMutation({
+    mutationFn: (ids: number[]) => api.put(`/b/${branch}/visits/${visit.id}/prescription/order`, { ids }),
+    onMutate: (ids) => {
+      const prev = qc.getQueryData<{ items: PrescriptionItem[]; notes: PrescriptionNote[] }>(key);
+      if (prev) qc.setQueryData(key, { ...prev, items: ids.map((id) => prev.items.find((x) => x.id === id)!).filter(Boolean) });
+      return { prev };
+    },
+    onError: (e, _ids, ctx) => {
+      if (ctx?.prev) qc.setQueryData(key, ctx.prev);
+      toast.error(errorMessage(e));
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
+  });
+  const dropOn = (targetId: number) => {
+    if (dragItem == null || dragItem === targetId) return;
+    const ids = items.map((x) => x.id).filter((id) => id !== dragItem);
+    const from = items.findIndex((x) => x.id === dragItem), to = items.findIndex((x) => x.id === targetId);
+    ids.splice(ids.indexOf(targetId) + (from < to ? 1 : 0), 0, dragItem);
+    reorder.mutate(ids);
+  };
+  const cols = canWrite ? 6 : 5;
   const total = items.filter((i) => i.status !== 'declined').reduce((s, i) => s + i.quantity * i.pricePaise, 0);
   const refresh = () => {
     qc.invalidateQueries({ queryKey: key });
@@ -53,16 +84,17 @@ export function Prescription({ branch, visit, onAdded, hideNote, readOnly }: { b
     <Card>
       <CardHeader
         title="Prescription"
-        description="The pharmacy sees each medicine as soon as you add it."
+        description={canWrite ? 'The pharmacy sees each medicine as soon as you add it.' : 'What was prescribed, in order, with the notes and instructions.'}
         icon={Pill}
         iconTone="violet"
         action={items.length > 0 && <span className="text-sm font-semibold tabular-nums">{formatRupees(total)}</span>}
       />
+      {withBookmarks && canWrite && <BookmarkSearch branch={branch} visitId={visit.id} onApplied={onAdded} embedded />}
       {isLoading ? (
         <div className="p-4">
           <Skeleton className="h-24" />
         </div>
-      ) : items.length === 0 ? (
+      ) : items.length === 0 && notes.length === 0 ? (
         <EmptyState icon={Pill} title="No medicines yet" description={canWrite ? 'Add the first medicine below.' : 'The doctor has not prescribed anything yet.'} />
       ) : (
         <Table>
@@ -77,9 +109,37 @@ export function Prescription({ branch, visit, onAdded, hideNote, readOnly }: { b
             </tr>
           </THead>
           <TBody>
-            {items.map((i) => (
-              <TR key={i.id} className={editing?.id === i.id ? 'bg-brand-soft' : undefined}>
+            {withNotes(items, notes).map((r) =>
+              r.type === 'note' ? (
+                <TR key={`n${r.note.id}`} className={r.note.kind === 'note' ? 'bg-warning-soft/40' : 'bg-brand-soft/40'} draggable={canWrite} onDragStart={() => setDragNote(r.note.id)} onDragEnd={() => setDragNote(null)}>
+                  <TD colSpan={cols} className="py-2">
+                    {canWrite ? <NoteRowEditor branch={branch} note={r.note} /> : <NoteLine note={r.note} />}
+                  </TD>
+                </TR>
+              ) : (() => { const i = r.item; return (
+              <TR
+                key={i.id}
+                className={editing?.id === i.id ? 'bg-brand-soft' : dragItem === i.id ? 'opacity-40' : dragNote != null || dragItem != null ? 'outline-dashed outline-1 outline-brand/40' : undefined}
+                draggable={canWrite && items.length > 1}
+                onDragStart={() => setDragItem(i.id)}
+                onDragEnd={() => setDragItem(null)}
+                onDragOver={(e) => (dragNote != null || dragItem != null) && e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragNote != null) move.mutate({ noteId: dragNote, afterItemId: i.id });
+                  else dropOn(i.id);
+                  setDragNote(null);
+                  setDragItem(null);
+                }}
+              >
                 <TD>
+                  <div className="flex items-start gap-2">
+                  {canWrite && items.length > 1 && (
+                    <span className="mt-0.5 cursor-grab text-muted active:cursor-grabbing" title="Drag to change the order" aria-hidden>
+                      <GripVertical className="size-4" />
+                    </span>
+                  )}
+                  <div>
                   <div className="font-medium">
                     {i.medicineName} {i.strength && <span className="text-muted">{i.strength}</span>}
                   </div>
@@ -89,6 +149,8 @@ export function Prescription({ branch, visit, onAdded, hideNote, readOnly }: { b
                       <Syringe className="size-3.5" /> Given here · {i.dosesGiven} of {i.dosesTotal} doses
                     </Badge>
                   )}
+                  </div>
+                  </div>
                 </TD>
                 <TD className="whitespace-nowrap tabular-nums">
                   {prettyDose(i.dose)} <span className="text-muted">× {i.days} days</span>
@@ -117,10 +179,13 @@ export function Prescription({ branch, visit, onAdded, hideNote, readOnly }: { b
                   </TD>
                 )}
               </TR>
-            ))}
+            ); })()
+            )}
           </TBody>
         </Table>
       )}
+      <VisitInstructions branch={branch} visitId={visit.id} embedded />
+      {canWrite && visit.status !== 'cancelled' && <AddNoteBar branch={branch} visitId={visit.id} items={items} />}
       {canWrite && visit.status !== 'cancelled' && (
         <div className={editing ? 'border-t-2 border-brand bg-brand-soft/40 p-4' : 'border-t border-border p-4'}>
           <AddMedicineForm
@@ -230,10 +295,10 @@ export function InstructionInput({ value, onChange, choices, id = 'rx-instructio
 
 // ---------------------------------------------------------------- add a medicine
 
-const INSTRUCTIONS = ['After food', 'Before food', 'With food', 'Chew and swallow', 'Empty stomach', 'At bedtime'];
+export const INSTRUCTIONS = ['After food', 'Before food', 'With food', 'Chew and swallow', 'Empty stomach', 'At bedtime'];
 /** What a syrup dose can be, in ml. */
 const SYRUP_ML = ['1', '2', '2.5', '3', '4', '5', '7.5', '10', '15'];
-const START_DOSES = ['1-0-1', '1-1-1', '1-0-0', '0-1-0', '0-0-1', '1-1-0', '0-1-1', '0.5-0-0.5', '0.5-0.5-0.5', '0.75-0-0.75', '0.75-0.75-0.75', '0.5-0-0', '2-0-2', '1-1-1-1', 'SOS'];
+export const START_DOSES = ['1-0-1', '1-1-1', '1-0-0', '0-1-0', '0-0-1', '1-1-0', '0-1-1', '0.5-0-0.5', '0.5-0.5-0.5', '0.75-0-0.75', '0.75-0.75-0.75', '0.5-0-0', '2-0-2', '1-1-1-1', 'SOS'];
 /** The fixed choices first, then what this branch has used that is not among them. */
 const withRemembered = (fixed: string[], remembered: string[] = []) => [...fixed, ...remembered.filter((x) => !fixed.some((f) => f.toLowerCase() === x.toLowerCase()))];
 
@@ -269,7 +334,7 @@ function AddMedicineForm({ branch, visitId, onAdded, editing, onEdited }: { bran
     resolver: zodResolver(prescriptionItemSchema),
     defaultValues: editing
       ? { medicineId: editing.medicineId, dose: splitMl(editing.dose).pattern, days: editing.days, quantity: autoQuantity(editing) === editing.quantity ? null : editing.quantity, instructions: editing.instructions ?? '', givenHere: editing.givenHere }
-      : { dose: '1-0-1', days: 5, quantity: null, instructions: 'After food', givenHere: false },
+      : { dose: '1-0-1', days: 3, quantity: null, instructions: 'After food', givenHere: false },
   });
   const dose = watch('dose') ?? '';
   const days = Number(watch('days'));
@@ -280,6 +345,23 @@ function AddMedicineForm({ branch, visitId, onAdded, editing, onEdited }: { bran
   const liquid = meds.data?.medicines.find((m) => m.id === medicineId)?.form === 'syrup';
   const auto = liquid ? 1 : suggestedQuantity(dose, days);
   const chosen = meds.data?.medicines.find((m) => m.id === medicineId);
+  // Picking a medicine fills in how it is usually written here (the last time): dose, instruction, days.
+  const [usualFor, setUsualFor] = useState<number | null>(null);
+  const pickMedicine = (id: number | null) => {
+    setValue('medicineId', (id ?? undefined) as number, { shouldValidate: id != null });
+    const m = id != null ? meds.data?.medicines.find((x) => x.id === id) : undefined;
+    // The drug's own usual line (Inventory > edit the drug) first; else how it was written the last time.
+    const own = m && (m.defaultDose || m.defaultInstructions || m.defaultDays) ? { dose: m.defaultDose ?? dose, instructions: m.defaultInstructions, days: m.defaultDays ?? days } : null;
+    const u = own ?? (id != null ? used.data?.usual.find((x) => x.medicineId === id) : undefined);
+    if (!u) return setUsualFor(null);
+    const syrup = m?.form === 'syrup';
+    const split = splitMl(u.dose);
+    if (syrup) setMl(split.ml);
+    setValue('dose', syrup ? split.pattern : u.dose, { shouldValidate: true });
+    setValue('instructions', u.instructions ?? '');
+    setValue('days', u.days, { shouldValidate: true });
+    setUsualFor(id);
+  };
   // Never more than the pharmacy has (the server refuses it too).
   const wanted = Number(watch('quantity')) || auto || 0;
   const short = !!chosen && wanted > chosen.stock;
@@ -330,7 +412,7 @@ function AddMedicineForm({ branch, visitId, onAdded, editing, onEdited }: { bran
           aria-invalid={!!errors.medicineId}
           options={meds.data?.medicines ?? []}
           value={medicineId || null}
-          onChange={(id) => setValue('medicineId', (id ?? undefined) as number, { shouldValidate: id != null })}
+          onChange={(id) => pickMedicine(id == null ? null : Number(id))}
           getKey={medicineKey}
           getLabel={medicineLabel}
           placeholder={meds.data?.medicines.length === 0 ? 'No medicines — add them in Inventory' : 'Search drug…   (Alt+M)'}
@@ -341,6 +423,7 @@ function AddMedicineForm({ branch, visitId, onAdded, editing, onEdited }: { bran
         />
         )}
         {errors.medicineId && <p className="mt-1 text-xs font-medium text-critical">{errors.medicineId.message}</p>}
+        {!editing && usualFor === medicineId && medicineId > 0 && <p className="mt-1 text-xs text-brand">The usual dose, instruction and days for this drug are filled in. Change them for this patient if needed (set the usual ones in Inventory → edit the drug).</p>}
       </div>
 
       {liquid && (
@@ -367,7 +450,7 @@ function AddMedicineForm({ branch, visitId, onAdded, editing, onEdited }: { bran
         <input type="checkbox" className="size-5 accent-[var(--color-primary)]" {...register('givenHere')} />
         <span>
           <span className="font-medium">Give here in the hospital</span>
-          <span className="text-muted"> — an injection or drip: the nurse gives each dose and ticks it on the “Doses to give” page.</span>
+          <span className="text-muted"> — an injection or drip: the nurse gives each dose and ticks it on the “Today’s treatments” page.</span>
         </span>
       </label>
 

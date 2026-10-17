@@ -24,17 +24,18 @@ const AFTER_APPLY = ['prescription', 'visit-instructions', 'pharmacy-queue', 'vi
  * The search box. `visitId`: the visit the bookmark goes onto; null = the patient has no open visit today
  * (the patient page), and picking one says so. `where`: said under the box, e.g. "Goes onto today's visit · Token 5".
  */
-export function BookmarkSearch({ branch, visitId, where, onApplied }: { branch: string; visitId: number | null; where?: string; onApplied?: () => void }) {
+export function BookmarkSearch({ branch, visitId, where, onApplied, embedded }: { branch: string; visitId: number | null; where?: string; onApplied?: () => void; /** Inside the prescription card: a row of it, not a card of its own. */ embedded?: boolean }) {
   const canWrite = useCan('prescription.write');
   const list = useBookmarks(branch, canWrite);
   const [applying, setApplying] = useState<Bookmark | null>(null);
   const [editing, setEditing] = useState<Bookmark | 'new' | null>(null);
   if (!canWrite) return null;
   const bookmarks = list.data?.bookmarks ?? [];
+  const Wrap = embedded ? 'div' : Card;
 
   return (
-    <Card className="mb-4">
-      <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
+    <Wrap className={embedded ? 'border-b border-border bg-subtle/40' : 'mb-4'}>
+      <div className={embedded ? 'flex flex-col gap-2 px-4 py-2.5 sm:flex-row sm:items-center' : 'flex flex-col gap-2 p-3 sm:flex-row sm:items-center'}>
         <div className="min-w-0 flex-1" data-shortcut="alt+b">
           <Combobox
             aria-label="Bookmark"
@@ -77,7 +78,7 @@ export function BookmarkSearch({ branch, visitId, where, onApplied }: { branch: 
         />
       )}
       {editing && <BookmarkEditor branch={branch} bookmark={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
-    </Card>
+    </Wrap>
   );
 }
 
@@ -410,7 +411,7 @@ function BookmarkEditor({ branch, bookmark, onClose }: { branch: string; bookmar
                   </Field>
                   <label className="col-span-2 flex items-center gap-2 text-xs text-muted sm:col-span-6">
                     <input type="checkbox" className="size-4 accent-[var(--color-primary)]" checked={r.givenHere} onChange={(e) => set(i, { givenHere: e.target.checked })} />
-                    Given here in the hospital (each dose goes onto the “Doses to give” page, where the nurse ticks it)
+                    Given here in the hospital (each dose goes onto the “Today’s treatments” page, where the nurse ticks it)
                   </label>
                 </div>
               ) : (
@@ -482,7 +483,7 @@ function MedicineFacts({ medicine: m, quantity }: { medicine?: Medicine; quantit
 // ---------------------------------------------------------------- the instructions of a visit
 
 /** The visit's checklist: each instruction is confirmed when carried out (who and when). Nothing shown when there are none. */
-export function VisitInstructions({ branch, visitId }: { branch: string; visitId: number }) {
+export function VisitInstructions({ branch, visitId, embedded }: { branch: string; visitId: number; /** Inside the prescription card: a short checklist, not a card of its own. */ embedded?: boolean }) {
   const qc = useQueryClient();
   const canPrescribe = useCan('prescription.write');
   const canGive = useCan('treatment.give');
@@ -504,6 +505,59 @@ export function VisitInstructions({ branch, visitId }: { branch: string; visitId
   const list = data?.instructions ?? [];
   if (!list.length) return null;
   const left = list.filter((i) => !i.doneAt).length;
+  if (embedded)
+    return (
+      <div className="border-t border-border">
+        <div className="flex items-center justify-between bg-subtle/50 px-4 py-1.5 text-xs font-semibold tracking-wide text-muted uppercase">
+          <span className="flex items-center gap-1.5">
+            <ListChecks className="size-3.5" /> Instructions to carry out
+          </span>
+          <span className={left ? 'text-brand' : 'text-positive'}>{left ? `${left} of ${list.length} to do` : 'All done'}</span>
+        </div>
+        <ul className="divide-y divide-border">
+          {list.map((i) => (
+            <li key={i.id} className="flex items-center gap-3 px-4 py-2">
+              <input
+                type="checkbox"
+                className="size-5 shrink-0 cursor-pointer accent-[var(--color-positive)] disabled:cursor-default"
+                checked={!!i.doneAt}
+                disabled={!canConfirm || act.isPending}
+                aria-label={`${i.doneAt ? 'Done' : 'Mark done'}: ${i.text}`}
+                title={i.doneAt ? 'Done. Untick to undo.' : 'Tick when it is done'}
+                onChange={() => act.mutate({ id: i.id, what: i.doneAt ? 'undo' : 'done' })}
+              />
+              <div className="min-w-0 flex-1">
+                <div className={`text-sm font-medium ${i.doneAt ? 'text-muted line-through' : ''}`}>{i.text}</div>
+                <div className="text-xs text-muted">
+                  {i.doneAt ? (
+                    <span className="text-positive">
+                      Done {fmtDateTime(i.doneAt)}
+                      {i.doneByName && ` · ${i.doneByName}`}
+                    </span>
+                  ) : (
+                    'To do'
+                  )}
+                  {i.bookmarkName && ` · from ${i.bookmarkName}`}
+                </div>
+              </div>
+              {!i.doneAt && canPrescribe && (
+                <Button size="icon-sm" variant="ghost" aria-label={`Remove instruction: ${i.text}`} disabled={act.isPending} onClick={() => setRemovingInstruction(i)}>
+                  <X />
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+        <ConfirmDelete
+          open={!!removingInstruction}
+          onOpenChange={(o) => !o && setRemovingInstruction(null)}
+          title="Remove this instruction?"
+          description={removingInstruction?.text ?? ''}
+          pending={act.isPending}
+          onConfirm={() => removingInstruction && act.mutate({ id: removingInstruction.id, what: 'remove' }, { onSettled: () => setRemovingInstruction(null) })}
+        />
+      </div>
+    );
 
   return (
     <Card className="mt-6">

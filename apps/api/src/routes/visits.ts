@@ -383,8 +383,9 @@ export function createVisitRoutes(db: Db) {
     await assertDoctor(b.id, parsed.data.doctorUserId);
     // Status here is only waiting / completed / cancelled (the schema refuses the rest: those go through call-next and send).
     const to = parsed.data.status;
+    // Completed is final: it is paid and done, it never opens again and nothing on it changes (a new visit is made instead).
+    if (existing.status === 'completed') throw new AppError(409, 'visit_completed', 'This visit is completed: it can no longer be changed. Start a new visit for the patient.');
     if (to === 'completed' && existing.status === 'cancelled') throw new AppError(409, 'bad_state', 'This visit was cancelled. Move it back to waiting first.');
-    if (to === 'cancelled' && existing.status === 'completed') throw new AppError(409, 'bad_state', 'This visit is already completed; it can no longer be cancelled.');
     // At the counter the visit completes when the payment is collected (see checkout): not by hand while money is owed.
     if (to === 'completed' && existing.status === 'at_counter' && (!(await settledAtCounter(db, b.id, id)) || (await balanceDueOf(db, b.id, id)) > 0))
       throw new AppError(409, 'not_settled', 'Collect the payment at the counter first: this visit still has something to bill, give or collect.');

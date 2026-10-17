@@ -2,9 +2,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt, isNull, ne } from 'drizzle-orm';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { ALL_PERMISSIONS, changePasswordSchema, loginSchema, isPermission, type MeResponse, type Permission } from '@platform/shared';
+import { OWNER_PERMISSIONS, changePasswordSchema, loginSchema, isPermission, type MeResponse, type Permission } from '@platform/shared';
 import type { Db } from './db/index.js';
-import { branch, branchMember, organization, role, rolePermission, session, user } from './db/schema.js';
+import { branch, branchMember, branchRolePermission, organization, role, rolePermission, session, user } from './db/schema.js';
 import { AppError, validationError } from './errors.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { writeAudit } from './audit.js';
@@ -106,10 +106,10 @@ export async function branchesFor(db: Db, u: AuthUser): Promise<MeResponse['bran
       .from(branch)
       .where(and(eq(branch.organizationId, u.organizationId), eq(branch.isActive, true)))
       .orderBy(branch.id);
-    return all.map((b) => ({ ...b, roleName: 'Owner', permissions: [...ALL_PERMISSIONS] }));
+    return all.map((b) => ({ ...b, roleName: 'Owner', permissions: [...OWNER_PERMISSIONS] }));
   }
   const rows = await db
-    .select({ slug: branch.slug, name: branch.name, roleId: role.id, roleName: role.name })
+    .select({ branchId: branch.id, slug: branch.slug, name: branch.name, roleId: role.id, roleName: role.name })
     .from(branchMember)
     .innerJoin(branch, eq(branch.id, branchMember.branchId))
     .innerJoin(role, eq(role.id, branchMember.roleId))
@@ -117,12 +117,17 @@ export async function branchesFor(db: Db, u: AuthUser): Promise<MeResponse['bran
     .orderBy(branch.id);
   const result: MeResponse['branches'] = [];
   for (const r of rows) {
-    result.push({ slug: r.slug, name: r.name, roleName: r.roleName, permissions: await permissionsForRole(db, r.roleId) });
+    result.push({ slug: r.slug, name: r.name, roleName: r.roleName, permissions: await permissionsForRole(db, r.roleId, r.branchId) });
   }
   return result;
 }
 
-export async function permissionsForRole(db: Db, roleId: number): Promise<Permission[]> {
+/** What a role may do: in a branch, that branch's own list when the owner set one, else the role's own list. */
+export async function permissionsForRole(db: Db, roleId: number, branchId?: number): Promise<Permission[]> {
+  if (branchId != null) {
+    const own = await db.select({ p: branchRolePermission.permission }).from(branchRolePermission).where(and(eq(branchRolePermission.branchId, branchId), eq(branchRolePermission.roleId, roleId)));
+    if (own.length) return own.map((r) => r.p).filter(isPermission);
+  }
   const rows = await db.select({ p: rolePermission.permission }).from(rolePermission).where(eq(rolePermission.roleId, roleId));
   return rows.map((r) => r.p).filter(isPermission);
 }

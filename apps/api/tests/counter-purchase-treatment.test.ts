@@ -36,6 +36,7 @@ describe('fewer units at the counter than prescribed', () => {
   it('sells and charges what was given; the prescription stays as the doctor wrote it', async () => {
     const w = await world();
     const { id } = await json(w.doc(`/api/b/main/visits/${w.visitId}/prescription`, { method: 'POST', body: { medicineId: w.para, dose: '1-0-1', days: 5 } })); // 10 tablets
+    await t.db.run((await import('drizzle-orm')).sql`update op_visit set status = 'at_counter' where id = ${w.visitId}`); // the doctor is done
     // More than prescribed is refused, and nothing changes.
     const more = await w.desk(`/api/b/main/visits/${w.visitId}/checkout`, { method: 'POST', body: { itemIds: [id], quantities: { [id]: 12 }, paymentMode: 'cash', amountPaise: 2400 } });
     expect(more.status).toBe(400);
