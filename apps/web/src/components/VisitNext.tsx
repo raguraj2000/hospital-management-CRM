@@ -10,6 +10,7 @@ import { useCan } from '@/state/auth';
 import { useVisitLab } from './VisitLab';
 import { tokenName, useCallNext, useVisitInvalidate } from './Visits';
 import { KeyHint } from './Shortcuts';
+import { isUndone, withUndo } from '@/components/undo';
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const SENT: Record<VisitSendTo, string> = { lab: 'sent to the lab', counter: 'sent to pharmacy & billing', waiting: 'moved back to waiting' };
@@ -19,6 +20,34 @@ const SENT: Record<VisitSendTo, string> = { lab: 'sent to the lab', counter: 'se
  * and calls the doctor's next one in. `nudge` changes when a medicine or a test was just added: the bar
  * is brought into view and lights up, so the next step is never missed.
  */
+/** Send this patient on (lab, counter, back to waiting); the doctor's next patient is called in and opened. */
+export function useVisitSend(branch: string, visit: OpVisit, patientName: string) {
+  const navigate = useNavigate();
+  const invalidate = useVisitInvalidate(branch);
+  const who = tokenName({ ...visit, patientName });
+  return useMutation({
+    // Sent after 5 seconds: Undo on the toast keeps the patient here.
+    mutationFn: (to: VisitSendTo) => withUndo(`${who}: ${SENT[to].replace('moved back to waiting', 'back to waiting')}`, () => api.post<VisitSendResponse>(`/b/${branch}/visits/${visit.id}/send`, { to, callNext: true })),
+    onSuccess: ({ visit: sent, next }, to) => {
+      invalidate();
+      // Already paid and nothing to give at the counter: the visit is done.
+      const description = sent.status === 'completed' ? `${who}: visit completed, nothing to collect.` : `${who} ${SENT[to]}.`;
+      if (next) {
+        toast.success(next.reason === 'lab_ready' ? `Back from lab: ${tokenName(next.visit)}, result ready` : `Next: ${tokenName(next.visit)}`, { description, duration: 10_000 });
+        navigate(`/${branch}/visits/${next.visit.id}`);
+      } else {
+        toast.success('No more patients waiting', { description, duration: 10_000 });
+        navigate(`/${branch}/visits`);
+      }
+    },
+    onError: (e) => {
+      if (isUndone(e)) return;
+      invalidate();
+      toast.error(errorMessage(e));
+    },
+  });
+}
+
 export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, nudge }: { branch: string; visit: OpVisit; patientName: string; consultationFeePaise: number; nudge: number }) {
   const canEdit = useCan('patient.edit'); // the same permission as changing a visit's status
   const navigate = useNavigate();
@@ -40,7 +69,8 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
 
   const who = tokenName({ ...visit, patientName });
   const send = useMutation({
-    mutationFn: (to: VisitSendTo) => api.post<VisitSendResponse>(`/b/${branch}/visits/${visit.id}/send`, { to, callNext: true }),
+    // Sent after 5 seconds: Undo on the toast keeps the patient here.
+    mutationFn: (to: VisitSendTo) => withUndo(`${who}: ${SENT[to].replace('moved back to waiting', 'back to waiting')}`, () => api.post<VisitSendResponse>(`/b/${branch}/visits/${visit.id}/send`, { to, callNext: true })),
     onSuccess: ({ visit: sent, next }, to) => {
       invalidate();
       // Already paid and nothing to give at the counter: the visit is done.
@@ -54,12 +84,14 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
       }
     },
     onError: (e) => {
+      if (isUndone(e)) return;
       invalidate();
       toast.error(errorMessage(e));
     },
   });
 
-  if (!canEdit || (visit.status !== 'with_doctor' && visit.status !== 'waiting' && visit.status !== 'at_lab')) return null;
+  // With the doctor: the steps on the page end in the send button, and the Lab tab sends to the lab.
+  if (!canEdit || (visit.status !== 'waiting' && visit.status !== 'at_lab')) return null;
 
   const medicines = rx.data ? rx.data.items.filter((i) => i.status === 'pending').length : visit.medicineCount;
   const orders = lab.data?.orders.filter((o) => o.status !== 'cancelled');
@@ -73,7 +105,7 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
     lit && 'ring-2 ring-brand/50',
   );
 
-  if (visit.status !== 'with_doctor') {
+  {
     const atLab = visit.status === 'at_lab';
     return (
       <div ref={ref} className={shell} role="region" aria-label="What next">
@@ -87,30 +119,21 @@ export function WhatNextBar({ branch, visit, patientName, consultationFeePaise, 
       </div>
     );
   }
+}
 
-  // One obvious button: the lab while a test is still to be done and nothing is prescribed; otherwise the counter.
-  const labFirst = testsToDo > 0 && medicines === 0;
-  const pays = [medicines > 0 ? plural(medicines, 'medicine') : null, tests > 0 ? plural(tests, 'lab test') : null, consultationFeePaise > 0 ? `consultation ${formatRupees(consultationFeePaise)}` : null].filter(Boolean);
-  const busy = send.isPending;
-
+/** On the Lab tab: the ordered tests are done at the lab now; the patient comes back in when the result is ready. */
+export function SendToLab({ branch, visit, patientName }: { branch: string; visit: OpVisit; patientName: string }) {
+  const canEdit = useCan('patient.edit');
+  const lab = useVisitLab(branch, visit.id, canEdit);
+  const send = useVisitSend(branch, visit, patientName);
+  if (!canEdit || visit.status !== 'with_doctor') return null;
+  const toDo = (lab.data?.orders ?? []).filter((o) => o.status !== 'cancelled' && o.status !== 'completed').length;
   return (
-    <div ref={ref} className={shell} role="region" aria-label="What next">
-      <div className="min-w-0 text-sm md:flex-1 md:truncate">
-        <span className="font-semibold">Next for {who}</span>
-        <span className="text-muted"> · {pays.length ? pays.join(' · ') : 'nothing to pay'}</span>
-      </div>
-      {/* Each choice also calls this doctor's next patient in. */}
-      <div className="flex flex-wrap gap-2 md:shrink-0 md:flex-nowrap">
-        <Button variant="ghost" disabled={busy} onClick={() => send.mutate('waiting')} title="Not finished. The patient keeps the token and waits outside.">
-          <Hourglass /> Back to waiting
-        </Button>
-        <Button data-shortcut="alt+l" variant={labFirst ? 'default' : 'outline'} disabled={busy || testsToDo === 0} onClick={() => send.mutate('lab')} title={testsToDo > 0 ? 'The patient comes back in when the result is ready.' : 'Order a test first (Lab tab)'}>
-          <FlaskConical /> Send to lab{testsToDo > 0 ? ` (${plural(testsToDo, 'test')})` : ''} <KeyHint>Alt+L</KeyHint>
-        </Button>
-        <Button data-shortcut="alt+s" variant={labFirst ? 'outline' : 'default'} disabled={busy} onClick={() => send.mutate('counter')} title="The patient pays and collects medicines at the counter.">
-          <Pill /> Send to pharmacy &amp; billing <KeyHint>Alt+S</KeyHint>
-        </Button>
-      </div>
+    <div className="mt-4 flex flex-col gap-2 rounded-xl border border-border bg-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-sm text-muted">{toDo ? `${plural(toDo, 'test')} ordered. Send the patient to the lab; they come back in when the result is ready.` : 'Order a test above, then send the patient to the lab.'}</span>
+      <Button data-shortcut="alt+l" className="h-11 px-5 text-base" disabled={send.isPending || toDo === 0} onClick={() => send.mutate('lab')}>
+        <FlaskConical /> Send to lab{toDo ? ` (${plural(toDo, 'test')})` : ''} <KeyHint>Alt+L</KeyHint>
+      </Button>
     </div>
   );
 }

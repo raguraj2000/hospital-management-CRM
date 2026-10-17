@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
-import { CheckCircle2, Syringe, Undo2 } from 'lucide-react';
-import { FORM_UNIT, type TreatmentDose, type TreatmentList } from '@platform/shared';
+import { CheckCheck, CheckCircle2, Syringe, Undo2 } from 'lucide-react';
+import { FORM_UNIT, prettyDose, type TreatmentDose, type TreatmentList } from '@platform/shared';
 import { Avatar, Badge, Button, Card, CardHeader, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { ConditionBadges } from '@/components/Conditions';
@@ -10,7 +10,7 @@ import { fmtDay, fmtTime } from '@/components/format';
 import { useBranch, useCan } from '@/state/auth';
 
 /** "1 tablet" / "½ tablet" / "" for a typed dose. */
-const amountText = (d: TreatmentDose) => (d.amount ? `${d.amount.replace('0.5', '½').replace('.5', '½')} ${FORM_UNIT[d.form]}` : d.dose);
+const amountText = (d: TreatmentDose) => (d.amount ? `${prettyDose(d.amount)} ${FORM_UNIT[d.form]}` : d.dose);
 
 /** The nurse's list: every dose to give in the hospital today (and the ones missed on the last days), ticked when given. */
 export function Treatments() {
@@ -20,6 +20,7 @@ export function Treatments() {
   const qc = useQueryClient();
   const [date, setDate] = useState('');
   const [giving, setGiving] = useState<TreatmentDose | null>(null);
+  const [givingAll, setGivingAll] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ['treatments', branch, date],
     queryFn: () => api.get<TreatmentList>(`/b/${branch}/treatments${date ? `?date=${date}` : ''}`),
@@ -41,13 +42,15 @@ export function Treatments() {
 
   const doses = data?.doses ?? [];
   const left = doses.filter((d) => !d.givenAt).length;
+  // "Mark all" leaves out a medicine the patient did not buy: there is nothing to give.
+  const toGive = doses.filter((d) => !d.givenAt && d.itemStatus !== 'declined');
   const isToday = !!data && data.date === data.today;
   const future = !!data && data.date > data.today;
 
   return (
     <div>
       <PageHeader
-        title="Treatments"
+        title="Doses to give"
         description={data ? `Medicines given in the hospital · ${fmtDay(data.date)} · ${current?.name}` : current?.name}
         actions={
           <>
@@ -94,11 +97,19 @@ export function Treatments() {
               canGive={canGive && !future}
               onGive={setGiving}
               onUndo={(d) => undo.mutate(d)}
+              action={
+                canGive && !future && toGive.length > 1 && (
+                  <Button variant="outline" onClick={() => setGivingAll(true)}>
+                    <CheckCheck /> Mark all {toGive.length} as given
+                  </Button>
+                )
+              }
             />
           )}
         </div>
       )}
       {giving && <GiveDialog branch={branch!} dose={giving} onClose={() => setGiving(null)} onGiven={refresh} />}
+      {givingAll && <GiveAllDialog branch={branch!} doses={toGive} onClose={() => setGivingAll(false)} onGiven={refresh} />}
     </div>
   );
 }
@@ -113,6 +124,7 @@ function DoseTable({
   canGive,
   onGive,
   onUndo,
+  action,
 }: {
   title: string;
   description?: string;
@@ -123,11 +135,12 @@ function DoseTable({
   canGive: boolean;
   onGive: (d: TreatmentDose) => void;
   onUndo: (d: TreatmentDose) => void;
+  action?: ReactNode;
 }) {
   const { rows, pager } = usePaged(doses);
   return (
     <Card>
-      <CardHeader title={title} description={description} icon={Syringe} iconTone={tone} />
+      <CardHeader title={title} description={description} icon={Syringe} iconTone={tone} action={action} />
       <Table>
         <THead>
           <tr>
@@ -203,6 +216,48 @@ function DoseTable({
       </Table>
       <Pager {...pager} />
     </Card>
+  );
+}
+
+/** Every dose still to give on the day, in one step: the list is shown first so nothing is ticked blindly. */
+function GiveAllDialog({ branch, doses, onClose, onGiven }: { branch: string; doses: TreatmentDose[]; onClose: () => void; onGiven: () => void }) {
+  const giveAll = useMutation({
+    mutationFn: async () => {
+      let done = 0;
+      try {
+        for (const d of doses) {
+          await api.post(`/b/${branch}/treatments/${d.id}/give`, { note: '' });
+          done++;
+        }
+      } finally {
+        if (done) onGiven();
+      }
+      return done;
+    },
+    onSuccess: (done) => {
+      toast.success(`${done} doses marked as given`);
+      onClose();
+    },
+  });
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()} title={`Mark all ${doses.length} as given?`} description="Only if every one of these has really been given. Each can be undone afterwards.">
+      <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
+        {doses.map((d) => (
+          <li key={d.id}>
+            <span className="font-medium">{d.patientName}</span> · {d.medicineName} {d.strength} · {d.slot}
+          </li>
+        ))}
+      </ul>
+      {giveAll.error && <p className="mt-3 text-sm text-critical">Stopped: {errorMessage(giveAll.error)} The ones before it are ticked.</p>}
+      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button type="button" variant="outline" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button disabled={giveAll.isPending} onClick={() => giveAll.mutate()}>
+          <CheckCheck /> {giveAll.isPending ? 'Saving…' : 'Yes, all given'}
+        </Button>
+      </div>
+    </Dialog>
   );
 }
 

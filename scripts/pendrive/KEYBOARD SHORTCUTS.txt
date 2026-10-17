@@ -1,29 +1,33 @@
 HMS - KEYBOARD SHORTCUTS
 ========================
 
-Press  ?  on any screen to see this list inside the app.
+Press  ?  (Shift + /) on any screen to see this list inside the app.
+The numbers in the side menu are not shortcut keys: they show how many
+patients or tests are waiting on that page.
 The key is also written on the button or inside the search box.
 
 
 EVERYWHERE
-  /               Search patients
-  Alt + 1 ... 9   Open a page of the side menu
-                  (the number is shown next to each page)
+  F2              Billing
+  F3              Pharmacy
+  Alt + 1 ... 9   Open the 1st ... 9th page of the side menu,
+                  counted from the top
   Alt + N         Register a new patient
   Esc             Close a window
   ?               Show the shortcut list
 
 
 OP VISITS
-  Alt + V         Search a patient to start an OP visit
   Alt + C         Call the next patient in
 
 
 A VISIT (DOCTOR)
   Alt + C         Start the consultation
+  Alt + B         Add a bookmark (ready-made treatment)
   Alt + M         Add a medicine
-  Alt + L         Send to lab
-  Alt + S         Send to pharmacy & billing
+  Alt + L         Send to lab (on the Lab tab)
+  Alt + S         Create prescription & send to pharmacy
+                  (on the Preview step)
 
 
 PHARMACY - DIRECT SALE

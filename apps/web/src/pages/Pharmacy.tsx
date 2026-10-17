@@ -1,13 +1,14 @@
 import { useDeferredValue, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { AlertTriangle, PackageCheck, Pill, Printer, ReceiptText, RotateCcw, Search, ShoppingCart, Trash2, X } from 'lucide-react';
 import { FORM_UNIT, formatRupees, type LastPurchase, type Medicine, type Patient, type PaymentMode, type PharmacyQueueEntry, type PharmacySale } from '@platform/shared';
 import { Avatar, Badge, Button, Card, CardHeader, EmptyState, Field, Input, PageHeader, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, Pager, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
+import { PeriodPicker, PeriodSummary, type PeriodDays } from '@/components/PeriodReport';
 import { visitLabel } from '@/components/Visits';
-import { CheckoutList, useCheckoutQueue } from '@/components/Checkout';
+import { CheckoutList, useCheckoutQueue, PharmacyNote } from '@/components/Checkout';
 import { fmtDate, fmtDay, modeLabel } from '@/components/format';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
 import { KeyHint } from '@/components/Shortcuts';
@@ -28,7 +29,12 @@ export function Pharmacy() {
     refetchInterval: 20_000, // new prescriptions appear without reloading
     enabled: !fullCheckout,
   });
-  const sales = useQuery({ queryKey: ['pharmacy-sales', branch], queryFn: () => api.get<{ sales: PharmacySale[]; totalPaise: number }>(`/b/${branch}/pharmacy/sales`) });
+  const canReports = useCan('reports.view');
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'direct' ? 'direct' : params.get('tab') === 'sales' && canReports ? 'sales' : 'queue';
+  const [period, setPeriod] = useState<PeriodDays>(1);
+  const sales = useQuery({
+    enabled: canReports, queryKey: ['pharmacy-sales', branch, period], queryFn: () => api.get<{ sales: PharmacySale[]; totalPaise: number }>(`/b/${branch}/pharmacy/sales?days=${period}`) });
   const { rows: saleRows, pager: salePager } = usePaged(sales.data?.sales ?? []);
   const waiting = (fullCheckout ? checkout.data?.queue.length : queue.data?.queue.length) ?? 0;
 
@@ -38,15 +44,13 @@ export function Pharmacy() {
         title="Pharmacy"
         description={fullCheckout ? `Checkout at ${current?.name}: see the patient's total bill, collect it once, then give the medicines.` : `Prescriptions waiting at ${current?.name}. Tick what the patient buys, then dispense.`}
       />
-      <Tabs defaultValue="queue">
-        <TabsList className="mb-4">
+      <Tabs value={tab} onValueChange={(t) => setParams(t === 'queue' ? {} : { tab: t }, { replace: true })}>
+        <TabsList className="mb-4 max-w-full overflow-x-auto">
           <TabsTrigger value="queue">
             Checkout {waiting > 0 && <Badge tone="warning">{waiting}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="direct">Direct sale</TabsTrigger>
-          <TabsTrigger value="sales">
-            Today's sales {sales.data && <span className="text-xs text-muted tabular-nums">{formatRupees(sales.data.totalPaise)}</span>}
-          </TabsTrigger>
+          {canReports && <TabsTrigger value="sales">Pharmacy reports</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="queue" className="space-y-4">
@@ -70,14 +74,19 @@ export function Pharmacy() {
           <DirectSale branch={branch!} />
         </TabsContent>
 
-        <TabsContent value="sales">
+        <TabsContent value="sales" className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-sm text-muted">Medicines sold: to OP patients and directly over the counter.</span>
+            <PeriodPicker value={period} onChange={setPeriod} />
+          </div>
+          {fullCheckout && <PeriodSummary branch={branch!} days={period} pharmacyOnly />}
           <Card>
             {sales.isLoading ? (
               <Skeleton className="m-4 h-32" />
             ) : sales.error ? (
               <p className="p-4 text-sm text-critical">{errorMessage(sales.error)}</p>
             ) : !sales.data?.sales.length ? (
-              <EmptyState icon={ReceiptText} title="No sales yet today" />
+              <EmptyState icon={ReceiptText} title={period === 1 ? 'No sales yet today' : 'No sales in this period'} />
             ) : (
               <Table>
                 <THead>
@@ -168,12 +177,7 @@ function QueueCard({ branch, entry }: { branch: string; entry: PharmacyQueueEntr
         }
         description={`${visitLabel(entry)} · ${entry.patientUhid}${entry.doctorName ? ` · ${entry.doctorName}` : ''}`}
       />
-      {entry.pharmacyNote && (
-        <p className="border-b border-border px-4 py-2.5 text-sm whitespace-pre-wrap">
-          <span className="font-semibold">Doctor's note: </span>
-          {entry.pharmacyNote}
-        </p>
-      )}
+      <PharmacyNote branch={branch} visitId={entry.visitId} note={entry.pharmacyNote} />
       <Table>
         <THead>
           <tr>
@@ -266,7 +270,9 @@ function DirectSale({ branch }: { branch: string }) {
   }
 
   const q = search.trim().toLowerCase();
-  const matches = q ? (meds.data?.medicines ?? []).filter((m) => m.name.toLowerCase().includes(q)).slice(0, 8) : [];
+  // The list is always there (in stock first): several medicines are added one after the other without searching again.
+  const matches = (meds.data?.medicines ?? []).filter((m) => !q || m.name.toLowerCase().includes(q)).sort((a, b) => Number(b.stock > 0) - Number(a.stock > 0));
+  const searchBox = () => document.getElementById('direct-sale-search') as HTMLInputElement | null;
   // Stock, batch and price always come from the latest medicine list, not from when the row was added.
   const rows = cart.map((c) => {
     const med = meds.data?.medicines.find((m) => m.id === c.medicineId);
@@ -288,7 +294,9 @@ function DirectSale({ branch }: { branch: string }) {
   function add(m: Medicine) {
     // Each medicine is one row: picking it again adds one more.
     setCart((c) => (c.some((x) => x.medicineId === m.id) ? c.map((x) => (x.medicineId === m.id ? { ...x, qty: String((Number(x.qty) || 0) + 1) } : x)) : [...c, { medicineId: m.id, qty: '1' }]));
-    setSearch('');
+    // The search keeps what was typed and is selected: typing the next name replaces it, Enter adds one more.
+    searchBox()?.focus();
+    searchBox()?.select();
   }
 
   const sell = useMutation({
@@ -360,7 +368,16 @@ function DirectSale({ branch }: { branch: string }) {
       <div className="border-b border-border p-3">
         <div className="relative w-full sm:max-w-md">
           <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted" />
-          <Input type="search" aria-label="Search medicine to add" data-shortcut="alt+m" placeholder="Search medicine to add…   (Alt+M)" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          <Input type="search" aria-label="Search medicine to add" data-shortcut="alt+m" placeholder="Type a name, Enter adds the first one…   (Alt+M)" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9"
+            id="direct-sale-search"
+            onKeyDown={(e) => {
+              const first = matches.find((m) => m.stock > 0);
+              if (e.key === 'Enter' && q && first) {
+                e.preventDefault();
+                add(first);
+              }
+            }}
+          />
         </div>
         {meds.isLoading ? (
           <Skeleton className="mt-3 h-10" />
@@ -372,9 +389,9 @@ function DirectSale({ branch }: { branch: string }) {
           <p className="mt-3 text-sm text-muted">No matching medicines.</p>
         ) : (
           matches.length > 0 && (
-            <ul className="mt-2 divide-y divide-border rounded-lg border border-border">
+            <ul className="mt-2 max-h-64 divide-y divide-border overflow-y-auto rounded-lg border border-border">
               {matches.map((m) => (
-                <li key={m.id}>
+                <li key={m.id} className={cart.some((x) => x.medicineId === m.id) ? 'bg-brand/5' : undefined}>
                   <button
                     type="button"
                     disabled={m.stock === 0}
@@ -389,6 +406,7 @@ function DirectSale({ branch }: { branch: string }) {
                     ) : (
                       <span className="text-xs text-muted tabular-nums">
                         {formatRupees(m.pricePaise)}/{FORM_UNIT[m.form]} · {m.stock} in stock
+                        {cart.some((x) => x.medicineId === m.id) && <b className="ml-2 text-brand">Added ×{cart.find((x) => x.medicineId === m.id)!.qty} · click for one more</b>}
                       </span>
                     )}
                   </button>
@@ -400,7 +418,7 @@ function DirectSale({ branch }: { branch: string }) {
       </div>
 
       {rows.length === 0 ? (
-        <EmptyState icon={ShoppingCart} title="No medicines added" description="Search above and pick what the customer is buying." />
+        <EmptyState icon={ShoppingCart} title="No medicines added" description="Click each medicine in the list above, or type a name and press Enter." />
       ) : (
         <>
           <Table>

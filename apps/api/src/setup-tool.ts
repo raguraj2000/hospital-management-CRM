@@ -3,15 +3,17 @@
 //   node setup.mjs init <setup-data.json>         first-time setup (OWNER_MOBILE, OWNER_PASSWORD in the environment)
 //   node setup.mjs backup <file.db>               a safe copy of the database, even while the server runs
 //   node setup.mjs reset-password <mobile> <new>  set a new password for one account
+//   node setup.mjs start-fresh <keep-stock|clear-stock>   after a trial: remove the test data, keep the setup
 //   tsx src/setup-tool.ts export <branch name> <out.json>   (developer PC) save one branch's setup, no patient data
 import fs from 'node:fs';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { loginMobileSchema, printHeaderSchema } from '@platform/shared';
-import { hashPassword, openDb, runMigrations } from '@platform/core';
+import { hashPassword, openDb, runMigrations, writeAudit } from '@platform/core';
 import { branch, clinicSetting, labTest, labTestParameter, medicine, organization, session, user } from './db/schema.js';
 import { config, ensureDataDir } from './config.js';
 import { seedOrganization } from './seed.js';
+import { startFresh } from './lib/start-fresh.js';
 
 /** One hospital's setup: what a new install starts with. Never patients, visits, bills or stock. */
 const setupDataSchema = z.object({
@@ -27,7 +29,7 @@ const setupDataSchema = z.object({
         department: z.string(),
         kind: z.enum(['panel', 'card']),
         sortOrder: z.number().int(),
-        parameters: z.array(z.object({ name: z.string(), method: z.string(), unit: z.string(), refRange: z.string(), valueType: z.enum(['number', 'text']), options: z.string().nullable(), noFlag: z.boolean(), sortOrder: z.number().int() })),
+        parameters: z.array(z.object({ name: z.string(), method: z.string(), unit: z.string(), refRange: z.string(), valueType: z.enum(['number', 'text']), options: z.string().nullable(), noFlag: z.boolean(), optional: z.boolean().default(false), sortOrder: z.number().int() })),
       }),
     )
     .default([]),
@@ -99,6 +101,18 @@ if (cmd === 'init') {
   if (!done.length) fail(`No account signs in with ${mobile.data}.`);
   await db.update(session).set({ revokedAt: new Date().toISOString() }).where(eq(session.userId, done[0].id)); // sign out everywhere
   console.log(`New password set for ${done[0].name}.`);
+} else if (cmd === 'start-fresh') {
+  if (a1 !== 'keep-stock' && a1 !== 'clear-stock') fail('Usage: start-fresh <keep-stock|clear-stock> [keep-patients]');
+  const keepPatients = a2 === 'keep-patients';
+  const [org] = await db.select({ id: organization.id, name: organization.name }).from(organization).limit(1);
+  if (!org) fail('This computer is not set up yet: there is nothing to clear.');
+  const r = await startFresh(db, { keepStock: a1 === 'keep-stock', keepPatients });
+  await writeAudit(db, { organizationId: org!.id, action: 'start_fresh', entity: 'database', detail: { keepStock: a1 === 'keep-stock', keepPatients, removed: r.removed } });
+  await db.run(sql`VACUUM`); // give the space back
+  const say = (o: Record<string, number>) => Object.entries(o).map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ') || 'nothing';
+  console.log(`"${org!.name}" starts fresh.`);
+  console.log(`Removed: ${say(r.removed)}.`);
+  console.log(`Kept:    ${say(Object.fromEntries(Object.entries(r.kept).filter(([k]) => ['user', 'patient', 'lab_test', 'medicine', 'vendor', 'treatment_bookmark', 'medicine_batch', 'purchase_bill'].includes(k))))}.`);
 } else if (cmd === 'export') {
   if (!a1 || !a2) fail('Usage: export <branch name> <out.json>');
   const found = await db.select().from(branch).where(eq(branch.name, a1!));
@@ -120,13 +134,13 @@ if (cmd === 'init') {
       department: t.department,
       kind: t.kind,
       sortOrder: t.sortOrder,
-      parameters: params.filter((p) => p.testId === t.id).map((p) => ({ name: p.name, method: p.method, unit: p.unit, refRange: p.refRange, valueType: p.valueType, options: p.options, noFlag: p.noFlag, sortOrder: p.sortOrder })),
+      parameters: params.filter((p) => p.testId === t.id).map((p) => ({ name: p.name, method: p.method, unit: p.unit, refRange: p.refRange, valueType: p.valueType, options: p.options, noFlag: p.noFlag, optional: p.optional, sortOrder: p.sortOrder })),
     })),
     medicines: meds.map((m) => ({ name: m.name, form: m.form, strength: m.strength, pricePaise: m.pricePaise, reorderLevel: m.reorderLevel })),
   });
   fs.writeFileSync(a2!, JSON.stringify(data, null, 1));
   console.log(`Setup of "${b.name}" written to ${a2}: ${data.labTests.length} lab tests, ${data.medicines.length} medicines, print header ${data.printHeader ? 'yes' : 'no'}. No patients, visits, bills or stock.`);
 } else {
-  fail('Commands: init <setup-data.json> | backup <file.db> | reset-password <mobile> <new password> | export <branch name> <out.json>');
+  fail('Commands: init <setup-data.json> | backup <file.db> | reset-password <mobile> <new password> | start-fresh <keep-stock|clear-stock> | export <branch name> <out.json>');
 }
 db.$client.close();

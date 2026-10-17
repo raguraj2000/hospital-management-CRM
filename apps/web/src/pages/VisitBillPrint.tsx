@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
-import { billCharges, type BillPaymentMode, type VisitBillPrint as VisitBillData } from '@platform/shared';
+import { billCharges, type BillPaymentMode, type VisitBillPrint as VisitBillData, ROUND_OFF_LINE } from '@platform/shared';
 import { api, errorMessage } from '@/api/client';
 import { useMe } from '@/state/auth';
 import { PrintSheet, PrintSignature } from '@/components/PrintSheet';
@@ -39,17 +39,31 @@ export function VisitBillPrint() {
   // Consultation & lab: every charge of every OP bill of the visit, in bill order.
   const charges: [string, number][] = [];
   for (const b of bills) {
-    if (b.consultationFeePaise > 0 || b === bills[0]) charges.push(['Consultation fee', b.consultationFeePaise]);
+    if (b.consultationFeePaise > 0) charges.push(['Consultation fee', b.consultationFeePaise]); // no fee (lab only, bill only): no line
     for (const l of b.lines) if (l.labOrderId != null) charges.push([`Lab: ${l.description}`, l.amountPaise]);
-    for (const x of billCharges(b)) charges.push([x.description, x.amountPaise]);
+    for (const x of billCharges(b)) if (x.description !== ROUND_OFF_LINE) charges.push([x.description, x.amountPaise]);
   }
+  // The round off is not a charge: it prints on its own row, after the discount.
+  const roundOffPaise = bills.reduce((s, b) => s + billCharges(b).filter((x) => x.description === ROUND_OFF_LINE).reduce((t, x) => t + x.amountPaise, 0), 0);
   const discountPaise = bills.reduce((s, b) => s + b.discountPaise, 0);
   const billNos = [...bills.map((b) => b.billNo), ...sales.map((s) => s.saleNo)];
   const medicineLines = sales.flatMap((s) => s.lines);
   const paid = (Object.keys(modeLabel) as BillPaymentMode[]).filter((m) => t.paidByMode[m] > 0);
 
   return (
-    <PrintSheet header={data.header} title="Bill" tabTitle={`Bill - ${data.patient.name}`} back canPrint={printable} signature={false}>
+    <PrintSheet
+      header={data.header}
+      title="Bill"
+      tabTitle={`Bill - ${data.patient.name}`}
+      back
+      canPrint={printable}
+      signature={false}
+      share={{
+        phone: data.patient.phone,
+        subject: `Bill ${billNos.join(', ')}`,
+        message: `Hello ${data.patient.name}, your bill ${billNos.join(', ')} from ${data.header.title || 'the hospital'}: total ₹${t.grandTotalPaise / 100}, paid ₹${t.paidPaise / 100}${t.balancePaise ? `, balance due ₹${t.balancePaise / 100}` : ''}. Thank you.`,
+      }}
+    >
         <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border border-[#111] px-3 py-2">
           <div>
             <b>Patient:</b> {data.patient.name}
@@ -96,6 +110,13 @@ export function VisitBillPrint() {
                   <td />
                   <td className="py-1.5 text-right">Discount</td>
                   <td className="py-1.5 text-right tabular-nums">− {printMoney(discountPaise)}</td>
+                </tr>
+              )}
+              {roundOffPaise > 0 && (
+                <tr className="border-b border-[#ccc]">
+                  <td />
+                  <td className="py-1.5 text-right">Round off</td>
+                  <td className="py-1.5 text-right tabular-nums">+ {printMoney(roundOffPaise)}</td>
                 </tr>
               )}
               <tr className="font-semibold">

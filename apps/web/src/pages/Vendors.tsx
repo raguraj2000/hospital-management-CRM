@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
+import { Expenses } from '@/components/Expenses';
 import { Building2, FilePlus2, MoreHorizontal, Pencil, Plus, ReceiptText, Trash2 } from 'lucide-react';
 import { formatRupees, vendorInputSchema, type PurchaseBillSummary, type Vendor, type VendorInput } from '@platform/shared';
 import {
@@ -48,7 +49,8 @@ export const purchaseStatus: Record<PurchaseBillSummary['status'], { label: stri
   cancelled: { label: 'Cancelled', tone: 'neutral' },
 };
 
-export function Vendors() {
+/** embedded: shown as a tab of Inventory (no page title of its own). */
+export function Vendors({ embedded }: { embedded?: boolean }) {
   const { branch } = useParams();
   const current = useBranch();
   const canManage = useCan('vendor.manage');
@@ -60,28 +62,43 @@ export function Vendors() {
 
   return (
     <div>
-      <PageHeader
-        title="Vendors"
-        description={`Suppliers of ${current?.name}, medicine purchases and what you owe them.`}
-        actions={
+      {embedded ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted">Suppliers, medicine purchases, what you owe them, and other expenses.</p>
           <Button onClick={() => navigate(`/${branch}/vendors/purchases/new`)}>
             <FilePlus2 /> New purchase bill
           </Button>
-        }
-      />
+        </div>
+      ) : (
+        <PageHeader
+          title="Vendors"
+          description={`Suppliers of ${current?.name}, medicine purchases, what you owe them, and other expenses.`}
+          actions={
+            <Button onClick={() => navigate(`/${branch}/vendors/purchases/new`)}>
+              <FilePlus2 /> New purchase bill
+            </Button>
+          }
+        />
+      )}
       <div className="mb-4 grid gap-4 sm:grid-cols-3">
         <StatCard icon={Building2} label="Vendors" value={vendors.data?.vendors.length ?? 0} loading={vendors.isLoading} />
         <StatCard icon={ReceiptText} tone="warning" label="You owe" value={formatRupees(due)} footnote="Unpaid purchase bills" loading={vendors.isLoading} />
         <StatCard icon={ReceiptText} tone="critical" label="Overdue" value={formatRupees(overdue)} footnote="Past the due date" loading={vendors.isLoading} />
       </div>
       <Tabs defaultValue="bills">
-        <TabsList className="mb-4">
+        <TabsList className="mb-4 max-w-full overflow-x-auto">
           <TabsTrigger value="bills">Purchase bills</TabsTrigger>
           <TabsTrigger value="vendors">Vendors</TabsTrigger>
+          {canManage && <TabsTrigger value="expenses">Other expenses</TabsTrigger>}
         </TabsList>
         <TabsContent value="bills">
           <PurchaseBillsTable branch={branch!} bills={bills.data?.bills} loading={bills.isLoading} error={bills.error} />
         </TabsContent>
+        {canManage && (
+          <TabsContent value="expenses">
+            <Expenses branch={branch!} vendors={vendors.data?.vendors ?? []} />
+          </TabsContent>
+        )}
         <TabsContent value="vendors">
           <VendorsTable branch={branch!} vendors={vendors.data?.vendors} loading={vendors.isLoading} canManage={canManage} />
         </TabsContent>

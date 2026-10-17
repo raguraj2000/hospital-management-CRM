@@ -1,4 +1,4 @@
-import { BedDouble, Building2,ClipboardList, FlaskConical, LayoutDashboard, Package, Pill, Receipt, Settings, Syringe, Users, type LucideIcon } from 'lucide-react';
+import { Bookmark, Building2, CircleHelp, ClipboardList, FlaskConical, LayoutDashboard, Package, Pill, Receipt, Settings, Syringe, Users, type LucideIcon } from 'lucide-react';
 import type { Permission } from '@platform/shared';
 
 /** One list drives the sidebar, the phone bottom bar AND the route guards. */
@@ -12,6 +12,8 @@ export interface NavItem {
   primary?: boolean;
   /** Not built yet: shown with a "Soon" tag. */
   soon?: boolean;
+  /** Not in the menu for someone who has this permission: the page is a tab of another page for them. */
+  foldedWith?: Permission;
 }
 
 export const NAV: NavItem[] = [
@@ -21,12 +23,14 @@ export const NAV: NavItem[] = [
   { path: 'billing', label: 'Billing', icon: Receipt, permission: 'billing.receive', group: 'Clinic', primary: true },
   { path: 'pharmacy', label: 'Pharmacy', icon: Pill, permission: 'pharmacy.sell', group: 'Clinic' },
   { path: 'lab', label: 'Lab', icon: FlaskConical, permission: 'lab.view', group: 'Clinic' },
-  { path: 'treatments', label: 'Treatments', icon: Syringe, permission: 'treatment.give', group: 'Clinic' },
-  // TODO(shortcut): reuses patient.view until IPD has its own permission
-  { path: 'admissions', label: 'Admissions', icon: BedDouble, permission: 'patient.view', group: 'Clinic', soon: true },
+  { path: 'treatments', label: 'Doses to give', icon: Syringe, permission: 'treatment.give', group: 'Clinic' },
+  // Settings > Bookmarks for whoever has Settings; a doctor without Settings keeps it in the menu.
+  { path: 'bookmarks', label: 'Bookmarks', icon: Bookmark, permission: 'prescription.write', group: 'Clinic', foldedWith: 'settings.manage' },
   { path: 'inventory', label: 'Inventory', icon: Package, permission: 'inventory.view', group: 'Manage' },
-  { path: 'vendors', label: 'Vendors', icon: Building2, permission: 'vendor.manage', group: 'Manage' },
+  // Inventory > Vendors & purchases for whoever sees Inventory.
+  { path: 'vendors', label: 'Vendors', icon: Building2, permission: 'vendor.manage', group: 'Manage', foldedWith: 'inventory.view' },
   { path: 'settings', label: 'Settings', icon: Settings, permission: 'settings.manage', group: 'Manage' },
+  { path: 'help', label: 'How HMS works', icon: CircleHelp, permission: 'settings.manage', group: 'Manage' },
 ];
 
 export const NAV_GROUPS = ['Overview', 'Clinic', 'Manage'] as const;

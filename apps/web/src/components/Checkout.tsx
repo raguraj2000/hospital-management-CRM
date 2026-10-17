@@ -1,17 +1,18 @@
 // The counter's checkout: everything a visit owes on ONE card -- consultation & lab, medicines, one total,
 // one payment. Used by the Pharmacy page ("Checkout" tab) and the Billing page ("To collect" tab).
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router';
-import { AlertTriangle, FlaskConical, PackageCheck, Pencil, Printer, Wallet, X } from 'lucide-react';
-import { CHECKOUT_LOOKBACK_DAYS, FORM_UNIT, formatRupees, toPaise, type BillPaymentMode, type CheckoutInput, type CheckoutQueueEntry, type CheckoutResult, type VisitCheckout } from '@platform/shared';
+import { Link, useNavigate, useSearchParams } from 'react-router';
+import { AlertTriangle, ChevronDown, ChevronUp, FlaskConical, PackageCheck, Pencil, Printer, Search, Wallet, X } from 'lucide-react';
+import { CHECKOUT_LOOKBACK_DAYS, FORM_UNIT, formatRupees, toPaise, type BillPaymentMode, type CheckoutInput, type CheckoutQueueEntry, type CheckoutResult, type VisitCheckout, ROUND_OFF_LINE, ROUND_OFF_MAX_PAISE, autoRoundOffPaise } from '@platform/shared';
 import { Avatar, Badge, Button, Card, Dialog, EmptyState, Field, Input, Skeleton, Table, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { PrintLink } from './print';
 import { useCan } from '@/state/auth';
-import { fmtDay } from '@/components/format';
+import { fmtDateTime, fmtDay } from '@/components/format';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
-import { chargeRowsOf, ChargeRowsEditor, chargesOf, type ChargeRow } from '@/components/BillCharges';
+import { VisitChargesBox } from '@/components/VisitCharges';
+import { isUndone, withUndo } from '@/components/undo';
 
 /** What is typed in a ₹ box, as paise (empty or not a number = 0). */
 const paiseOf = (rupees: string) => Math.max(0, toPaise(Number(rupees) || 0));
@@ -19,6 +20,8 @@ const rupeesOf = (paise: number) => String(paise / 100);
 export const visitBillPrintUrl = (branch: string, visitId: number) => `/${branch}/visits/${visitId}/bill/print`;
 
 /** Everything shown after a checkout must be fresh: the lists the dispense, create-bill and payment actions refresh. */
+/** "Print the bill after collecting", remembered on this computer (on unless unticked). */
+const AUTO_PRINT_KEY = 'hms-print-after-collect';
 const AFTER_CHECKOUT = ['checkout-queue', 'checkout', 'pharmacy-queue', 'pharmacy-sales', 'medicines', 'batches', 'prescription', 'to-bill', 'bills-due', 'bill', 'visit-bills', 'collection', 'patient-bills', 'patient-lab', 'lab-report', 'visits', 'visit', 'patient-visits', 'dashboard'];
 
 interface Queue {
@@ -39,6 +42,16 @@ export function useCheckoutQueue(branch: string | undefined, enabled = true) {
 /** Visits with something to collect: sent by the doctor first, then today's, then earlier days'. */
 export function CheckoutList({ branch }: { branch: string }) {
   const qc = useQueryClient();
+  // Every card starts closed; opening one closes the other, so the counter looks at one bill at a time.
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [showOlder, setShowOlder] = useState(false);
+  const [search, setSearch] = useState('');
+  // Billing?visit=12 (from "Create bill"): that visit's card is open.
+  const [params] = useSearchParams();
+  const asked = Number(params.get('visit')) || null;
+  useEffect(() => {
+    if (asked) setOpenId(asked);
+  }, [asked]);
   const queue = useCheckoutQueue(branch);
   const canPrintLab = [useCan('lab.view'), useCan('lab.order')].some(Boolean); // the lab report page needs one of them
   // Kept in the query cache, so it is still here after coming back from the printed bill.
@@ -47,10 +60,26 @@ export function CheckoutList({ branch }: { branch: string }) {
 
   if (queue.isLoading) return <Skeleton className="h-48" />;
   if (queue.error) return <Card className="p-4 text-base text-critical">{errorMessage(queue.error)}</Card>;
-  const entries = queue.data?.queue ?? [];
+  const all = queue.data?.queue ?? [];
+  // Find a patient without scrolling: name, UHID, phone, token or OP number.
+  const q = search.trim().toLowerCase();
+  const digits = q.replace(/\D/g, '');
+  const entries = q
+    ? all.filter((e) => e.patientName.toLowerCase().includes(q) || e.patientUhid.toLowerCase().includes(q) || e.opNo.toLowerCase().includes(q) || (digits.length >= 1 && (String(e.token ?? '') === digits || (digits.length >= 4 && (e.patientPhone ?? '').replace(/\D/g, '').includes(digits)))))
+    : all;
+  // Yesterday and today on top; older unpaid visits folded below, so they never push today's patients down.
+  const yesterday = queue.data ? new Date(Date.parse(`${queue.data.today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10) : '';
+  const recent = entries.filter((e) => e.visitDate >= yesterday);
+  const older = entries.filter((e) => e.visitDate < yesterday);
 
   return (
     <div className="space-y-4">
+      {all.length > 3 && (
+        <div className="relative sm:max-w-md">
+          <Search className="pointer-events-none absolute top-3 left-3 size-5 text-muted" />
+          <Input type="search" aria-label="Find a patient to collect from" placeholder="Find: name, phone, UHID or token…" className="h-11 pl-10 text-base" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+      )}
       {last && (
         <Card className="flex flex-wrap items-center justify-between gap-3 border-positive/30 bg-positive-soft p-4">
           <div className="text-base">
@@ -78,22 +107,60 @@ export function CheckoutList({ branch }: { branch: string }) {
           </div>
         </Card>
       )}
-      {entries.length === 0 ? (
+      {entries.length === 0 && q ? (
+        <Card className="p-6 text-center text-base text-muted">Nobody matches “{search}”.</Card>
+      ) : entries.length === 0 ? (
         <Card>
           <EmptyState icon={PackageCheck} title="Nothing to collect" description={`Patients the doctor sends to the counter show up here by themselves. Unpaid visits of the last ${CHECKOUT_LOOKBACK_DAYS} days stay listed until they are settled.`} />
         </Card>
       ) : (
-        entries.map((e) => <CheckoutCard key={e.visitId} branch={branch} entry={e} today={queue.data!.today} onCollected={(result) => qc.setQueryData(lastKey, { visitId: e.visitId, patientName: e.patientName, result })} />)
+        <>
+        {recent.map((e, i) => [
+          // A new day starts here: yesterday's tokens and today's are never mixed up.
+          (i === 0 ? recent.some((x) => x.visitDate !== e.visitDate) : recent[i - 1]!.visitDate !== e.visitDate) && <DayHeading key={`d${e.visitDate}`} day={e.visitDate} today={queue.data!.today} count={recent.filter((x) => x.visitDate === e.visitDate).length} />,
+          <CheckoutCard key={e.visitId} branch={branch} entry={e} today={queue.data!.today} open={openId === e.visitId} onToggle={() => setOpenId((id) => (id === e.visitId ? null : e.visitId))} onCollected={(result) => qc.setQueryData(lastKey, { visitId: e.visitId, patientName: e.patientName, result })} />,
+        ])}
+        {older.length > 0 && (
+          <div className="rounded-lg border border-dashed border-warning/50">
+            <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-base font-semibold text-warning" onClick={() => setShowOlder((x) => !x)}>
+              <span>
+                Older unpaid visits · {older.length} patient{older.length === 1 ? '' : 's'} (before yesterday)
+              </span>
+              <span className="text-sm font-medium">{showOlder ? 'Hide' : 'Show'}</span>
+            </button>
+            {showOlder && <div className="space-y-4 px-3 pb-3">{older.map((e, i) => [
+          // A new day starts here: yesterday's tokens and today's are never mixed up.
+          (i === 0 || older[i - 1]!.visitDate !== e.visitDate) && <DayHeading key={`d${e.visitDate}`} day={e.visitDate} today={queue.data!.today} count={older.filter((x) => x.visitDate === e.visitDate).length} />,
+          <CheckoutCard key={e.visitId} branch={branch} entry={e} today={queue.data!.today} open={openId === e.visitId} onToggle={() => setOpenId((id) => (id === e.visitId ? null : e.visitId))} onCollected={(result) => qc.setQueryData(lastKey, { visitId: e.visitId, patientName: e.patientName, result })} />,
+        ])}</div>}
+          </div>
+        )}
+        </>
       )}
     </div>
   );
 }
 
-/** One visit: who it is and a one-line summary; opened, the whole checkout. Patients at the counter start opened. */
-function CheckoutCard({ branch, entry, today, onCollected }: { branch: string; entry: CheckoutQueueEntry; today: string; onCollected: (r: CheckoutResult) => void }) {
+/** One visit: who it is and a one-line summary; opened, the whole checkout. */
+/** "Today · Wednesday, 14 October" / "Earlier day · Tuesday, 13 October": the line between two days of the list. */
+function DayHeading({ day, today, count }: { day: string; today: string; count: number }) {
+  const isToday = day === today;
+  return (
+    <div className={`flex items-center gap-3 pt-1 text-sm font-semibold ${isToday ? 'text-brand' : 'text-warning'}`}>
+      <span className={`rounded-md px-2.5 py-1 ${isToday ? 'bg-brand-soft' : 'bg-warning-soft'}`}>
+        {isToday ? 'Today' : 'Earlier day'} · {fmtDay(day)}
+      </span>
+      <span className="font-normal text-muted">
+        {count} patient{count === 1 ? '' : 's'}
+      </span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+function CheckoutCard({ branch, entry, today, open, onToggle, onCollected }: { branch: string; entry: CheckoutQueueEntry; today: string; open: boolean; onToggle: () => void; onCollected: (r: CheckoutResult) => void }) {
   const canOpenVisit = useCan('patient.view'); // the visit page needs it
   const sent = entry.status === 'at_counter';
-  const [open, setOpen] = useState(sent || !!entry.medicinesWaiting);
   const detail = useQuery({ queryKey: ['checkout', branch, entry.visitId], queryFn: () => api.get<VisitCheckout>(`/b/${branch}/visits/${entry.visitId}/checkout`), enabled: open });
 
   return (
@@ -116,10 +183,16 @@ function CheckoutCard({ branch, entry, today, onCollected }: { branch: string; e
               ) : (
                 entry.patientName
               )}
-              {sent && (
-                <Badge tone="positive" dot className="text-sm">
-                  Sent by doctor
+              {entry.direct ? (
+                <Badge tone="brand" dot className="text-sm">
+                  {entry.direct === 'lab' ? 'Lab test only' : 'Bill only'}
                 </Badge>
+              ) : (
+                sent && (
+                  <Badge tone="positive" dot className="text-sm">
+                    Sent by doctor
+                  </Badge>
+                )
               )}
               {entry.visitDate !== today && (
                 <Badge tone="warning" className="text-sm">
@@ -129,14 +202,18 @@ function CheckoutCard({ branch, entry, today, onCollected }: { branch: string; e
             </div>
             <div className="text-sm text-muted">
               {entry.doctorName ? `Doctor: ${entry.doctorName} · ` : ''}
-              {entry.patientUhid} · {entry.opNo}
+              {entry.patientUhid} · {entry.opNo} · {fmtDateTime(entry.visitAt)}
             </div>
             {!open && <div className="mt-0.5 text-base">{entry.summary}</div>}
           </div>
         </div>
-        {!open && (
-          <Button variant="outline" className="h-11 px-5 text-base" onClick={() => setOpen(true)}>
-            <Wallet /> Collect {formatRupees(entry.grandTotalPaise)}
+        {open ? (
+          <Button variant="ghost" className="h-11 text-base" onClick={onToggle}>
+            <ChevronUp /> Close
+          </Button>
+        ) : (
+          <Button variant={sent ? 'default' : 'outline'} className="h-11 px-5 text-base" onClick={onToggle}>
+            <Wallet /> Collect {formatRupees(entry.grandTotalPaise)} <ChevronDown />
           </Button>
         )}
       </div>
@@ -166,41 +243,74 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
   // Charges: null = as the server has them.
   const [editing, setEditing] = useState(false);
   const [fee, setFee] = useState<string | null>(null);
-  const [chargeRows, setChargeRows] = useState<ChargeRow[] | null>(null);
   const [discount, setDiscount] = useState<string | null>(null);
+  /** Round off typed by hand; null = worked out by HMS (up to the next ₹5). */
+  const [round, setRound] = useState<string | null>(null);
+  const [autoPrint, setAutoPrintState] = useState(() => {
+    try {
+      return localStorage.getItem(AUTO_PRINT_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const setAutoPrint = (on: boolean) => {
+    setAutoPrintState(on);
+    try {
+      localStorage.setItem(AUTO_PRINT_KEY, on ? '1' : '0');
+    } catch {
+      /* private window: this time only */
+    }
+  };
   const [confirmFree, setConfirmFree] = useState(false);
   // Amount received: null = the whole total.
   const [amount, setAmount] = useState<string | null>(null);
   const [mode, setMode] = useState<BillPaymentMode>('cash');
-
-  const editable = !!bill?.editable;
-  const feePaise = fee != null && editable ? paiseOf(fee) : (bill?.consultationFeePaise ?? 0);
-  const charges = chargeRows != null && editable ? chargesOf(chargeRows) : (bill?.charges ?? []);
-  const otherPaise = charges.reduce((s, x) => s + x.amountPaise, 0);
-  const discountPaise = discount != null && editable ? paiseOf(discount) : (bill?.discountPaise ?? 0);
-  const labPaise = bill?.labLines.reduce((s, l) => s + l.amountPaise, 0) ?? 0;
-  const earlierPaise = bill?.earlierBills.reduce((s, b) => s + b.balancePaise, 0) ?? 0;
-  const chargesPaise = feePaise + labPaise + otherPaise;
-  const billDuePaise = bill ? Math.max(0, chargesPaise - discountPaise) + earlierPaise : 0;
-
   // Fewer units than prescribed (the patient wants 2 days of 3): line id -> what is typed. Not listed = in full.
   const [fewer, setFewer] = useState<Record<number, string>>({});
+
+  const editable = !!bill?.editable;
+  // (Used before giveQty is defined below: the same rule.)
+  const fewerQty = (i: { id: number; quantity: number }) => (fewer[i.id] == null ? i.quantity : Math.min(i.quantity, Math.max(1, Math.floor(Number(fewer[i.id]) || 0))));
+  const feePaise = fee != null && editable ? paiseOf(fee) : (bill?.consultationFeePaise ?? 0);
+  // Extra charges are saved one by one (see VisitChargesBox); what the server has is what gets billed.
+  const charges = bill?.charges ?? [];
+  // The round-off line is worked out here, not typed: it is kept apart from the other charges.
+  const savedRoundPaise = charges.find((x) => x.description === ROUND_OFF_LINE)?.amountPaise ?? 0;
+  const otherPaise = charges.reduce((s, x) => s + x.amountPaise, 0) - savedRoundPaise;
+  const typedDiscountPaise = discount != null && editable ? paiseOf(discount) : (bill?.discountPaise ?? 0);
+  const labPaise = bill?.labLines.reduce((s, l) => s + l.amountPaise, 0) ?? 0;
+  const earlierPaise = bill?.earlierBills.reduce((s, b) => s + b.balancePaise, 0) ?? 0;
+  const basePaise = feePaise + labPaise + otherPaise;
+  // Round off: UP to the next ₹5 (158 -> 160, 163 -> 165) on the whole total, medicines included, unless staff
+  // typed another amount. It becomes the bill's "Round off" line, so it needs a bill that can still be changed.
+  const medicinesNow = (data.medicines?.items ?? []).filter((i) => !unticked.includes(i.id)).reduce((s, i) => s + (fewerQty(i)) * i.pricePaise, 0);
+  const beforeRound = (bill ? Math.max(0, basePaise - typedDiscountPaise) + earlierPaise : 0) + medicinesNow;
+  const autoRound = autoRoundOffPaise(beforeRound);
+  const roundOff = editable ? (round != null ? Math.min(ROUND_OFF_MAX_PAISE, Math.max(0, paiseOf(round))) : autoRound) : savedRoundPaise;
+  const discountPaise = typedDiscountPaise;
+  const chargesPaise = basePaise + roundOff;
+  const billDuePaise = bill ? Math.max(0, chargesPaise - discountPaise) + earlierPaise : 0;
+
   /** Units to give: what was typed, kept between 1 and what the doctor prescribed. */
   const giveQty = (i: { id: number; quantity: number }) => (fewer[i.id] == null ? i.quantity : Math.min(i.quantity, Math.max(1, Math.floor(Number(fewer[i.id]) || 0))));
   const chosen = items.filter((i) => !unticked.includes(i.id));
   const medicinesPaise = chosen.reduce((s, i) => s + giveQty(i) * i.pricePaise, 0);
   const shortOnTicked = chosen.some((i) => i.stock < giveQty(i));
   const totalPaise = billDuePaise + medicinesPaise;
+  /** Paise taken off so the patient pays whole rupees (only while the bill can still carry it as discount). */
+  const roundOffPaise = roundOff;
   const receivedPaise = amount != null ? paiseOf(amount) : totalPaise;
   const balanceLeft = totalPaise - receivedPaise;
 
   const problem =
-    discountPaise > chargesPaise
-      ? 'The discount is more than the bill.'
+    editable && round != null && paiseOf(round) > ROUND_OFF_MAX_PAISE
+      ? `Round off can be ${formatRupees(ROUND_OFF_MAX_PAISE)} at most.`
+      : typedDiscountPaise > basePaise
+      ? 'The discount is more than the consultation, lab and other charges.'
       : shortOnTicked
-        ? 'A ticked medicine is short of stock. Untick it or add stock first.'
+        ? 'A ticked drug is short of stock. Untick it or add stock first.'
         : receivedPaise < medicinesPaise
-          ? `Medicines (${formatRupees(medicinesPaise)}) must be paid in full.`
+          ? `Drugs (${formatRupees(medicinesPaise)}) must be paid in full.`
           : receivedPaise > totalPaise
             ? `Only ${formatRupees(totalPaise)} is due.`
             : null;
@@ -216,8 +326,9 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
         if (less.length) body.quantities = Object.fromEntries(less.map((i) => [i.id, giveQty(i)]));
       }
       // What is on the screen is what gets billed.
-      if (editable) Object.assign(body, { consultationFeePaise: feePaise, charges, discountPaise });
-      return api.post<CheckoutResult>(`/b/${branch}/visits/${data.visitId}/checkout`, body);
+      // (The extra charges are already saved on the visit or the bill: sending a copy could drop one added meanwhile.)
+      if (editable) Object.assign(body, { consultationFeePaise: feePaise, discountPaise, roundOffPaise: roundOff });
+      return withUndo(`Collecting ${formatRupees(receivedPaise)} from ${data.patientName}`, () => api.post<CheckoutResult>(`/b/${branch}/visits/${data.visitId}/checkout`, body));
     },
     onSuccess: (r) => {
       const numbers = [...r.paidBills.map((b) => b.billNo), r.sale?.saleNo].filter(Boolean).join(' · ') || r.bill?.billNo || '';
@@ -227,8 +338,11 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
       });
       onCollected(r);
       for (const k of AFTER_CHECKOUT) qc.invalidateQueries({ queryKey: [k, branch] });
+      // Ticked "Print the bill after collecting": straight to the bill, which prints by itself (Back returns here).
+      if (autoPrint) navigate(visitBillPrintUrl(branch, data.visitId));
     },
     onError: (e) => {
+      if (isUndone(e)) return;
       toast.error(errorMessage(e));
       for (const k of ['checkout', 'checkout-queue', 'medicines']) qc.invalidateQueries({ queryKey: [k, branch] }); // something changed under us
     },
@@ -240,54 +354,61 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
 
   return (
     <div className="border-t border-border text-base">
-      {data.medicines?.pharmacyNote && (
-        <p className="border-b border-border bg-warning-soft px-4 py-3 whitespace-pre-wrap">
-          <span className="font-semibold">Doctor's note to the pharmacy: </span>
-          {data.medicines.pharmacyNote}
-        </p>
-      )}
+      {data.medicines && <PharmacyNote branch={branch} visitId={data.visitId} note={data.medicines.pharmacyNote} />}
 
       {bill && (
         <section aria-label="Consultation and lab" className="border-b border-border">
           <div className="flex flex-wrap items-center justify-between gap-2 bg-subtle/50 px-4 py-2">
-            <h3 className="font-semibold">Consultation &amp; lab</h3>
+            <h3 className="font-semibold">Consultation, lab &amp; other charges</h3>
             {editable && !editing && (
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" className="h-11 text-base" onClick={() => setEditing(true)}>
-                  <Pencil /> Edit charges
-                </Button>
-                {chargesPaise > 0 && discountPaise < chargesPaise && (
-                  <Button variant="outline" className="h-11 text-base" onClick={() => setConfirmFree(true)}>
-                    No charge (100% discount)
-                  </Button>
-                )}
-              </div>
+              <Button variant="outline" className="h-11 text-base" onClick={() => setEditing(true)}>
+                <Pencil /> Edit fee / discount
+              </Button>
             )}
           </div>
           <div className="divide-y divide-border">
+            {(editable || feePaise > 0) && <Group label="Consultation" />}
             {(editable || feePaise > 0) && (
               <Line label="Consultation fee">{editing ? <MoneyInput label="Consultation fee" value={fee ?? rupeesOf(feePaise)} onChange={setFee} /> : formatRupees(feePaise)}</Line>
             )}
+            {bill.labLines.length > 0 && <Group label="Lab tests" amount={labPaise} />}
             {bill.labLines.map((l, i) => (
-              <Line key={i} label={`Lab test: ${l.description}`}>
+              <Line key={i} label={l.description}>
                 {formatRupees(l.amountPaise)}
               </Line>
             ))}
-            {editing ? (
-              <ChargeRowsEditor big rows={chargeRows ?? chargeRowsOf(bill.charges)} onChange={setChargeRows} />
+            {(editable || charges.length > 0) && <Group label="Other charges" amount={otherPaise || undefined} />}
+            {editable ? (
+              <VisitChargesBox big branch={branch} visitId={data.visitId} />
             ) : (
               charges.map((x, i) => (
                 <Line key={i} label={x.description}>
-                  {formatRupees(x.amountPaise)}
+                  <span className="rounded-md bg-warning-soft px-2 py-0.5 font-semibold text-warning">{formatRupees(x.amountPaise)}</span>
                 </Line>
               ))
             )}
             {editing ? (
-              <Line label="Discount">
+              <Line
+                label={
+                  <>
+                    Discount
+                    {chargesPaise > 0 && discountPaise < chargesPaise && (
+                      <button type="button" className="ml-3 text-sm font-normal text-muted underline hover:text-ink" onClick={() => setConfirmFree(true)}>
+                        No charge (100% discount)
+                      </button>
+                    )}
+                  </>
+                }
+              >
                 <MoneyInput label="Discount" value={discount ?? rupeesOf(discountPaise)} onChange={setDiscount} />
               </Line>
             ) : (
               discountPaise > 0 && <Line label={discountPaise === chargesPaise ? 'Discount (100%, no charge)' : 'Discount'}>− {formatRupees(discountPaise)}</Line>
+            )}
+            {roundOffPaise > 0 && (
+              <Line label="Round off" muted>
+                + {formatRupees(roundOffPaise)}
+              </Line>
             )}
             {bill.earlierBills.map((b) => (
               <Line key={b.id} label={`Balance due on bill ${b.billNo}`}>
@@ -305,13 +426,13 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
       )}
 
       {data.medicines && items.length > 0 && (
-        <section aria-label="Medicines" className="border-b border-border">
-          <h3 className="bg-subtle/50 px-4 py-2 font-semibold">Medicines</h3>
+        <section aria-label="Drugs" className="border-b border-border">
+          <h3 className="bg-subtle/50 px-4 py-2 font-semibold">Drugs</h3>
           <Table className="text-base">
             <THead>
               <tr>
                 <TH className="w-12">Give</TH>
-                <TH>Medicine</TH>
+                <TH>Drug</TH>
                 <TH className="hidden sm:table-cell">Dose</TH>
                 <TH className="text-right">Qty</TH>
                 <TH className="hidden text-right sm:table-cell">Price</TH>
@@ -377,7 +498,7 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
             </TBody>
           </Table>
           <p className="border-t border-border bg-subtle/50 px-4 py-2 text-sm text-muted">
-            Patient wants fewer days? Lower the quantity. {chosen.length < items.length ? 'Unticked medicines will be marked “not bought”.' : 'Untick what the patient does not want.'}
+            Patient wants fewer days? Lower the quantity. {chosen.length < items.length ? 'Unticked drugs will be marked “not bought”.' : 'Untick what the patient does not want.'}
           </p>
         </section>
       )}
@@ -394,9 +515,27 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
           <div className="text-4xl font-bold tracking-tight tabular-nums">{formatRupees(totalPaise)}</div>
           <div className="mt-1 text-base text-muted">
             {parts.join(' + ') || 'Nothing to pay'}
-            {bill && discountPaise > 0 && ` − Discount ${formatRupees(Math.min(discountPaise, chargesPaise))}`}
+            {bill && typedDiscountPaise > 0 && ` − Discount ${formatRupees(Math.min(typedDiscountPaise, basePaise))}`}{roundOffPaise > 0 && ` + Round off ${formatRupees(roundOffPaise)}`}
           </div>
         </div>
+        <div className="flex flex-col gap-3">
+          {editable && (
+            <div className="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-dashed border-border px-3 py-2">
+              <label htmlFor={`discount-${data.visitId}`} className="text-base font-medium">
+                Discount (₹)
+              </label>
+              <Input id={`discount-${data.visitId}`} inputMode="decimal" placeholder="0" className="h-11 w-32 text-right text-lg font-semibold tabular-nums" value={discount ?? (bill?.discountPaise ? rupeesOf(bill.discountPaise) : '')} onChange={(e) => setDiscount(e.target.value)} />
+              <label htmlFor={`round-${data.visitId}`} className="ml-2 text-base font-medium">
+                Round off (₹) {round == null && <span className="text-sm font-normal text-muted">auto</span>}
+              </label>
+              <Input id={`round-${data.visitId}`} inputMode="decimal" placeholder="0" className="h-11 w-24 text-right text-lg font-semibold tabular-nums" value={round ?? (autoRound ? rupeesOf(autoRound) : '')} onChange={(e) => setRound(e.target.value)} />
+              {round != null && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setRound(null)}>
+                  Auto
+                </Button>
+              )}
+            </div>
+          )}
         <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
           <Field required label="Amount received (₹)" htmlFor={amountId} className="sm:w-44">
             <Input id={amountId} inputMode="decimal" className="h-12 text-right text-lg font-semibold tabular-nums" value={amount ?? rupeesOf(totalPaise)} onChange={(e) => setAmount(e.target.value)} aria-invalid={!!problem} />
@@ -406,9 +545,14 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
           </Field>
           <Button type="submit" className="col-span-2 h-12 px-6 text-lg font-semibold" disabled={!!problem || nothingToDo || collect.isPending}>
             <PackageCheck className="!size-5" />
-            {collect.isPending ? 'Saving…' : receivedPaise === 0 && chosen.length === 0 ? 'Finish with no charge' : `Collect ${formatRupees(receivedPaise)}${chosen.length ? ' & give medicines' : ''}`}
+            {collect.isPending ? 'Saving…' : receivedPaise === 0 && chosen.length === 0 ? 'Finish with no charge' : `Collect ${formatRupees(receivedPaise)}${chosen.length ? ' & give drugs' : ''}`}
           </Button>
         </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-muted lg:col-span-2">
+          <input type="checkbox" className="size-4 accent-[var(--color-primary)]" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
+          Print the bill after collecting
+        </label>
         {(problem || balanceLeft > 0) && (
           <p role="status" className={`text-base font-medium lg:col-span-2 ${problem ? 'text-critical' : 'text-warning'}`}>
             {problem ?? `${formatRupees(balanceLeft)} will stay as balance due.`}
@@ -432,6 +576,57 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
           </Button>
         </div>
       </Dialog>
+    </div>
+  );
+}
+
+/** The doctor's note to the pharmacy, on the card. The counter (and the owner) can correct it or add one. */
+export function PharmacyNote({ branch, visitId, note }: { branch: string; visitId: number; note: string | null }) {
+  const qc = useQueryClient();
+  const [text, setText] = useState<string | null>(null); // null = not editing
+  // The doctor's note: the doctor, the branch admin and the owner change it; the counter reads it.
+  const canEdit = [useCan('prescription.write'), useCan('settings.manage')].some(Boolean);
+  const save = useMutation({
+    mutationFn: () => api.put(`/b/${branch}/visits/${visitId}/pharmacy-note`, { note: text ?? '' }),
+    onSuccess: () => {
+      for (const k of ['checkout', 'pharmacy-queue', 'visit']) qc.invalidateQueries({ queryKey: [k, branch] });
+      toast.success('Note saved');
+      setText(null);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  if (text == null)
+    return (
+      <div className={`flex items-start justify-between gap-3 border-b border-border px-4 py-2.5 ${note ? 'bg-warning-soft' : ''}`}>
+        <p className="min-w-0 whitespace-pre-wrap">{note ? <><span className="font-semibold">Note to the pharmacy: </span>{note}</> : <span className="text-sm text-muted">No note on this visit.</span>}</p>
+        {canEdit && (
+          <Button variant="ghost" size="sm" onClick={() => setText(note ?? '')}>
+            <Pencil /> {note ? 'Edit note' : 'Add note'}
+          </Button>
+        )}
+      </div>
+    );
+  return (
+    <div className="space-y-2 border-b border-border bg-subtle/40 px-4 py-3">
+      <textarea aria-label="Note to the pharmacy" autoFocus rows={2} maxLength={500} className="w-full rounded-lg border border-border bg-background p-2 text-base outline-none focus-visible:border-ring" value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={() => setText(null)}>
+          Cancel
+        </Button>
+        <Button disabled={save.isPending || text.trim() === (note ?? '')} onClick={() => save.mutate()}>
+          {save.isPending ? 'Saving…' : 'Save note'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** A small heading inside the bill: Consultation / Lab tests / Other charges, with the group's total. */
+function Group({ label, amount }: { label: string; amount?: number }) {
+  return (
+    <div className="flex items-center justify-between bg-subtle/40 px-4 py-1 text-xs font-semibold tracking-wide text-muted uppercase">
+      <span>{label}</span>
+      {amount != null && <span className="tabular-nums">{formatRupees(amount)}</span>}
     </div>
   );
 }

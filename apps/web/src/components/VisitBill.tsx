@@ -6,10 +6,11 @@ import { Badge, Button, Card, CardHeader, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
 import { billLabel, billTone } from '@/components/format';
+import { VisitChargesBox } from '@/components/VisitCharges';
 
 
 /** Bill box on the consultation screen: create the bill, see its status. */
-export function VisitBill({ branch, visitId }: { branch: string; visitId: number }) {
+export function VisitBill({ branch, visitId, hideCharges }: { branch: string; visitId: number; /** The other charges are shown next to this box. */ hideCharges?: boolean }) {
   const canReceive = useCan('billing.receive');
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -34,7 +35,7 @@ export function VisitBill({ branch, visitId }: { branch: string; visitId: number
 
   return (
     <Card>
-      <CardHeader title="Bill" description="Consultation + lab tests. Medicines are paid at the pharmacy." icon={ReceiptText} iconTone="positive" action={bills.length > 0 && <Link to={`/${branch}/visits/${visitId}/bill/print`} className="text-sm font-medium text-brand hover:underline">Print bill</Link>} />
+      <CardHeader title="Bill status" description="Shows if the counter has billed this visit, and if it is paid." icon={ReceiptText} iconTone="positive" action={bills.length > 0 && <Link to={`/${branch}/visits/${visitId}/bill/print`} className="text-sm font-medium text-brand hover:underline">Print bill</Link>} />
       {isLoading ? (
         <Skeleton className="m-4 h-12" />
       ) : (
@@ -51,12 +52,18 @@ export function VisitBill({ branch, visitId }: { branch: string; visitId: number
               </span>
             </Link>
           ))}
-          {bills.length === 0 && <p className="px-4 py-3 text-sm text-muted">Not billed yet.</p>}
+          {bills.length === 0 && <p className="px-4 py-3 text-sm text-muted">Not billed yet. The counter makes the bill when the patient pays.</p>}
           {unbilled.length > 0 && bills.length > 0 && (
             <p className="px-4 py-2.5 text-xs font-medium text-warning">
               {unbilled.length} new lab test{unbilled.length > 1 ? 's' : ''} not billed ({formatRupees(unbilled.reduce((s, x) => s + x.pricePaise, 0))})
               {openBill ? ' — open the unpaid bill and press Update.' : '.'}
             </p>
+          )}
+          {!hideCharges && (
+            <div>
+              <div className="bg-subtle/50 px-4 py-1.5 text-xs font-semibold text-muted">Other charges (dressing, IV…)</div>
+              <VisitChargesBox branch={branch} visitId={visitId} />
+            </div>
           )}
           {canCreate && (
             <div className="p-3">

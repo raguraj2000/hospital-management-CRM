@@ -1,29 +1,46 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { ClipboardEdit, FlaskConical, ListPlus, Pencil, Plus, Printer, TestTube, Trash2, X } from 'lucide-react';
+import { ClipboardEdit, FlaskConical, ListPlus, Pencil, Plus, Printer, TestTube, Trash2, X, Undo2 } from 'lucide-react';
 import { formatRupees, LAB_CATALOG, opToken, type LabQueueEntry, type LabTest } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, ConfirmDelete, ConfirmDialog, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
+import { fmtDateTime } from '@/components/format';
 import { api, errorMessage } from '@/api/client';
 import { PrintHeaderForm } from '@/components/PrintHeaderForm';
 import { useBranch, useCan } from '@/state/auth';
 import { PrintLink } from '@/components/print';
 import { departmentLabel, LabTestForm } from '@/components/LabTestForm';
+import { DirectLab } from '@/components/DirectLab';
+import { LabPackagesCard } from '@/components/LabPackages';
+import { LabPeriodReport } from '@/components/LabPeriodReport';
 
 export function Lab() {
   const current = useBranch();
   const canManageTests = useCan('settings.manage');
   // The tab lives in the URL (?tab=done), so the results page can send the lab straight to Completed.
   const [params, setParams] = useSearchParams();
+  const canReports = useCan('reports.view');
+  const labTests = useQuery({ queryKey: ['lab-tests', current?.slug], queryFn: () => api.get<{ tests: LabTest[] }>(`/b/${current!.slug}/lab/tests`), enabled: !!current });
+  const [direct, setDirect] = useState(false);
   const tab = ['done', 'tests', 'header'].includes(params.get('tab') ?? '') ? params.get('tab')! : 'queue';
   return (
     <div>
-      <PageHeader title="Lab" description={`Tests ordered by doctors at ${current?.name}. Enter results, then print the report.`} />
+      <PageHeader
+        title="Lab"
+        description={`Tests ordered by doctors at ${current?.name}. Enter results, then print the report.`}
+        actions={
+          <Button onClick={() => setDirect(true)}>
+            <FlaskConical /> Direct lab test
+          </Button>
+        }
+      />
+      {current && <DirectLab branch={current.slug} open={direct} onClose={() => setDirect(false)} />}
       <Tabs value={tab} onValueChange={(v) => setParams(v === 'queue' ? {} : { tab: v }, { replace: true })}>
-        <TabsList className="mb-4">
+        <TabsList className="mb-4 max-w-full overflow-x-auto">
           <TabsTrigger value="queue">Queue</TabsTrigger>
           <TabsTrigger value="done">Completed</TabsTrigger>
           <TabsTrigger value="tests">Tests & prices</TabsTrigger>
+          {canReports && <TabsTrigger value="reports">Lab reports</TabsTrigger>}
           {canManageTests && current && <TabsTrigger value="header">Report header</TabsTrigger>}
         </TabsList>
         <TabsContent value="queue">
@@ -33,8 +50,14 @@ export function Lab() {
           <LabQueue status="completed" />
         </TabsContent>
         <TabsContent value="tests">
+          {current && <LabPackagesCard branch={current.slug} tests={labTests.data?.tests ?? []} canManage={canManageTests} />}
           <LabTests canManage={canManageTests} />
         </TabsContent>
+        {canReports && current && (
+          <TabsContent value="reports">
+            <LabPeriodReport branch={current.slug} />
+          </TabsContent>
+        )}
         {canManageTests && current && (
           <TabsContent value="header">
             <PrintHeaderForm branch={current.slug} branchName={current.name} />
@@ -57,6 +80,14 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
   });
   const [cancelling, setCancelling] = useState<LabQueueEntry | null>(null);
   const { rows, pager } = usePaged(data?.orders ?? [], status);
+  const back = useMutation({
+    mutationFn: (o: LabQueueEntry) => api.post(`/b/${branch}/lab/visits/${o.visitId}/back-to-doctor`),
+    onSuccess: (_d, o) => {
+      for (const k of ['lab-queue', 'visits', 'visit']) qc.invalidateQueries({ queryKey: [k, branch] });
+      toast.success(`${o.patientName} sent back to the doctor`, { description: 'They are on the doctor\'s waiting list again. The test stays in this list: cancel it if it is not wanted.' });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
   const cancel = useMutation({
     mutationFn: (o: LabQueueEntry) => api.patch(`/b/${branch}/lab/orders/${o.id}`, { status: 'cancelled' }),
     onSuccess: (_d, o) => {
@@ -71,6 +102,16 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
       qc.invalidateQueries({ queryKey: ['lab-queue', branch] });
       qc.invalidateQueries({ queryKey: ['patient-lab', branch] });
       toast.success(`Sample collected · ${o.testName} for ${o.patientName}`);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const undoSample = useMutation({
+    mutationFn: (o: LabQueueEntry) => api.patch(`/b/${branch}/lab/orders/${o.id}`, { status: 'ordered' }),
+    onSuccess: (_d, o) => {
+      qc.invalidateQueries({ queryKey: ['lab-queue', branch] });
+      qc.invalidateQueries({ queryKey: ['patient-lab', branch] });
+      toast.success(`${o.testName} is waiting for the sample again`);
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -119,18 +160,34 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
                   {opToken(o.opNo) != null && <span className="font-medium text-ink">Token {opToken(o.opNo)} · </span>}
                   <span className="font-mono text-xs">{o.opNo}</span>
                   {o.doctorName && ` · ${o.doctorName}`}
+                  <span className="block text-xs">Ordered {fmtDateTime(o.createdAt)}{o.completedAt ? ` · done ${fmtDateTime(o.completedAt)}` : ''}</span>
                 </TD>
                 <TD>
                   <Badge tone={o.status === 'ordered' ? 'warning' : o.status === 'completed' ? 'positive' : 'brand'} dot>
                     {o.status === 'ordered' ? 'Waiting for sample' : o.status === 'completed' ? 'Completed' : 'Sample collected'}
+                  </Badge>{' '}
+                  <Badge tone={o.paid ? 'positive' : 'critical'} className="mt-1">
+                    {o.paid ? 'Paid' : 'Not paid'}
                   </Badge>
+                  {/* Sent back by the lab: the test stays here until it is done or cancelled. */}
+                  {o.status !== 'completed' && o.visitStatus === 'waiting' && <span className="mt-1 block text-xs text-muted">Patient is back with the doctor</span>}
                 </TD>
                 <TD>
                   <div className="flex justify-end gap-1.5">
                     {/* The patient is going elsewhere: allowed until results are entered (the server refuses after that). */}
+                    {o.status !== 'completed' && o.visitStatus === 'at_lab' && (
+                      <Button size="sm" variant="ghost" disabled={back.isPending} onClick={() => back.mutate(o)} title="The patient does not wait here: back to the doctor's waiting list. The test stays ordered.">
+                        <Undo2 /> Back to doctor
+                      </Button>
+                    )}
                     {o.status !== 'completed' && (
                       <Button size="sm" variant="ghost" disabled={cancel.isPending} onClick={() => setCancelling(o)}>
                         <X /> Cancel test
+                      </Button>
+                    )}
+                    {canCollect && o.status === 'sample_collected' && (
+                      <Button size="sm" variant="ghost" disabled={undoSample.isPending} onClick={() => undoSample.mutate(o)} title="Pressed by mistake? Puts the test back to waiting for the sample.">
+                        <Undo2 /> Undo sample
                       </Button>
                     )}
                     {canCollect && o.status === 'ordered' && (
@@ -155,14 +212,13 @@ function LabQueue({ status }: { status: '' | 'completed' }) {
         </Table>
       )}
       <Pager {...pager} />
-      <ConfirmDialog
+      <ConfirmDelete
         open={!!cancelling}
         onOpenChange={(open) => !open && setCancelling(null)}
         title={`Cancel ${cancelling?.testName ?? 'test'}?`}
         description={`For ${cancelling?.patientName ?? 'this patient'}. It is removed from the queue and from the bill.`}
-        confirmLabel="Yes, cancel the test"
-        cancelLabel="Keep it"
-        onConfirm={() => cancelling && cancel.mutate(cancelling)}
+        pending={cancel.isPending}
+        onConfirm={() => cancelling && cancel.mutate(cancelling, { onSettled: () => setCancelling(null) })}
       />
     </Card>
   );

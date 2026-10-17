@@ -58,7 +58,7 @@ export function PurchaseBillPage() {
 
   return (
     <div>
-      <Link to={`/${branch}/vendors`} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
+      <Link to={`/${branch}/inventory?tab=vendors`} className="mb-4 inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-base font-medium text-ink shadow-sm hover:bg-subtle">
         <ArrowLeft className="size-4" /> Vendors
       </Link>
       <PageHeader
@@ -153,7 +153,7 @@ export function PurchaseBillPage() {
                     {modeLabel[p.mode]}
                     {p.reference && <span className="text-muted"> · {p.reference}</span>}
                     <span className="block text-xs text-muted">
-                      {new Date(p.paidAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                      {new Date(p.paidAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
                       {p.paidByName && ` · ${p.paidByName}`}
                     </span>
                   </span>

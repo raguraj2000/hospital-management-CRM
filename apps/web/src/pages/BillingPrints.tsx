@@ -50,7 +50,12 @@ export function ReceiptPrint() {
   const no = receiptNo(b.billNo, nth + 1);
 
   return (
-    <PrintSheet header={header.data.header} title="RECEIPT" tabTitle={`Receipt ${no} - ${b.patientName}`}>
+    <PrintSheet
+      header={header.data.header}
+      title="RECEIPT"
+      tabTitle={`Receipt ${no} - ${b.patientName}`}
+      share={{ phone: b.patientPhone, subject: `Receipt ${no}`, message: `Hello ${b.patientName}, we received ₹${payment.amountPaise / 100} for bill ${b.billNo} (receipt ${no}) at ${header.data.header.title || 'the hospital'}. Thank you.` }}
+    >
       <PrintFacts
         facts={[
           ['Patient', b.patientName],
@@ -97,10 +102,10 @@ export function DayReportPrint() {
   if (wait) return wait;
   const r = report.data!;
   const received = (m: 'cash' | 'upi' | 'card') => r.bills[m] + r.pharmacy[m];
-  const billedTotal = r.billed.consultationPaise + r.billed.labPaise + r.billed.otherPaise - r.billed.discountPaise + r.billed.pharmacyPaise;
+  const billedTotal = r.billed.consultationPaise + r.billed.labPaise + r.billed.otherPaise + r.billed.roundOffPaise - r.billed.discountPaise + r.billed.pharmacyPaise;
 
   return (
-    <PrintSheet header={header.data!.header} title={`DAILY REPORT — ${printDay(r.date)}`} tabTitle={`Daily report ${r.date}`}>
+    <PrintSheet header={header.data!.header} title={`DAILY REPORT — ${printDay(r.date)}`} tabTitle={`Daily report ${r.date}`} share={{ subject: `Daily report ${r.date}`, message: `Daily report ${printDay(r.date)}: total received ₹${r.totalPaise / 100}.` }}>
       <div className="grid grid-cols-2 gap-x-8">
         <Section title="Patients">
           <table className="w-full border-collapse">
@@ -127,6 +132,7 @@ export function DayReportPrint() {
               <Line label="Consultation" amount={r.billed.consultationPaise} />
               <Line label="Lab tests" amount={r.billed.labPaise} />
               {r.billed.otherPaise > 0 && <Line label="Other charges" amount={r.billed.otherPaise} />}
+              {r.billed.roundOffPaise > 0 && <Line label="Round off" amount={r.billed.roundOffPaise} />}
               {r.billed.discountPaise > 0 && <Line label="Discount given" amount={-r.billed.discountPaise} />}
               <Line label="Pharmacy" amount={r.billed.pharmacyPaise} />
               <Line label="Total billed" amount={billedTotal} strong />

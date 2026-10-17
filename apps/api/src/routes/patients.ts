@@ -1,8 +1,8 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { patientInputSchema, type Patient } from '@platform/shared';
-import { AppError, idPrefixFor, notFound, nextOrgNumber, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { opBill, organization, patient, pharmacySale } from '../db/schema.js';
+import { GENDERS, patientDeactivateSchema, patientInputSchema, type Patient } from '@platform/shared';
+import { AppError, idPrefixFor, notFound, nextOrgNumber, requirePermission, validationError, writeAudit, type BranchEnv, type Db, requireAnyPermission } from '@platform/core';
+import { opBill, opVisit, organization, patient, pharmacySale } from '../db/schema.js';
 
 const columns = {
   id: patient.id,
@@ -15,10 +15,13 @@ const columns = {
   ageYears: patient.ageYears,
   bloodGroup: patient.bloodGroup,
   weightKg: patient.weightKg,
+  heightCm: patient.heightCm,
   address: patient.address,
   conditions: patient.conditions,
   emergencyContactName: patient.emergencyContactName,
   emergencyContactPhone: patient.emergencyContactPhone,
+  deactivatedAt: patient.deactivatedAt,
+  deactivatedReason: patient.deactivatedReason,
   createdAt: patient.createdAt,
   updatedAt: patient.updatedAt,
 };
@@ -49,11 +52,28 @@ export function createPatientRoutes(db: Db) {
       ? sql`(instr(lower(${patient.name}), ${q}) > 0 OR instr(lower(${patient.uhid}), ${q}) > 0${digits ? sql` OR instr(coalesce(${patient.phone}, ''), ${digits}) > 0` : sql``})`
       : undefined;
     const gender = c.req.query('gender');
-    const genderMatch = gender === 'female' || gender === 'male' || gender === 'other' ? eq(patient.gender, gender) : undefined;
-    const where = and(inBranch(b.id), match, genderMatch);
-    const rows = await db.select(columns).from(patient).where(where).orderBy(desc(patient.id)).limit(limit).offset(offset);
+    const asked = GENDERS.find((g) => g === gender);
+    const genderMatch = asked ? eq(patient.gender, asked) : undefined;
+    // What the patient still owes on their bills here ("patient"."id" written out, as for the last visit below).
+    const due = sql<number>`(select coalesce(sum(max(0, ob.total_paise - coalesce((select sum(bp.amount_paise) from bill_payment bp where bp.bill_id = ob.id), 0))), 0) from op_bill ob where ob.patient_id = "patient"."id" and ob.branch_id = ${b.id})`;
+    const dueMatch = c.req.query('due') === '1' ? sql`${due} > 0` : undefined;
+    const where = and(inBranch(b.id), match, genderMatch, dueMatch);
+    // The newest visit that was not cancelled, for the "Last visit" column. ("patient"."id" is written out: without
+    // a join the query builder leaves the table name off, and a bare "id" would be the visit's own.)
+    const last = (col: 'visit_date' | 'created_at' | 'complaint') =>
+      sql<string | null>`(select v.${sql.raw(col)} from ${opVisit} v where v.patient_id = "patient"."id" and v.branch_id = ${b.id} and v.deleted_at is null and v.status <> 'cancelled' order by v.id desc limit 1)`;
+    const found = await db
+      .select({ ...columns, duePaise: due, lastVisitDate: last('visit_date'), lastVisitAt: last('created_at'), lastVisitComplaint: last('complaint') })
+      .from(patient)
+      .where(where)
+      .orderBy(desc(patient.id))
+      .limit(limit)
+      .offset(offset);
+    const rows = found.map(({ lastVisitDate, lastVisitAt, lastVisitComplaint, ...p }) => ({ ...p, lastVisit: lastVisitDate ? { date: lastVisitDate, at: lastVisitAt!, complaint: lastVisitComplaint } : null }));
     const [{ total }] = await db.select({ total: sql<number>`count(*)` }).from(patient).where(where);
-    return c.json({ patients: rows, total });
+    // The newest UHID of the branch: the front desk sees where the numbering stands.
+    const [newest] = await db.select({ uhid: patient.uhid }).from(patient).where(eq(patient.branchId, b.id)).orderBy(desc(patient.id)).limit(1);
+    return c.json({ patients: rows, total, lastUhid: newest?.uhid ?? null });
   });
 
   app.get('/:id', requirePermission('patient.view'), async (c) => {
@@ -85,7 +105,8 @@ export function createPatientRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const id = Number(c.req.param('id'));
-    await findOne(b.id, id);
+    const before = await findOne(b.id, id);
+    if (before.deactivatedAt) throw new AppError(409, 'patient_inactive', 'This patient is deactivated. Activate the patient before changing the details.');
     const parsed = patientInputSchema.partial().safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) throw validationError(parsed.error);
     if (Object.keys(parsed.data).length === 0) throw new AppError(400, 'validation', 'Nothing to change');
@@ -97,6 +118,35 @@ export function createPatientRoutes(db: Db) {
       .returning(columns);
     await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'patient', entityId: id, detail: parsed.data });
     return c.json({ patient: row });
+  });
+
+  // Deactivate / activate: the doctor and whoever manages the branch. The record stays visible to everyone; while
+  // deactivated nothing new is made for the patient (see assertPatientActive).
+  const stewards = requireAnyPermission('prescription.write', 'settings.manage');
+
+  app.post('/:id/deactivate', stewards, async (c) => {
+    const parsed = patientDeactivateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const p = await findOne(b.id, Number(c.req.param('id')));
+    if (p.deactivatedAt) throw new AppError(409, 'bad_state', 'This patient is already deactivated');
+    // Money still owed is collected first: afterwards nothing is billed to this patient.
+    const [owed] = await db.all<{ due: number }>(sql`select coalesce(sum(max(0, ob.total_paise - coalesce((select sum(bp.amount_paise) from bill_payment bp where bp.bill_id = ob.id), 0))), 0) as due from op_bill ob where ob.patient_id = ${p.id} and ob.branch_id = ${b.id}`);
+    if (owed && owed.due > 0) throw new AppError(409, 'has_dues', `This patient still owes ₹${(owed.due / 100).toFixed(2)}. Collect it in Billing → Pending payments first, then deactivate.`);
+    await db.update(patient).set({ deactivatedAt: new Date().toISOString(), deactivatedReason: parsed.data.reason, deactivatedBy: u.id, updatedAt: new Date().toISOString() }).where(and(inBranch(b.id), eq(patient.id, p.id)));
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'deactivate', entity: 'patient', entityId: p.id, detail: parsed.data });
+    return c.json({ patient: await findOne(b.id, p.id) });
+  });
+
+  app.post('/:id/activate', stewards, async (c) => {
+    const b = c.get('branch');
+    const u = c.get('user');
+    const p = await findOne(b.id, Number(c.req.param('id')));
+    if (!p.deactivatedAt) throw new AppError(409, 'bad_state', 'This patient is active');
+    await db.update(patient).set({ deactivatedAt: null, deactivatedReason: null, deactivatedBy: null, updatedAt: new Date().toISOString() }).where(and(inBranch(b.id), eq(patient.id, p.id)));
+    await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'activate', entity: 'patient', entityId: p.id, detail: { was: p.deactivatedReason } });
+    return c.json({ patient: await findOne(b.id, p.id) });
   });
 
   // Soft delete: the record stays in the database for the audit trail.

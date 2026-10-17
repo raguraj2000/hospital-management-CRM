@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
-import { CheckCircle2, DoorOpen, MoreHorizontal, Pencil, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, DoorOpen, IndianRupee, MoreHorizontal, Pencil, Trash2, XCircle } from 'lucide-react';
 import {
   opToken,
   visitInputSchema,
@@ -18,6 +18,7 @@ import {
 import { Badge, Button, cn, ConfirmDelete, Dialog, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, NativeSelect, Skeleton, Textarea, toast, type Tone } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
+import { isUndone, withUndo } from '@/components/undo';
 
 export const statusTone: Record<VisitStatus, Tone> = { waiting: 'warning', with_doctor: 'brand', at_lab: 'violet', at_counter: 'brand', completed: 'positive', cancelled: 'neutral' };
 export const statusLabel: Record<VisitStatus, string> = {
@@ -52,13 +53,14 @@ export function useVisitInvalidate(branch: string) {
 }
 
 /** "BP 130/85 · Pulse 78 · 99.4°F · SpO₂ 97% · 71.2 kg" -- only what was measured. */
-export function vitalsSummary(v: Pick<OpVisit, 'bpSystolic' | 'bpDiastolic' | 'pulse' | 'temperatureF' | 'spo2' | 'weightKg'>): string | null {
+export function vitalsSummary(v: Pick<OpVisit, 'bpSystolic' | 'bpDiastolic' | 'pulse' | 'temperatureF' | 'spo2' | 'weightKg'> & { heightCm?: number | null }): string | null {
   const parts = [
     v.bpSystolic != null && v.bpDiastolic != null ? `BP ${v.bpSystolic}/${v.bpDiastolic}` : null,
     v.pulse != null ? `Pulse ${v.pulse}` : null,
     v.temperatureF != null ? `${v.temperatureF}°F` : null,
     v.spo2 != null ? `SpO₂ ${v.spo2}%` : null,
     v.weightKg != null ? `${v.weightKg} kg` : null,
+    v.heightCm != null ? `${v.heightCm} cm` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : null;
 }
@@ -126,6 +128,8 @@ export function useCallNext(branch: string, { stay = false }: { stay?: boolean }
 export function VisitActions({ branch, visit, label, callIn = true }: { branch: string; visit: OpVisit; label: string; callIn?: boolean }) {
   const canEdit = useCan('patient.edit');
   const canDelete = useCan('patient.delete');
+  const canCollect = useCan('billing.receive');
+  const navigate = useNavigate();
   const invalidate = useVisitInvalidate(branch);
   const call = useCallNext(branch);
   const [deleting, setDeleting] = useState(false);
@@ -168,7 +172,13 @@ export function VisitActions({ branch, visit, label, callIn = true }: { branch: 
               <Pencil /> Edit visit & vitals
             </MenuItem>
           )}
-          {canEdit && isOpenVisit(visit.status) && (
+          {/* At the counter the visit completes by itself when the payment is collected. */}
+          {canEdit && visit.status === 'at_counter' && canCollect && (
+            <MenuItem onSelect={() => navigate(`/${branch}/billing`)}>
+              <IndianRupee /> Collect payment
+            </MenuItem>
+          )}
+          {canEdit && isOpenVisit(visit.status) && visit.status !== 'at_counter' && (
             <MenuItem onSelect={() => setStatus.mutate('completed')}>
               <CheckCircle2 /> Mark completed
             </MenuItem>
@@ -222,10 +232,17 @@ export function VisitActions({ branch, visit, label, callIn = true }: { branch: 
 export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: string; patientId: number; onDone: (v: OpVisit, seenNow: boolean) => void; onCancel: () => void }) {
   const invalidate = useVisitInvalidate(branch);
   const canCallIn = useCan('patient.edit');
+  const canSetFee = [useCan('billing.receive'), useCan('prescription.write')].some(Boolean);
+  // Already here today? Coming back the same day is usually not charged again: ask.
+  const earlier = useQuery({ queryKey: ['patient-visits', branch, patientId, 'same-day'], queryFn: () => api.get<{ visits: OpVisit[] }>(`/b/${branch}/patients/${patientId}/visits`), staleTime: 0 });
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const sameDay = (earlier.data?.visits ?? []).filter((x) => x.visitDate === today && x.status !== 'cancelled');
+  const [noFee, setNoFee] = useState(true);
 
   async function create(values: VisitInput, seeNow: boolean) {
-    const { visit } = await api.post<{ visit: OpVisit }>(`/b/${branch}/patients/${patientId}/visits`, values);
+    const { visit } = await withUndo('Starting the OP visit', () => api.post<{ visit: OpVisit }>(`/b/${branch}/patients/${patientId}/visits`, values));
     try {
+      if (sameDay.length && noFee && canSetFee) await api.put(`/b/${branch}/visits/${visit.id}/consultation-fee`, { consultationFeePaise: 0 });
       if (seeNow) await api.post(`/b/${branch}/visits/call-next`, { visitId: visit.id });
     } catch (e) {
       // The visit exists; only the extra step failed. Say so instead of losing the visit.
@@ -244,6 +261,23 @@ export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: 
       branch={branch}
       submitLabel="Start OP visit"
       onCancel={onCancel}
+      extra={
+        sameDay.length > 0 && (
+          <div role="alert" className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm sm:col-span-2">
+            <div className="font-semibold">
+              This patient already has an OP visit today ({sameDay.map((x) => `${visitLabel(x)}, ${new Date(x.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })}${x.complaint ? `, ${x.complaint}` : ''}`).join(' · ')})
+            </div>
+            {canSetFee ? (
+              <label className="mt-1.5 flex items-center gap-2">
+                <input type="checkbox" className="size-5 accent-[var(--color-primary)]" checked={noFee} onChange={(e) => setNoFee(e.target.checked)} />
+                No consultation fee for this second visit
+              </label>
+            ) : (
+              <p className="text-xs text-muted">The doctor or the counter can set the fee of this visit to ₹0.</p>
+            )}
+          </div>
+        )
+      }
       onSubmit={(values) => create(values, false)}
       onSeeNow={canCallIn ? (values) => create(values, true) : undefined}
     />
@@ -252,14 +286,15 @@ export function NewVisitForm({ branch, patientId, onDone, onCancel }: { branch: 
 
 const num = (v: unknown) => (v === '' || v == null ? null : Number(v));
 
-type VitalName = 'bpSystolic' | 'bpDiastolic' | 'pulse' | 'temperatureF' | 'spo2' | 'weightKg';
+type VitalName = 'bpSystolic' | 'bpDiastolic' | 'pulse' | 'temperatureF' | 'spo2' | 'weightKg' | 'heightCm';
 const VITALS: { name: VitalName; label: string; placeholder: string; decimal?: boolean }[] = [
-  { name: 'bpSystolic', label: 'BP upper (mmHg)', placeholder: '120' },
-  { name: 'bpDiastolic', label: 'BP lower (mmHg)', placeholder: '80' },
   { name: 'pulse', label: 'Pulse (/min)', placeholder: '72' },
   { name: 'temperatureF', label: 'Temp (°F)', placeholder: '98.6', decimal: true },
   { name: 'spo2', label: 'SpO₂ (%)', placeholder: '98' },
+  { name: 'bpSystolic', label: 'BP upper (mmHg)', placeholder: '120' },
+  { name: 'bpDiastolic', label: 'BP lower (mmHg)', placeholder: '80' },
   { name: 'weightKg', label: 'Weight (kg)', placeholder: '62.5', decimal: true },
+  { name: 'heightCm', label: 'Height (cm)', placeholder: '165', decimal: true },
 ];
 
 interface VisitFormProps {
@@ -300,6 +335,7 @@ function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNo
       // Editing keeps the visit's own doctor; a new visit starts on the branch's default (still changeable).
       doctorUserId: initial ? initial.doctorUserId : (myself ?? defaultDoctorUserId),
       complaint: initial?.complaint ?? '',
+      referredBy: initial?.referredBy ?? '',
       notes: initial?.notes ?? '',
       bpSystolic: initial?.bpSystolic ?? null,
       bpDiastolic: initial?.bpDiastolic ?? null,
@@ -307,6 +343,7 @@ function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNo
       temperatureF: initial?.temperatureF ?? null,
       spo2: initial?.spo2 ?? null,
       weightKg: initial?.weightKg ?? null,
+      heightCm: initial?.heightCm ?? null,
     },
   });
 
@@ -319,6 +356,7 @@ function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNo
       try {
         await fn(values);
       } catch (e) {
+        if (isUndone(e)) return; // Undo pressed: nothing was saved
         if (e instanceof ApiError && e.fields) for (const [f, m] of Object.entries(e.fields)) setError(f as keyof VisitFormValues, { message: m[0] });
         else setError('root', { message: errorMessage(e) });
       }
@@ -344,6 +382,9 @@ function VisitFields({ branch, initial, submitLabel, onSubmit, onCancel, onSeeNo
       {extra}
       <Field label="Complaint / reason for visit" htmlFor="complaint" error={errors.complaint?.message}>
         <Textarea id="complaint" rows={2} autoFocus={!initial} placeholder="e.g. Fever for 3 days" {...register('complaint')} />
+      </Field>
+      <Field label="Referred by (outside doctor, optional)" htmlFor="referred-by" error={errors.referredBy?.message} hint="Printed on the lab report.">
+        <Input id="referred-by" placeholder="e.g. Dr. Kumar, City Clinic" {...register('referredBy')} />
       </Field>
       <fieldset className="rounded-lg border border-border p-3">
         <legend className="px-1 text-sm font-medium">

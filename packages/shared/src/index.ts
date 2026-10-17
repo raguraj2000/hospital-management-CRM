@@ -23,6 +23,8 @@ export const CLINIC_PERMISSIONS = [
   'inventory.manage',
   'vendor.manage',
   'treatment.give',
+  // Money reports: Billing > Payment reports, Pharmacy > Pharmacy reports, every doctor's line on the dashboard.
+  'reports.view',
 ] as const;
 
 /** Only this role (and the owner) may ever hold these: managing staff and roles. */
@@ -51,6 +53,9 @@ export const DEFAULT_ROLES: { key: string; name: string; permissions: Permission
     name: 'Doctor',
     permissions: ['dashboard.view', 'patient.view', 'patient.create', 'patient.edit', 'prescription.write', 'lab.order', 'lab.view', 'inventory.view', 'treatment.give'],
   },
+  // A doctor from outside who comes for some hours: sees and treats the patients, orders and reads lab tests.
+  // No registration, stock, money or settings pages. (Change what they may do in Settings > Roles.)
+  { key: 'visiting_doctor', name: 'Visiting doctor', permissions: ['dashboard.view', 'patient.view', 'patient.edit', 'prescription.write', 'lab.order', 'lab.view'] },
   { key: 'front_desk', name: 'Front desk', permissions: ['dashboard.view', 'patient.view', 'patient.create', 'patient.edit', 'billing.receive', 'pharmacy.sell'] },
   {
     key: 'pharmacist',
@@ -61,6 +66,9 @@ export const DEFAULT_ROLES: { key: string; name: string; permissions: Permission
   // Gives the medicines that are given in the hospital (injections, drips) and ticks each dose.
   { key: 'nurse', name: 'Nurse', permissions: ['dashboard.view', 'patient.view', 'treatment.give'] },
 ];
+
+/** The roles whose holders are doctors of the branch without being ticked one by one. */
+export const DOCTOR_ROLE_KEYS = ['doctor', 'visiting_doctor'];
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -187,6 +195,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'prescription.write': 'Write prescriptions',
   'lab.order': 'Order lab tests',
   'billing.receive': 'Billing & payments',
+  'reports.view': 'Reports: payment & pharmacy reports',
   'lab.view': 'Lab queue',
   'treatment.give': 'Give treatments (tick doses given in the hospital)',
   'pharmacy.sell': 'Pharmacy: dispense & sell',
@@ -318,7 +327,7 @@ export interface StockReport {
  * null for free-text doses ("SOS", "as needed") -- then the quantity must be typed.
  */
 export function unitsPerDay(dose: string): number | null {
-  if (!/^\d+(\.5)?(-\d+(\.5)?){1,3}$/.test(dose.trim())) return null;
+  if (!/^\d+(\.(?:25|5|75))?(-\d+(\.(?:25|5|75))?){1,3}$/.test(dose.trim())) return null;
   return dose
     .trim()
     .split('-')
@@ -340,6 +349,8 @@ export const prescriptionItemSchema = z.object({
   /** Given in the hospital, dose by dose (an injection, a drip): the nurse ticks each dose on the Treatments page. */
   givenHere: z.boolean().optional(),
 });
+/** Changing a line already on the prescription (also one a bookmark put there): the medicine itself stays. */
+export const prescriptionItemEditSchema = prescriptionItemSchema.omit({ medicineId: true, givenHere: true });
 export type PrescriptionItemInput = z.output<typeof prescriptionItemSchema>;
 export type PrescriptionItemFormValues = z.input<typeof prescriptionItemSchema>;
 
@@ -373,6 +384,63 @@ export interface PrescriptionItem {
 }
 
 // ---------------------------------------------------------------------------
+// Clinic: bookmarks (ready-made treatments) and the instructions of a visit
+// ---------------------------------------------------------------------------
+
+/** One line of a bookmark: a medicine as on a prescription, or an instruction to carry out. */
+export const bookmarkLineSchema = z.discriminatedUnion('kind', [
+  prescriptionItemSchema.extend({ kind: z.literal('medicine') }),
+  z.object({ kind: z.literal('instruction'), text: z.string().trim().min(2, 'Write the instruction').max(200) }),
+]);
+export const bookmarkInputSchema = z.object({
+  name: z.string().trim().min(2, 'Enter a name, e.g. Dengue').max(80),
+  lines: z.array(bookmarkLineSchema).min(1, 'Add at least one medicine or instruction').max(40),
+});
+export type BookmarkInput = z.input<typeof bookmarkInputSchema>;
+
+/**
+ * Which lines of the bookmark go onto the visit (the doctor unticks what this patient does not need), each with
+ * what was changed for this patient only -- the dose, days, quantity, instructions, or the instruction's text.
+ * The bookmark itself stays as it is.
+ */
+export const bookmarkApplySchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        id: z.number().int().positive(),
+        dose: z.string().trim().min(1, 'Enter the dose, e.g. 1-0-1').max(40).optional(),
+        days: z.number({ error: 'Enter days' }).int().min(1, 'At least 1 day').max(365).optional(),
+        quantity: z.number().int().min(1, 'At least 1').max(10_000).nullable().optional(),
+        instructions: z.string().trim().max(200).transform((v) => (v === '' ? null : v)).nullable().optional(),
+        text: z.string().trim().min(2, 'Write the instruction').max(200).optional(),
+      }),
+    )
+    .min(1, 'Tick at least one line')
+    .max(40),
+});
+export type BookmarkApplyInput = z.input<typeof bookmarkApplySchema>;
+
+export type BookmarkLine =
+  | { id: number; kind: 'medicine'; medicineId: number; medicineName: string; strength: string | null; form: MedicineForm; dose: string; days: number; quantity: number | null; instructions: string | null; givenHere: boolean; /** Today's rate per unit. */ pricePaise: number; /** Today's stock; 0 = cannot be prescribed now. */ stock: number; /** false = no longer in the medicine list. */ available: boolean }
+  | { id: number; kind: 'instruction'; text: string };
+
+export interface Bookmark {
+  id: number;
+  name: string;
+  lines: BookmarkLine[];
+}
+
+/** An instruction on a visit; done = ticked by someone as carried out. */
+export interface VisitInstruction {
+  id: number;
+  visitId: number;
+  text: string;
+  bookmarkName: string | null;
+  doneAt: string | null;
+  doneByName: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Clinic: treatments given in the hospital
 // ---------------------------------------------------------------------------
 
@@ -386,7 +454,7 @@ const TIMES_OF_DAY = ['Morning', 'Afternoon', 'Night'];
  */
 export function treatmentSlots(dose: string): { slotNo: number; slot: string; amount: string | null }[] {
   const parts = dose.trim().split('-');
-  if (parts.length < 2 || parts.length > 4 || parts.some((x) => !/^\d+(\.5)?$/.test(x))) return [{ slotNo: 1, slot: 'Dose', amount: null }];
+  if (parts.length < 2 || parts.length > 4 || parts.some((x) => !/^\d+(\.(?:25|5|75))?$/.test(x))) return [{ slotNo: 1, slot: 'Dose', amount: null }];
   const names = parts.length === 3 ? TIMES_OF_DAY : parts.length === 2 ? ['Morning', 'Night'] : parts.map((_, i) => `Dose ${i + 1}`);
   return parts.map((amount, i) => ({ slotNo: i + 1, slot: names[i]!, amount })).filter((s) => Number(s.amount) > 0);
 }
@@ -512,7 +580,7 @@ export interface PharmacySaleDetail {
   totalPaise: number;
   soldByName: string | null;
   /** null for a walk-in customer. */
-  patient: { name: string; uhid: string } | null;
+  patient: { name: string; uhid: string; phone?: string | null } | null;
   /** null for a direct sale (no prescription). */
   visitId: number | null;
   opNo: string | null;
@@ -531,6 +599,8 @@ export const labTestLineSchema = z.object({
   method: z.string().trim().max(120).default(''),
   unit: z.string().trim().max(40).default(''),
   refRange: z.string().trim().max(120).default(''),
+  /** May be left empty when the test is completed. */
+  optional: z.boolean().default(false),
 });
 export type LabTestLine = z.infer<typeof labTestLineSchema>;
 
@@ -563,7 +633,30 @@ export interface LabTest {
   parameterCount: number;
 }
 
-export const labOrderInputSchema = z.object({ testIds: z.array(z.number().int().positive()).min(1, 'Choose at least one test') });
+/** Tests and/or packages to order; at least one of them. (The base, without the check, can be extended.) */
+export const labOrderBaseSchema = z.object({ testIds: z.array(z.number().int().positive()).max(100).default([]), packageIds: z.array(z.number().int().positive()).max(20).default([]) });
+const someTest = (d: { testIds: number[]; packageIds: number[] }) => d.testIds.length + d.packageIds.length > 0;
+export const labOrderInputSchema = labOrderBaseSchema.refine(someTest, { message: 'Choose at least one test', path: ['testIds'] });
+export const directLabSchema = labOrderBaseSchema.extend({ doctorUserId: z.number().int().positive().nullable().optional(), referredBy: z.string().trim().max(120).nullable().optional() }).refine(someTest, { message: 'Choose at least one test', path: ['testIds'] });
+
+/** A package of tests at one price (Fever profile...). */
+export const labPackageSchema = z.object({
+  name: z.string().trim().min(2, 'Give the package a name').max(80),
+  pricePaise: z.number({ error: 'Enter the price' }).int().min(0).max(100_000_00),
+  testIds: z.array(z.number().int().positive()).min(2, 'Pick at least two tests').max(30),
+});
+export type LabPackageInput = z.infer<typeof labPackageSchema>;
+export interface LabPackage extends LabPackageInput {
+  id: number;
+  /** What the tests cost one by one (to show the saving). */
+  testsPaise: number;
+}
+/** Which doctor a lab-only or bill-only visit is counted under in the reports (null = none). */
+export const directVisitSchema = z.object({ doctorUserId: z.number().int().positive().nullable().optional() });
+/** What a visit made by "Direct lab test" (no doctor) carries as its complaint. */
+export const DIRECT_LAB_COMPLAINT = 'Lab test only';
+/** The same for a visit made by "Create bill": only charges (a dressing, an injection), no consultation fee. */
+export const DIRECT_BILL_COMPLAINT = 'Bill only';
 
 export const LAB_ORDER_STATUSES = ['ordered', 'sample_collected', 'completed', 'cancelled'] as const;
 export type LabOrderStatus = (typeof LAB_ORDER_STATUSES)[number];
@@ -584,6 +677,8 @@ export interface LabOrder {
 export const labResultsSchema = z.object({
   results: z.array(z.object({ parameterId: z.number().int().positive(), value: z.string().trim().max(120) })).max(200),
   complete: z.boolean().optional(),
+  /** Lines the lab unticked "Required" on for this one result: they may stay empty when completing. */
+  notRequired: z.array(z.number().int().positive()).max(200).optional(),
 });
 
 export interface LabReportParameter {
@@ -595,6 +690,8 @@ export interface LabReportParameter {
   type: 'number' | 'text';
   options: string[];
   noFlag: boolean;
+  /** May be left empty when the test is completed. */
+  optional: boolean;
   value: string;
   flag: '' | 'H' | 'L' | '!';
 }
@@ -613,7 +710,7 @@ export interface LabReportTest {
 
 /** Everything the results screen and the printed report need for one visit. */
 export interface LabReport {
-  visit: { id: number; opNo: string; visitDate: string; doctorName: string | null; labNote: string | null };
+  visit: { id: number; opNo: string; visitDate: string; doctorName: string | null; labNote: string | null; referredBy: string | null };
   patient: { id: number; name: string; uhid: string; gender: string | null; age: number | null; phone: string | null };
   tests: LabReportTest[];
   header: PrintHeader;
@@ -654,6 +751,10 @@ export const printHeaderSchema = z.object({
   rightSignName: headerText(60),
   rightSignTitle: headerText(60),
   rightSignImage: imageDataUrl,
+  /** Print the logo large and faint behind the results of the lab report. */
+  watermark: z.boolean().default(false),
+  /** Printed at the end of the lab report, under the signatures (timings, a disclaimer...). */
+  footer: headerText(300),
 });
 export type PrintHeaderInput = z.input<typeof printHeaderSchema>;
 export type PrintHeader = z.output<typeof printHeaderSchema>;
@@ -670,6 +771,8 @@ export const EMPTY_PRINT_HEADER: PrintHeader = {
   rightSignName: '',
   rightSignTitle: '',
   rightSignImage: null,
+  watermark: false,
+  footer: '',
 };
 
 export * from './lab-catalog.js';
@@ -682,6 +785,10 @@ export interface LabQueueEntry extends LabOrder {
   doctorName: string | null;
   /** The doctor's note to the lab for this visit. */
   labNote: string | null;
+  /** Where the patient is now ('at_lab' = sent to the lab and not back with the doctor yet). */
+  visitStatus: string;
+  /** The visit's lab charges are paid (or an admin released the report). */
+  paid: boolean;
 }
 
 /** One lab order on the patient's Lab tab (all visits, newest first). */
@@ -708,7 +815,34 @@ const optionalText = (max: number) =>
     .nullable()
     .optional();
 
-export const GENDERS = ['female', 'male', 'other'] as const;
+/** 'female child' / 'male child': written F/Ch and M/Ch on paper. */
+export const GENDERS = ['female', 'male', 'female child', 'male child', 'other'] as const;
+export const GENDER_LABEL: Record<(typeof GENDERS)[number], string> = { female: 'Female', male: 'Male', 'female child': 'FCH', 'male child': 'MCH', other: 'Other' };
+
+/** Below this age a patient is shown as a child. */
+export const CHILD_BELOW_YEARS = 18;
+/**
+ * A patient's age for reading: "3 months" / "12 days" for a baby (needs the date of birth), else "24 yrs".
+ * `child`: under CHILD_BELOW_YEARS, or registered as FCH / MCH. null when neither date of birth nor age is known.
+ */
+export function ageInfo(p: { dob: string | null; ageYears: number | null; gender?: string | null }, today = new Date()): { text: string; years: number; child: boolean } | null {
+  let years = p.ageYears;
+  let text: string | null = null;
+  if (p.dob && /^\d{4}-\d{2}-\d{2}$/.test(p.dob)) {
+    const [y, m, d] = p.dob.split('-').map(Number) as [number, number, number];
+    const now = new Date(today.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + 'T00:00:00Z');
+    let months = (now.getUTCFullYear() - y) * 12 + (now.getUTCMonth() + 1 - m);
+    if (now.getUTCDate() < d) months--;
+    years = Math.floor(months / 12);
+    if (months < 1) text = `${Math.max(0, Math.round((now.getTime() - Date.UTC(y, m - 1, d)) / 86_400_000))} days`;
+    else if (months < 12) text = `${months} month${months === 1 ? '' : 's'}`;
+  }
+  if (years == null || years < 0) return null;
+  return { text: text ?? `${years} yrs`, years, child: years < CHILD_BELOW_YEARS || /child/.test(p.gender ?? '') };
+}
+
+/** A dose pattern for reading: "0.5-0-0.75" -> "½-0-¾". */
+export const prettyDose = (dose: string) => dose.replace(/(?<![\d.])0\.25(?!\d)/g, '¼').replace(/(?<![\d.])0\.5(?!\d)/g, '½').replace(/(?<![\d.])0\.75(?!\d)/g, '¾');
 
 /** Indian mobile number, typed any way ("98765 43210", "+91…", "0…"); stored as +91XXXXXXXXXX. */
 const mobile = z
@@ -743,12 +877,15 @@ export const patientInputSchema = z.object({
   ageYears: z.number().int().min(0).max(130).nullable().optional(),
   bloodGroup: optionalText(5),
   weightKg: z.number({ error: 'Enter the weight in kg' }).min(0.5, 'Check the weight').max(400, 'Check the weight').nullable().optional(),
+  heightCm: z.number({ error: 'Enter the height in cm' }).min(20, 'Check the height').max(260, 'Check the height').nullable().optional(),
   address: optionalText(500),
   /** Long-term conditions, comma-separated (see splitConditions). */
   conditions: optionalText(300),
   emergencyContactName: optionalText(120),
   emergencyContactPhone: mobile,
 });
+export const patientDeactivateSchema = z.object({ reason: z.string().trim().min(3, 'Say why, in a few words').max(300) });
+
 /** What the form holds (before the transforms). */
 export type PatientFormValues = z.input<typeof patientInputSchema>;
 /** What the API stores (after the transforms). */
@@ -765,6 +902,13 @@ export const splitConditions = (conditions: string | null | undefined): string[]
 
 export interface Patient {
   id: number;
+  /** Set while the patient is deactivated: nothing new can be made for them until someone activates them again. */
+  deactivatedAt: string | null;
+  deactivatedReason: string | null;
+  /** Only in the patients list: the balance still due on this patient's bills. */
+  duePaise?: number;
+  /** Only in the patients list: the newest visit that was not cancelled. */
+  lastVisit?: { date: string; at: string; complaint: string | null } | null;
   /** Unique Health ID, e.g. AH000001 (unique across the organization). */
   uhid: string;
   name: string;
@@ -775,6 +919,7 @@ export interface Patient {
   ageYears: number | null;
   bloodGroup: string | null;
   weightKg: number | null;
+  heightCm: number | null;
   address: string | null;
   conditions: string | null;
   emergencyContactName: string | null;
@@ -811,12 +956,15 @@ export const visitInputSchema = z.object({
   /** Doctor's note to the pharmacy / to the lab for this visit. */
   pharmacyNote: optionalText(500),
   labNote: optionalText(500),
+  /** An outside doctor who sent the patient (printed on the lab report). */
+  referredBy: optionalText(120),
   bpSystolic: vital(50, 260, 'BP (upper)'),
   bpDiastolic: vital(30, 160, 'BP (lower)'),
   pulse: vital(20, 250, 'Pulse'),
   temperatureF: vital(90, 110, 'Temperature', false),
   spo2: vital(50, 100, 'SpO₂'),
   weightKg: vital(0.5, 400, 'Weight', false),
+  heightCm: vital(20, 260, 'Height', false),
 });
 /** The doctor's fee for one visit; null = back to the branch's standard fee. */
 export const visitFeeSchema = z.object({ consultationFeePaise: z.number({ error: 'Enter the fee' }).int().min(0, 'Enter the fee').max(100_000_00, 'Check the fee').nullable() });
@@ -864,6 +1012,8 @@ export interface OpVisit {
   doctorUserId: number | null;
   doctorName: string | null;
   complaint: string | null;
+  /** An outside doctor who sent the patient. */
+  referredBy?: string | null;
   notes: string | null;
   pharmacyNote: string | null;
   labNote: string | null;
@@ -873,7 +1023,10 @@ export interface OpVisit {
   temperatureF: number | null;
   spo2: number | null;
   weightKg: number | null;
+  heightCm: number | null;
   createdAt: string;
+  /** Who started the visit; null for visits from before this was shown, or when that person is gone. */
+  createdByName?: string | null;
   /** This visit's lab tests by status (cancelled ones are not counted). */
   lab: VisitLabSummary;
   /** Has lab tests and every one is completed: the patient goes back in before the next token. */

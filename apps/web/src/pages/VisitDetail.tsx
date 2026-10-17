@@ -7,8 +7,11 @@ import { Avatar, Badge, Card, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger
 import { api, errorMessage } from '@/api/client';
 import { ConditionBadges } from '@/components/Conditions';
 import { Prescription } from '@/components/Prescription';
-import { VisitBill } from '@/components/VisitBill';
+import { PatientRecord } from '@/components/PatientRecord';
+import { RxStepper } from '@/components/RxStepper';
+import { SendToLab } from '@/components/VisitNext';
 import { VisitFeeEditor } from '@/components/VisitFee';
+import { BookmarkSearch, VisitInstructions } from '@/components/Bookmarks';
 import { useVisitLab, VisitLab } from '@/components/VisitLab';
 import { WhatNextBar } from '@/components/VisitNext';
 import { TokenBadge, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
@@ -38,7 +41,7 @@ export function VisitDetail() {
   return (
     // Keyed by visit: "see next patient" goes straight from one visit to the next, and nothing typed for the last patient may carry over.
     <div key={v.id}>
-      <Link to={`/${branch}/visits`} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
+      <Link to={`/${branch}/visits`} className="mb-4 inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-base font-medium text-ink shadow-sm hover:bg-subtle">
         <ArrowLeft className="size-4" /> OP visits
       </Link>
 
@@ -61,6 +64,10 @@ export function VisitDetail() {
               <span>· {v.doctorName ? `Dr. ${v.doctorName.replace(/^Dr\.?\s*/i, '')}` : 'No doctor assigned'}</span>
             </div>
             <ConditionBadges conditions={p.conditions} className="mt-2" />
+            <div className="mt-1 text-xs text-muted">
+              OP visit started {new Date(v.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              {v.createdByName && ` by ${v.createdByName}`}
+            </div>
           </div>
           {/* Calling the patient in is the "Start consultation" button of the bar at the bottom. */}
           <VisitActions branch={branch!} visit={v} label={p.name} callIn={false} />
@@ -87,6 +94,7 @@ export function VisitDetail() {
         </dl>
       </Card>
 
+      <PatientRecord branch={branch!} patientId={p.id} visitId={v.id} />
       <Tabs value={tab} onValueChange={(t) => setParams(t === 'lab' ? { tab: 'lab' } : {}, { replace: true })}>
         <TabsList className="mb-4 h-12">
           <TabsTrigger value="op" className={TAB}>
@@ -99,15 +107,11 @@ export function VisitDetail() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="op">
-          <div className="grid gap-6 xl:grid-cols-3">
-            <div className="xl:col-span-2">
-              <Prescription branch={branch!} visit={v} onAdded={added} />
-            </div>
-            <VisitBill branch={branch!} visitId={v.id} />
-          </div>
+          <RxStepper branch={branch!} visit={v} patientName={p.name} fee={data.fee} onAdded={added} />
         </TabsContent>
         <TabsContent value="lab">
           <VisitLab branch={branch!} visit={v} onOrdered={added} />
+          <SendToLab branch={branch!} visit={v} patientName={p.name} />
         </TabsContent>
       </Tabs>
 

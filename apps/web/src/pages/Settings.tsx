@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'react-router';
-import { Building2, CircleUserRound, DatabaseBackup, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users } from 'lucide-react';
+import { useLocation, useParams, useSearchParams } from 'react-router';
+import { Building2, CircleUserRound, DatabaseBackup, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users, History, Bookmark } from 'lucide-react';
 import {
   ADMIN_ONLY_PERMISSIONS,
   ADMIN_ROLE_KEY,
@@ -56,18 +56,30 @@ import {
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
 import { ME_KEY, useBranch, useCan, useMe } from '@/state/auth';
-import { PrintHeaderForm } from '@/components/PrintHeaderForm';
+import { BranchLogoCard } from '@/components/BranchLogo';
 import { BillingSettings } from '@/components/BillingSettings';
 import { DoctorSettings } from '@/components/DoctorSettings';
 import { BackupRestore } from '@/components/BackupRestore';
+import { AuditLog } from '@/components/AuditLog';
+import { BookmarkList } from '@/components/Bookmarks';
 
 export function Settings() {
   const { data: me } = useMe();
   const canStaff = useCan('users.manage');
   const canHeader = useCan('settings.manage');
+  const canAudit = useCan('audit.view');
+  const canPrescribe = useCan('prescription.write');
   const current = useBranch();
   const isOwner = !!me?.user.isOwner;
   const first = canStaff ? 'staff' : canHeader ? 'print' : isOwner ? 'branches' : 'none';
+  // ?tab=print#ready-made-charges (a link from elsewhere): that tab, scrolled to that box.
+  const [params] = useSearchParams();
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash) return;
+    const t = setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    return () => clearTimeout(t);
+  }, [hash]);
 
   return (
     <div>
@@ -77,7 +89,7 @@ export function Settings() {
           <EmptyState icon={ShieldCheck} title="Nothing to manage here" description="Your role doesn't include staff management." />
         </Card>
       ) : (
-        <Tabs defaultValue={first}>
+        <Tabs defaultValue={params.get('tab') ?? first}>
           <TabsList className="mb-4 max-w-full overflow-x-auto">
             {canStaff && (
               <TabsTrigger value="staff">
@@ -87,6 +99,11 @@ export function Settings() {
             {canHeader && (
               <TabsTrigger value="print">
                 <SlidersHorizontal className="size-4" /> Branch settings
+              </TabsTrigger>
+            )}
+            {canHeader && canPrescribe && (
+              <TabsTrigger value="bookmarks">
+                <Bookmark className="size-4" /> Bookmarks
               </TabsTrigger>
             )}
             {canHeader && (
@@ -104,6 +121,11 @@ export function Settings() {
                 <ShieldCheck className="size-4" /> Roles
               </TabsTrigger>
             )}
+            {canAudit && (
+              <TabsTrigger value="log">
+                <History className="size-4" /> Activity log
+              </TabsTrigger>
+            )}
             {isOwner && (
               <TabsTrigger value="owner">
                 <CircleUserRound className="size-4" /> Owner
@@ -117,9 +139,21 @@ export function Settings() {
           )}
           {canHeader && current && (
             <TabsContent value="print">
-              <BillingSettings branch={current.slug} />
-              <DoctorSettings branch={current.slug} branchName={current.name} />
-              <PrintHeaderForm branch={current.slug} branchName={current.name} />
+              {/* Row 1: the small settings side by side. Row 2: who the doctors are, and what can be charged. */}
+              <div className="mb-4 grid gap-4 lg:grid-cols-3">
+                <BranchLogoCard branch={current.slug} branchName={current.name} />
+                <BillingSettings branch={current.slug} part="fee" />
+                <BillingSettings branch={current.slug} part="counts" />
+              </div>
+              <div className="grid gap-4 xl:grid-cols-2">
+                <DoctorSettings branch={current.slug} branchName={current.name} />
+                <BillingSettings branch={current.slug} part="charges" />
+              </div>
+            </TabsContent>
+          )}
+          {canHeader && canPrescribe && current && (
+            <TabsContent value="bookmarks">
+              <BookmarkList branch={current.slug} />
             </TabsContent>
           )}
           {canHeader && current && (
@@ -135,6 +169,11 @@ export function Settings() {
           {isOwner && (
             <TabsContent value="roles">
               <RolesTab />
+            </TabsContent>
+          )}
+          {canAudit && current && (
+            <TabsContent value="log">
+              <AuditLog branch={current.slug} />
             </TabsContent>
           )}
           {isOwner && me && (
@@ -238,7 +277,7 @@ function StaffTab() {
                       {!s.isActive && <Badge tone="critical" dot>Inactive</Badge>}
                     </div>
                   </TD>
-                  <TD className="hidden text-muted sm:table-cell">{new Date(s.addedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</TD>
+                  <TD className="hidden text-muted sm:table-cell">{new Date(s.addedAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</TD>
                   <TD className="text-right">
                     {!self && (
                       <Menu>

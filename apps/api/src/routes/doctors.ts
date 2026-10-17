@@ -1,9 +1,9 @@
 // Who sees patients in a branch. Role = what you may open; "is a doctor" = you see patients.
 // A doctor is a staff member with the Doctor role, or anyone ticked in Settings → Doctors
 // (the owner, a branch admin...). Each branch also has a default doctor for new OP visits.
-import { and, eq, isNotNull, or } from 'drizzle-orm';
+import { and, eq, isNotNull, or, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { doctorSettingsSchema, type Doctor, type DoctorSettings, type DoctorSettingsPerson, type DoctorsResponse, type Permission } from '@platform/shared';
+import { doctorSettingsSchema, type Doctor, type DoctorSettings, type DoctorSettingsPerson, type DoctorsResponse, type Permission, DOCTOR_ROLE_KEYS } from '@platform/shared';
 import { AppError, permissionsForRole, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { branch, branchDoctor, branchMember, clinicSetting, role, user } from '../db/schema.js';
 
@@ -20,7 +20,7 @@ export async function doctorsOf(db: Db | Tx, branchId: number): Promise<Doctor[]
     .from(branchMember)
     .innerJoin(user, eq(user.id, branchMember.userId))
     .innerJoin(role, eq(role.id, branchMember.roleId))
-    .where(and(eq(branchMember.branchId, branchId), eq(branchMember.isActive, true), eq(user.isActive, true), eq(role.key, 'doctor')));
+    .where(and(eq(branchMember.branchId, branchId), eq(branchMember.isActive, true), eq(user.isActive, true), inArray(role.key, DOCTOR_ROLE_KEYS)));
   const ticked = await db
     .select({ userId: user.id, name: user.name })
     .from(branchDoctor)
@@ -67,7 +67,7 @@ export function createDoctorRoutes(db: Db) {
         name: m.name,
         roleName: m.roleName,
         isOwner: false,
-        isDoctorRole: m.roleKey === 'doctor',
+        isDoctorRole: DOCTOR_ROLE_KEYS.includes(m.roleKey),
         isDoctor: isDoctor(m.userId),
         canPrescribe: byRole.get(m.roleId)!.includes('prescription.write'),
       })),

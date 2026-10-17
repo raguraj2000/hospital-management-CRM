@@ -316,7 +316,7 @@ describe('checkout: nothing owed may disappear', () => {
     return v!;
   }
 
-  it('earlier days stay listed until settled, up to the look-back; sent-by-doctor visits come first', async () => {
+  it('earlier days stay listed until settled, up to the look-back; the list goes day by day, oldest first', async () => {
     const w = await world();
     const tooOld = await visitOn(w, 'Too Old', 31, 1);
     const edge = await visitOn(w, 'Edge', 30, 1);
@@ -330,11 +330,11 @@ describe('checkout: nothing owed may disappear', () => {
     await setStatus(today3.id, 'at_counter');
     expect((await checkout(w.desk, paidYesterday.id, { paymentMode: 'cash', amountPaise: 20000 })).status).toBe(201);
 
-    const expected = [atCounterOld.id, today3.id, edge.id, yesterday.id]; // sent by the doctor, then older days oldest first
+    const expected = [atCounterOld.id, yesterday.id, today3.id, edge.id]; // yesterday and today first (day by day, sent by the doctor first), older days after
     for (const stillWithDoctor of [today1, today2]) expect((await queueOf(w.pharm)).map((q) => q.visitId)).not.toContain(stillWithDoctor.id); // today's patients are listed once the doctor sends them
     const queue = await queueOf(w.pharm);
     expect(queue.map((q) => q.visitId)).toEqual(expected);
-    expect(queue.map((q) => q.status)).toEqual(['at_counter', 'at_counter', 'waiting', 'waiting']);
+    expect(queue.map((q) => q.status)).toEqual(['at_counter', 'waiting', 'at_counter', 'waiting']);
     expect(queue.find((q) => q.visitId === yesterday.id)).toMatchObject({ visitDate: inDays(-1), toBillPaise: 20000, medicinesWaiting: 0, summary: 'Consultation + lab due ₹200 · Total ₹200' });
     expect(queue.map((q) => q.visitId)).not.toContain(tooOld.id);
     expect(queue.map((q) => q.visitId)).not.toContain(paidYesterday.id);

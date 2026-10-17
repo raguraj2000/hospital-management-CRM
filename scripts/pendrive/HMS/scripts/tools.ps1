@@ -2,7 +2,8 @@
 #   tools.ps1 backup           copy the database to this pendrive/drive (or to C:\HMS\backups)
 #   tools.ps1 reset-password   set a new password for one account
 #   tools.ps1 check            is everything running?
-param([Parameter(Mandatory)][ValidateSet('backup', 'reset-password', 'check')][string]$Action)
+#   tools.ps1 start-fresh      clear the patient data, keep the setup (a backup is made first). Only ever run by hand.
+param([Parameter(Mandatory)][ValidateSet('backup', 'reset-password', 'check', 'start-fresh')][string]$Action)
 $ErrorActionPreference = 'Stop'
 $Root = 'C:\HMS'
 $Port = 4100
@@ -30,6 +31,49 @@ if ($Action -eq 'reset-password') {
   $mobile = (Read-Host 'Mobile number of the account').Trim()
   $password = Read-Host 'New password (at least 8 characters)'
   if (Invoke-Tool reset-password $mobile $password) { Write-Host "`nDONE. They can sign in with the new password now." -ForegroundColor Green } else { Write-Host "`nNOT CHANGED (see the message above)." -ForegroundColor Red }
+}
+
+if ($Action -eq 'start-fresh') {
+  Write-Host ''
+  Write-Host 'START FRESH - clears the patient data so the hospital begins again with empty lists.' -ForegroundColor Yellow
+  Write-Host '(Updating HMS never does this. It happens only here, when you choose it.)'
+  Write-Host ''
+  Write-Host 'REMOVED: every OP visit, prescription, lab order and result, bill, payment,'
+  Write-Host '         pharmacy sale and the history log. Token and bill numbers start again from 1.'
+  Write-Host '         Patients too, unless you choose to keep them below.'
+  Write-Host 'KEPT:    staff and their passwords, lab tests and prices, medicines and prices,'
+  Write-Host '         vendors, bookmarks, the consultation fee and the print header.'
+  Write-Host ''
+  Write-Host 'A full backup is saved first. This cannot be undone except by restoring that backup.' -ForegroundColor Yellow
+  Write-Host ''
+  $stock = ''
+  while ($stock -notin 'K', 'C') { $stock = (Read-Host 'Medicine STOCK and purchase bills entered so far: type K to KEEP them, C to CLEAR them').Trim().ToUpper() }
+  $people = ''
+  while ($people -notin 'K', 'C') { $people = (Read-Host 'PATIENTS registered so far (name, phone, UHID): type K to KEEP them, C to CLEAR them').Trim().ToUpper() }
+  $typed = (Read-Host 'To go ahead type  START FRESH  (anything else cancels)').Trim()
+  if ($typed -cne 'START FRESH') {
+    Write-Host "`nCANCELLED. Nothing was changed." -ForegroundColor Green
+  } else {
+    New-Item -ItemType Directory -Force -Path "$Root\backups" | Out-Null
+    $backup = "$Root\backups\before-start-fresh-$(Get-Date -Format 'yyyy-MM-dd_HHmm').db"
+    if (-not (Invoke-Tool backup $backup) -or -not (Test-Path $backup)) {
+      Write-Host "`nSTOPPED: the backup could not be made, so nothing was changed." -ForegroundColor Red
+    } else {
+      # Nobody may be working while the data is cleared.
+      $svc = Get-Service -Name 'HMSServer' -ErrorAction SilentlyContinue
+      if ($svc -and $svc.Status -ne 'Stopped') { Stop-Service -Name 'HMSServer' -Force; Start-Sleep -Seconds 2 }
+      $mode = if ($stock -eq 'K') { 'keep-stock' } else { 'clear-stock' }
+      $done = if ($people -eq 'K') { Invoke-Tool start-fresh $mode keep-patients } else { Invoke-Tool start-fresh $mode }
+      if ($svc) { Start-Service -Name 'HMSServer' }
+      if ($done) {
+        Write-Host "`nDONE. The hospital starts fresh. Everyone signs in again with the same password." -ForegroundColor Green
+        Write-Host "The data from before is in: $backup"
+        Write-Host '(To get it back: sign in as the owner, Settings, Restore, and choose that file.)'
+      } else {
+        Write-Host "`nNOT DONE (see the message above). Nothing was changed. The backup is in: $backup" -ForegroundColor Red
+      }
+    }
+  }
 }
 
 if ($Action -eq 'check') {

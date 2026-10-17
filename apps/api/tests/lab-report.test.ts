@@ -24,7 +24,7 @@ describe('standard tests + results + report', () => {
     expect(await json(owner('/api/b/main/lab/tests/load-standard', { method: 'POST' }))).toEqual({ added: 0, skipped: LAB_CATALOG.length });
     const { tests } = await json(owner('/api/b/main/lab/tests'));
     const cbc = tests.find((x: any) => x.name === 'Complete Blood Count');
-    expect(cbc).toMatchObject({ department: 'DEPARTMENT OF HEMATOLOGY', kind: 'panel', parameterCount: 10, pricePaise: 0 });
+    expect(cbc).toMatchObject({ department: 'DEPARTMENT OF HEMATOLOGY', kind: 'panel', parameterCount: 15, pricePaise: 0 });
     expect(tests.find((x: any) => x.name === 'VDRL')).toMatchObject({ kind: 'card', parameterCount: 1 });
     expect((await json(owner('/api/b/east/lab/tests'))).tests).toEqual([]); // per branch
     const doc = await t.as('doc');

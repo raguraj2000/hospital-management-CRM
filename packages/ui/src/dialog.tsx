@@ -23,7 +23,11 @@ export function Dialog({
     <D.Root open={open} onOpenChange={onOpenChange}>
       <D.Portal>
         <D.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[1px] data-[state=open]:animate-in" />
-        <D.Content className={`fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] overflow-y-auto rounded-t-2xl border border-border bg-surface p-6 shadow-xl sm:inset-auto sm:top-1/2 sm:left-1/2 sm:w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'} sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl`}>
+        {/* A click on a toast (its Undo button) is not a click outside: the window stays open. */}
+        <D.Content
+          onPointerDownOutside={(e) => (e.target as Element | null)?.closest?.('[data-sonner-toaster]') && e.preventDefault()}
+          onInteractOutside={(e) => (e.target as Element | null)?.closest?.('[data-sonner-toaster]') && e.preventDefault()}
+          className={`fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] overflow-y-auto rounded-t-2xl border border-border bg-surface p-6 shadow-xl sm:inset-auto sm:top-1/2 sm:left-1/2 sm:w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'} sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl`}>
           <div className="mb-5 pr-8">
             <D.Title className="text-lg font-semibold tracking-tight">{title}</D.Title>
             <D.Description className={description ? 'mt-1 text-sm text-muted' : 'sr-only'}>{description ?? title}</D.Description>

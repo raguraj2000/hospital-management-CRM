@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useParams } from 'react-router';
 import { ArrowLeft, Lock, Printer, Wallet } from 'lucide-react';
-import { billCharges, formatRupees, toPaise, type BillPaymentMode, type OpBill } from '@platform/shared';
+import { billCharges, formatRupees, toPaise, type BillPaymentMode, type OpBill, ROUND_OFF_LINE } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, Field, Input, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
@@ -75,7 +75,7 @@ export function BillPage() {
 
   return (
     <div>
-      <Link to={`/${branch}/billing`} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink">
+      <Link to={`/${branch}/billing`} className="mb-4 inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-base font-medium text-ink shadow-sm hover:bg-subtle">
         <ArrowLeft className="size-4" /> Billing
       </Link>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
@@ -234,13 +234,19 @@ export function BillPrint() {
   if (bill.isLoading || header.isLoading) return <p className="p-8 text-sm">Loading…</p>;
   if (!bill.data || !header.data) return <p className="p-8 text-sm text-red-700">{errorMessage(bill.error ?? header.error)}</p>;
   const b = bill.data.bill;
-  // Consultation always shows; lab tests and other charges when present.
-  const rows: [string, number][] = [['Consultation fee', b.consultationFeePaise]];
+  // Each line only when there is something to charge: a bill without a consultation fee (lab only, bill only) prints none.
+  const rows: [string, number][] = b.consultationFeePaise > 0 ? [['Consultation fee', b.consultationFeePaise]] : [];
   for (const l of b.lines) if (l.labOrderId != null) rows.push([`Lab: ${l.description}`, l.amountPaise]);
-  for (const x of billCharges(b)) rows.push([x.description, x.amountPaise]);
+  for (const x of billCharges(b)) if (x.description !== ROUND_OFF_LINE) rows.push([x.description, x.amountPaise]);
+  const roundOffPaise = billCharges(b).filter((x) => x.description === ROUND_OFF_LINE).reduce((s, x) => s + x.amountPaise, 0);
 
   return (
-    <PrintSheet header={header.data.header} title="BILL" tabTitle={`Bill ${b.billNo} - ${b.patientName}`}>
+    <PrintSheet
+      header={header.data.header}
+      title="BILL"
+      tabTitle={`Bill ${b.billNo} - ${b.patientName}`}
+      share={{ phone: b.patientPhone, subject: `Bill ${b.billNo}`, message: `Hello ${b.patientName}, your bill ${b.billNo} from ${header.data.header.title || 'the hospital'}: total ₹${b.totalPaise / 100}. Thank you.` }}
+    >
       <PrintFacts
         facts={[
           ['Patient', b.patientName],
@@ -272,6 +278,13 @@ export function BillPrint() {
                 <td />
                 <td className="py-1.5 text-right">Discount</td>
                 <td className="py-1.5 text-right tabular-nums">− {printMoney(b.discountPaise)}</td>
+              </tr>
+            )}
+            {roundOffPaise > 0 && (
+              <tr>
+                <td />
+                <td className="py-1.5 text-right">Round off</td>
+                <td className="py-1.5 text-right tabular-nums">+ {printMoney(roundOffPaise)}</td>
               </tr>
             )}
             <tr className="border-t-2 border-[#111] text-[15px] font-bold">

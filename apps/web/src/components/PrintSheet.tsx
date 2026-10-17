@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { PrintHeader } from '@platform/shared';
 import { api } from '@/api/client';
 import { ReportHeader } from './ReportHeader';
+import { PrintActions, type ShareInfo } from './PrintActions';
 
 /** The branch's letterhead for a printed paper. */
 export const usePrintHeader = (branch: string | undefined, enabled: boolean) =>
@@ -38,6 +39,7 @@ export function PrintSheet({
   signature = true,
   back,
   canPrint = true,
+  share,
   children,
 }: {
   header: PrintHeader;
@@ -46,6 +48,8 @@ export function PrintSheet({
   signature?: boolean;
   back?: boolean;
   canPrint?: boolean;
+  /** WhatsApp / email: who to send it to and what to say. */
+  share?: ShareInfo;
   children: ReactNode;
 }) {
   useEffect(() => {
@@ -61,9 +65,7 @@ export function PrintSheet({
           </button>
         )}
         <span className="flex-1" />
-        <button onClick={() => window.print()} disabled={!canPrint} className="rounded-md bg-[#1f6b4f] px-5 py-2 text-base font-semibold text-white disabled:opacity-50">
-          Print
-        </button>
+        <PrintActions canPrint={canPrint} share={share} />
       </div>
       <div className="sheet mx-auto my-6 w-[210mm] max-w-full bg-white px-[11mm] py-[9mm] shadow">
         <ReportHeader header={header} />

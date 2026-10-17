@@ -1,18 +1,20 @@
+import { formatRupees, ageInfo, GENDER_LABEL } from '@platform/shared';
 import { useDeferredValue } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { ChevronRight, Plus, Search, SearchX, Users } from 'lucide-react';
+import { ChevronRight, Plus, Search, SearchX, Users, Wallet } from 'lucide-react';
 import type { Patient } from '@platform/shared';
-import { Avatar, Badge, Button, Card, Dialog, EmptyState, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
+import { Avatar, Badge, Button, Card, Dialog, EmptyState, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, NativeSelect } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { PatientForm } from '@/components/PatientForm';
+import { withUndo } from '@/components/undo';
 
 const PAGE_SIZE = 20;
 
 export const formatPhone = (p: string | null) => (p ? p.replace(/^\+91(\d{5})(\d{5})$/, '+91 $1 $2') : '—');
 
-const genderTone = { female: 'violet', male: 'brand', other: 'neutral' } as const;
+const genderTone = { female: 'violet', male: 'brand', 'female child': 'violet', 'male child': 'brand', other: 'neutral' } as const;
 
 export function Patients() {
   const { branch } = useParams();
@@ -26,6 +28,7 @@ export function Patients() {
   const search = params.get('q') ?? '';
   const q = useDeferredValue(search.trim());
   const gender = params.get('gender') ?? 'all';
+  const dueOnly = params.get('due') === '1';
   const page = Math.max(Number(params.get('page')) || 1, 1);
   const adding = params.get('add') === '1';
 
@@ -39,21 +42,22 @@ export function Patients() {
 
   const query = new URLSearchParams({ q, limit: String(PAGE_SIZE), offset: String((page - 1) * PAGE_SIZE) });
   if (gender !== 'all') query.set('gender', gender);
+  if (dueOnly) query.set('due', '1');
 
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['patients', branch, q, gender, page],
-    queryFn: () => api.get<{ patients: Patient[]; total: number }>(`/b/${branch}/patients?${query}`),
+    queryKey: ['patients', branch, q, gender, dueOnly, page],
+    queryFn: () => api.get<{ patients: Patient[]; total: number; lastUhid?: string | null }>(`/b/${branch}/patients?${query}`),
     placeholderData: keepPreviousData, // no flicker while typing or paging
   });
 
   const total = data?.total ?? 0;
-  const filtered = q !== '' || gender !== 'all';
+  const filtered = q !== '' || gender !== 'all' || dueOnly;
 
   return (
     <div>
       <PageHeader
-        title="Patients"
-        description={`Everyone registered at ${current?.name}.`}
+        title={data ? `Patients (${filtered ? `${total} found` : total})` : 'Patients'}
+        description={`Everyone registered at ${current?.name}.${data?.lastUhid ? ` Last UHID given: ${data.lastUhid}` : ''}`}
         actions={
           canCreate && (
             <Button onClick={() => setParam('add', '1')}>
@@ -75,6 +79,15 @@ export function Patients() {
               onChange={(e) => setParam('q', e.target.value)}
               className="pl-9"
             />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <span className="text-sm font-medium whitespace-nowrap tabular-nums">
+              {total} {filtered ? 'found' : 'patients'}
+            </span>
+            <NativeSelect aria-label="Balance" className="w-48" value={dueOnly ? '1' : ''} onChange={(e) => setParam('due', e.target.value || null)}>
+              <option value="">All patients</option>
+              <option value="1">With a balance due</option>
+            </NativeSelect>
           </div>
           <Tabs value={gender} onValueChange={(v) => setParam('gender', v === 'all' ? null : v)}>
             <TabsList>
@@ -131,7 +144,8 @@ export function Patients() {
                     <TH>Age</TH>
                     <TH>Gender</TH>
                     <TH>Blood</TH>
-                    <TH className="text-right">Registered</TH>
+                    <TH>Last visit</TH>
+                    <TH className="text-right">Balance due</TH>
                     <TH />
                   </tr>
                 </THead>
@@ -145,15 +159,35 @@ export function Patients() {
                             <Link to={`/${branch}/patients/${p.id}`} className="block truncate font-medium hover:underline">
                               {p.name}
                             </Link>
-                            <div className="font-mono text-xs text-muted">{p.uhid}</div>
+                            <div className="font-mono text-xs text-muted">
+                              {p.uhid} {p.deactivatedAt && <span title={p.deactivatedReason ?? undefined}><Badge tone="critical">Deactivated</Badge></span>}
+                            </div>
                           </div>
                         </div>
                       </TD>
                       <TD className="tabular-nums">{formatPhone(p.phone)}</TD>
-                      <TD className="tabular-nums">{ageOf(p) ?? <span className="text-muted">—</span>}</TD>
-                      <TD>{p.gender ? <Badge tone={genderTone[p.gender]} className="capitalize">{p.gender}</Badge> : <span className="text-muted">—</span>}</TD>
+                      <TD className="whitespace-nowrap tabular-nums">
+                        {ageInfo(p) ? (
+                          <>
+                            {ageInfo(p)!.text} <Badge tone={ageInfo(p)!.child ? 'warning' : 'neutral'}>{ageInfo(p)!.child ? 'Child' : 'Adult'}</Badge>
+                          </>
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                      </TD>
+                      <TD>{p.gender ? <Badge tone={genderTone[p.gender]}>{GENDER_LABEL[p.gender]}</Badge> : <span className="text-muted">—</span>}</TD>
                       <TD>{p.bloodGroup ? <Badge tone="critical">{p.bloodGroup}</Badge> : <span className="text-muted">—</span>}</TD>
-                      <TD className="text-right text-muted tabular-nums">{new Date(p.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</TD>
+                      <TD className="max-w-56">
+                        {p.lastVisit ? (
+                          <>
+                            <div className="tabular-nums">{new Date(p.lastVisit.at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+                            {p.lastVisit.complaint && <div className="truncate text-xs text-muted">{p.lastVisit.complaint}</div>}
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted">No visit yet · registered {new Date(p.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                        )}
+                      </TD>
+                      <TD className="text-right tabular-nums">{p.duePaise ? <Badge tone="critical">{formatRupees(p.duePaise)}</Badge> : <span className="text-muted">—</span>}</TD>
                     </TR>
                   ))}
                 </TBody>
@@ -170,7 +204,7 @@ export function Patients() {
           submitLabel="Save patient"
           onCancel={() => setParam('add', null)}
           onSubmit={async (values) => {
-            const { patient } = await api.post<{ patient: Patient }>(`/b/${branch}/patients`, values);
+            const { patient } = await withUndo(`Registering ${values.name}`, () => api.post<{ patient: Patient }>(`/b/${branch}/patients`, values));
             qc.invalidateQueries({ queryKey: ['patients', branch] });
             qc.invalidateQueries({ queryKey: ['dashboard', branch] });
             toast.success(`${patient.name} registered`, { description: `UHID ${patient.uhid}` });

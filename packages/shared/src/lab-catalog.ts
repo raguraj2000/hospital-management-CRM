@@ -13,6 +13,8 @@ export interface CatalogParameter {
   options?: string[];
   /** Never mark H/L (e.g. blood group). */
   noFlag?: boolean;
+  /** May be left empty when the test is completed (the lab did only some of the lines). */
+  optional?: boolean;
 }
 
 export interface CatalogTest {
@@ -64,13 +66,13 @@ export const LAB_CATALOG: CatalogTest[] = [
       R('Platelet Count', WB, 'lakhs/cumm', '1.5 - 4.5'),
       R('RDW-SD', WB, 'fl', '37 - 54'),
       R('RDW-CV', WB, '%', '12 - 15'),
+      // Differential counts: part of the CBC (they were a test of their own until Oct 2026).
+      R('Neutrophils', WB, '%', '42 - 75'),
+      R('Lymphocytes', WB, '%', '20 - 45'),
+      R('Monocytes', WB, '%', '0 - 10'),
+      R('Eosinophils', WB, '%', '0 - 6'),
+      R('Basophils', WB, '%', '0.0 - 2.0'),
     ],
-  },
-  {
-    department: 'DEPARTMENT OF HEMATOLOGY',
-    name: 'Differential Counts',
-    kind: 'panel',
-    parameters: [R('Neutrophils', WB, '%', '42 - 75'), R('Lymphocytes', WB, '%', '20 - 45'), R('Monocytes', WB, '%', '0 - 10'), R('Eosinophils', WB, '%', '0 - 6'), R('Basophils', WB, '%', '0.0 - 2.0')],
   },
   {
     department: 'DEPARTMENT OF HEMATOLOGY',
@@ -93,9 +95,11 @@ export const LAB_CATALOG: CatalogTest[] = [
     name: 'Blood Sugar',
     kind: 'panel',
     parameters: [
-      R('Fasting Blood Sugar (FBS)', 'Plasma, GOD-POD', 'mg/dl', '70 - 100'),
-      R('Post Prandial Blood Sugar (PPBS)', 'Plasma, GOD-POD', 'mg/dl', '70 - 140'),
-      R('HbA1c (Glycated Haemoglobin)', '(WB-EDTA) HPLC', '%', '4.0 - 5.6'),
+      // Usually only one or two of these are done on a visit.
+      R('Fasting Blood Sugar (FBS)', 'Plasma, GOD-POD', 'mg/dl', '70 - 100', { optional: true }),
+      R('Post Prandial Blood Sugar (PPBS)', 'Plasma, GOD-POD', 'mg/dl', '70 - 140', { optional: true }),
+      R('Random Blood Sugar (RBS)', 'Plasma, GOD-POD', 'mg/dl', '70 - 140', { optional: true }),
+      R('HbA1c (Glycated Haemoglobin)', '(WB-EDTA) HPLC', '%', '4.0 - 5.6', { optional: true }),
     ],
   },
   {

@@ -29,6 +29,8 @@ import { Billing } from './pages/Billing';
 import { BillPage, BillPrint } from './pages/BillPage';
 import { DayReportPrint, ReceiptPrint } from './pages/BillingPrints';
 import { Treatments } from './pages/Treatments';
+import { BookmarksPage } from './pages/Bookmarks';
+import { Help } from './pages/Help';
 import { VisitBillPrint } from './pages/VisitBillPrint';
 import { Vendors } from './pages/Vendors';
 import { PurchaseBillPage } from './pages/PurchaseBill';
@@ -84,7 +86,7 @@ function ThemedToaster() {
   return <Toaster theme={isDark(theme) ? 'dark' : 'light'} position="top-right" richColors closeButton />;
 }
 
-const pages: Record<string, ReactNode> = { '': <Dashboard />, patients: <Patients />, visits: <OpVisits />, settings: <Settings />, pharmacy: <Pharmacy />, inventory: <Inventory />, lab: <Lab />, billing: <Billing />, treatments: <Treatments />, vendors: <Vendors /> };
+const pages: Record<string, ReactNode> = { '': <Dashboard />, patients: <Patients />, visits: <OpVisits />, settings: <Settings />, pharmacy: <Pharmacy />, inventory: <Inventory />, lab: <Lab />, billing: <Billing />, treatments: <Treatments />, bookmarks: <BookmarksPage />, help: <Help />, vendors: <Vendors /> };
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },

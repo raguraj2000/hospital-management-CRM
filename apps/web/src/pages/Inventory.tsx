@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams, useSearchParams } from 'react-router';
+import { useParams, useSearchParams, Link } from 'react-router';
 import { z } from 'zod';
-import { Boxes, CalendarClock, IndianRupee, MoreHorizontal, PackageCheck, Pencil, PackagePlus, PackageX, Plus, Printer, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { Boxes, CalendarClock, IndianRupee, MoreHorizontal, PackageCheck, Pencil, PackagePlus, PackageX, Plus, Printer, Search, Trash2, TriangleAlert, ChevronDown, ChevronUp } from 'lucide-react';
 import { batchInputSchema, FORM_UNIT, formatRupees, MEDICINE_FORMS, toPaise, type BatchInput, type Medicine, type MedicineBatch, type StockReport, type StockReportBatch } from '@platform/shared';
 import {
   Badge,
@@ -39,20 +39,25 @@ import {
   usePaged,
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
+import { Vendors } from './Vendors';
 import { useBranch, useCan } from '@/state/auth';
 import { fmtDay } from '@/components/format';
 
-const daysUntil = (iso: string) => Math.round((new Date(`${iso}T00:00:00`).getTime() - new Date(new Date().toDateString()).getTime()) / 86_400_000);
+const daysUntil = (iso: string) => Math.round((new Date(`${iso}T00:00:00`).getTime() - new Date(`${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })}T00:00:00`).getTime()) / 86_400_000);
 
 export function Inventory() {
   const { branch } = useParams();
   const current = useBranch();
   const canManage = useCan('inventory.manage');
+  const canVendor = useCan('vendor.manage'); // what things cost and earn: for whoever handles vendors
   const qc = useQueryClient();
   // The tab lives in the URL (?tab=reports), so other pages can link straight to the report.
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') === 'reports' ? 'reports' : 'medicines';
+  const asked = params.get('tab');
+  const tab = asked === 'reports' ? 'reports' : (asked === 'purchases' || asked === 'vendors') && canVendor ? asked : 'medicines';
   const [search, setSearch] = useState('');
+  // Category = the form of the medicine (tablet, syrup, injection...).
+  const [category, setCategory] = useState<'all' | (typeof MEDICINE_FORMS)[number]>('all');
   const [adding, setAdding] = useState(false);
   const [stockFor, setStockFor] = useState<Medicine | null>(null);
   const [batchesFor, setBatchesFor] = useState<Medicine | null>(null);
@@ -71,7 +76,7 @@ export function Inventory() {
   });
 
   const q = search.trim().toLowerCase();
-  const medicines = (data?.medicines ?? []).filter((m) => !q || m.name.toLowerCase().includes(q));
+  const medicines = (data?.medicines ?? []).filter((m) => (!q || m.name.toLowerCase().includes(q)) && (category === 'all' || m.form === category));
   const low = (data?.medicines ?? []).filter((m) => m.stock <= m.reorderLevel).length;
   const { rows, pager } = usePaged(medicines, q);
 
@@ -79,7 +84,7 @@ export function Inventory() {
     <div>
       <PageHeader
         title="Inventory"
-        description={`Medicines and stock at ${current?.name}. Dispensing always uses the earliest expiry first.`}
+        description={`Drugs and stock at ${current?.name}. Dispensing always uses the earliest expiry first.`}
         actions={
           canManage && (
             <Button onClick={() => setAdding(true)}>
@@ -88,19 +93,29 @@ export function Inventory() {
           )
         }
       />
-      <Tabs value={tab} onValueChange={(v) => setParams(v === 'reports' ? { tab: v } : {}, { replace: true })}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="medicines">Medicines</TabsTrigger>
+      <Tabs value={tab} onValueChange={(v) => setParams(v === 'medicines' ? {} : { tab: v }, { replace: true })}>
+        <TabsList className="mb-4 max-w-full overflow-x-auto">
+          <TabsTrigger value="medicines">Drugs</TabsTrigger>
+          {canVendor && <TabsTrigger value="vendors">Vendors &amp; purchases</TabsTrigger>}
+          {canVendor && <TabsTrigger value="purchases">Purchase history &amp; profit</TabsTrigger>}
           <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
         <TabsContent value="medicines">
           <Card>
-            <div className="flex flex-col gap-3 border-b border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-border p-3 sm:flex-row sm:items-center">
               <div className="relative w-full sm:max-w-xs">
                 <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted" />
-                <Input type="search" placeholder="Search medicines…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+                <Input type="search" placeholder="Search drugs…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
               </div>
-              {low > 0 && <Badge tone="warning" dot>{low} low on stock</Badge>}
+              {low > 0 && <Badge tone="warning" dot className="sm:ml-auto">{low} low on stock</Badge>}
+              <NativeSelect aria-label="Category" className={low > 0 ? 'sm:w-52' : 'sm:ml-auto sm:w-52'} value={category} onChange={(e) => setCategory(e.target.value as typeof category)}>
+                <option value="all">All categories ({data?.medicines.length ?? 0})</option>
+                {MEDICINE_FORMS.map((f) => (
+                  <option key={f} value={f} className="capitalize">
+                    {f[0]!.toUpperCase() + f.slice(1)} ({(data?.medicines ?? []).filter((m) => m.form === f).length})
+                  </option>
+                ))}
+              </NativeSelect>
             </div>
             {isLoading ? (
               <div className="space-y-3 p-4">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-10" />)}</div>
@@ -109,7 +124,7 @@ export function Inventory() {
             ) : medicines.length === 0 ? (
               <EmptyState
                 icon={Boxes}
-                title={q ? 'No matching medicines' : 'No medicines yet'}
+                title={q || category !== 'all' ? 'No matching medicines' : 'No medicines yet'}
                 description={q ? undefined : 'Add medicines with their selling price, then add stock as it arrives.'}
                 action={canManage && !q && <Button size="sm" variant="outline" onClick={() => setAdding(true)}><Plus /> Add medicine</Button>}
               />
@@ -117,7 +132,7 @@ export function Inventory() {
               <Table>
                 <THead>
                   <tr>
-                    <TH>Medicine</TH>
+                    <TH>Drug</TH>
                     <TH className="text-right">Price</TH>
                     <TH className="text-right">In stock</TH>
                     <TH className="hidden md:table-cell">Next expiry</TH>
@@ -197,6 +212,16 @@ export function Inventory() {
         <TabsContent value="reports">
           <Reports branch={branch!} branchName={current?.name ?? ''} />
         </TabsContent>
+        {canVendor && (
+          <TabsContent value="vendors">
+            <Vendors embedded />
+          </TabsContent>
+        )}
+        {canVendor && (
+          <TabsContent value="purchases">
+            <PurchaseProfit branch={branch!} />
+          </TabsContent>
+        )}
       </Tabs>
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)} title={`Edit ${editing?.name ?? ''}`} description="Price is per single unit (one tablet, one bottle…). The new price applies to sales from now on.">
@@ -287,7 +312,7 @@ function MedicineForm({ initial, onSubmit, onCancel }: { initial?: Medicine; onS
         }
       })}
     >
-      <Field required label="Medicine name" htmlFor="med-name" error={errors.name?.message} className="sm:col-span-2">
+      <Field required label="Drug name" htmlFor="med-name" error={errors.name?.message} className="sm:col-span-2">
         <Input id="med-name" autoFocus placeholder="e.g. Paracetamol" {...register('name')} />
       </Field>
       <Field required label="Form" htmlFor="med-form">
@@ -416,7 +441,19 @@ const REPORT_PRINT_CSS = `
   }
 }`;
 
+/** The small button in a report card's header that hides or shows its list. */
+function Minimize({ open, onToggle, what }: { open: boolean; onToggle: () => void; what: string }) {
+  return (
+    <Button variant="ghost" size="sm" className="print:hidden" aria-expanded={open} aria-label={`${open ? 'Minimize' : 'Show'} ${what}`} onClick={onToggle}>
+      {open ? <ChevronUp /> : <ChevronDown />} {open ? 'Minimize' : 'Show'}
+    </Button>
+  );
+}
+
 function Reports({ branch, branchName }: { branch: string; branchName: string }) {
+  // Each list can be minimized; closed lists still show their count.
+  const [shut, setShut] = useState<Record<'expiring' | 'expired' | 'low', boolean>>({ expiring: false, expired: false, low: false });
+  const toggle = (k: 'expiring' | 'expired' | 'low') => setShut((s) => ({ ...s, [k]: !s[k] }));
   const [days, setDays] = useState(30);
   // Keyed under ['medicines', branch]: everything that refreshes the medicine list after a stock change refreshes the report too.
   const { data, isLoading, error, refetch } = useQuery({ queryKey: ['medicines', branch, 'report'], queryFn: () => api.get<StockReport>(`/b/${branch}/inventory/report`) });
@@ -500,18 +537,22 @@ function Reports({ branch, branchName }: { branch: string; branchName: string })
           title="Expiring soon"
           description={`Next ${days} days · sell first or return to the vendor`}
           action={
-            <Tabs value={String(days)} onValueChange={(v) => setDays(Number(v))} className="print:hidden">
-              <TabsList>
-                {EXPIRY_WINDOWS.map((d) => (
-                  <TabsTrigger key={d} value={String(d)}>
-                    {d} days
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
+            <div className="flex flex-wrap items-center gap-2">
+              {expiring.length > 0 && <Badge tone="warning">{expiring.length}</Badge>}
+              <Tabs value={String(days)} onValueChange={(v) => setDays(Number(v))} className="print:hidden">
+                <TabsList>
+                  {EXPIRY_WINDOWS.map((d) => (
+                    <TabsTrigger key={d} value={String(d)}>
+                      {d} days
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              <Minimize open={!shut.expiring} onToggle={() => toggle('expiring')} what="expiring soon" />
+            </div>
           }
         />
-        {isLoading ? <ReportRowsSkeleton /> : expiring.length === 0 ? <EmptyState icon={CalendarClock} title={`Nothing expiring in the next ${days} days`} /> : <ReportBatchTable rows={expiring} />}
+        {shut.expiring ? null : isLoading ? <ReportRowsSkeleton /> : expiring.length === 0 ? <EmptyState icon={CalendarClock} title={`Nothing expiring in the next ${days} days`} /> : <ReportBatchTable rows={expiring} />}
       </Card>
 
       <Card className={expired.length ? 'border-critical/50' : undefined}>
@@ -520,14 +561,19 @@ function Reports({ branch, branchName }: { branch: string; branchName: string })
           description="Past the expiry date, still on the shelf"
           icon={expired.length ? TriangleAlert : undefined}
           iconTone="critical"
-          action={expired.length > 0 && <Badge tone="critical">{expired.length}</Badge>}
+          action={
+            <div className="flex items-center gap-2">
+              {expired.length > 0 && <Badge tone="critical">{expired.length}</Badge>}
+              <Minimize open={!shut.expired} onToggle={() => toggle('expired')} what="expired" />
+            </div>
+          }
         />
-        {isLoading ? <ReportRowsSkeleton rows={2} /> : expired.length === 0 ? <EmptyState icon={PackageCheck} title="No expired stock on the shelf" /> : <ReportBatchTable rows={expired} />}
+        {shut.expired ? null : isLoading ? <ReportRowsSkeleton rows={2} /> : expired.length === 0 ? <EmptyState icon={PackageCheck} title="No expired stock on the shelf" /> : <ReportBatchTable rows={expired} />}
       </Card>
 
       <Card>
-        <CardHeader title="Low stock — reorder" description="Unexpired stock at or below the reorder level" action={lowStock.length > 0 && <Badge tone="warning">{lowStock.length}</Badge>} />
-        {isLoading ? (
+        <CardHeader title="Low stock — reorder" description="Unexpired stock at or below the reorder level" action={<div className="flex items-center gap-2">{lowStock.length > 0 && <Badge tone="warning">{lowStock.length}</Badge>}<Minimize open={!shut.low} onToggle={() => toggle('low')} what="low stock" /></div>} />
+        {shut.low ? null : isLoading ? (
           <ReportRowsSkeleton />
         ) : lowStock.length === 0 ? (
           <EmptyState icon={PackageCheck} title="Nothing running low" />
@@ -535,7 +581,7 @@ function Reports({ branch, branchName }: { branch: string; branchName: string })
           <Table>
             <THead>
               <tr>
-                <TH>Medicine</TH>
+                <TH>Drug</TH>
                 <TH className="text-right">In stock</TH>
                 <TH className="text-right">Reorder at</TH>
                 <TH className="text-right">Status</TH>
@@ -567,13 +613,134 @@ function Reports({ branch, branchName }: { branch: string; branchName: string })
 }
 
 /** Expiring and expired batches share one table; a negative daysLeft reads "N days ago". */
+interface ProfitLine {
+  id: number;
+  billId: number;
+  billDate: string;
+  vendorName: string;
+  vendorBillNo: string | null;
+  medicineName: string;
+  strength: string | null;
+  batchNo: string;
+  costPaise: number;
+  sellPricePaise: number;
+  received: number;
+  left: number;
+  soldUnits: number;
+  sellValuePaise: number;
+  profitIfAllSoldPaise: number;
+  profitSoFarPaise: number;
+}
+interface ProfitReport {
+  from: string;
+  to: string;
+  lines: ProfitLine[];
+  totals: { costPaise: number; sellValuePaise: number; profitIfAllSoldPaise: number; profitSoFarPaise: number };
+}
+
+/** Everything bought from vendors between two dates: cost, selling value and profit, line by line and in total. */
+function PurchaseProfit({ branch }: { branch: string }) {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['purchases', branch, 'profit', from, to],
+    queryFn: () => api.get<ProfitReport>(`/b/${branch}/purchases/profit?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}`),
+  });
+  const { rows, pager } = usePaged(data?.lines ?? []);
+  const money = (p: number) => <span className={p < 0 ? 'text-critical' : ''}>{formatRupees(p)}</span>;
+  return (
+    <Card>
+      <CardHeader
+        title="Purchase history & profit"
+        description="Every medicine bought from vendors in these dates. Profit is counted at today's selling price."
+        action={
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <Input type="date" aria-label="From" className="w-auto" value={from || data?.from || ''} onChange={(e) => setFrom(e.target.value)} />
+            <span className="text-muted">to</span>
+            <Input type="date" aria-label="To" className="w-auto" value={to || data?.to || ''} onChange={(e) => setTo(e.target.value)} />
+          </div>
+        }
+      />
+      {isLoading ? (
+        <Skeleton className="m-4 h-24" />
+      ) : error ? (
+        <p className="p-4 text-sm text-critical">{errorMessage(error)}</p>
+      ) : !data?.lines.length ? (
+        <p className="px-4 py-8 text-center text-sm text-muted">Nothing was bought from vendors in these dates.</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 border-b border-border p-4 lg:grid-cols-4">
+            {(
+              [
+                ['Bought for', data.totals.costPaise],
+                ['Sells for', data.totals.sellValuePaise],
+                ['Total profit, if all is sold', data.totals.profitIfAllSoldPaise],
+                ['Profit so far, on what is sold', data.totals.profitSoFarPaise],
+              ] as const
+            ).map(([label, paise]) => (
+              <div key={label} className="rounded-lg border border-border px-3 py-2">
+                <div className="text-xs text-muted">{label}</div>
+                <div className="text-xl font-semibold tabular-nums">{money(paise)}</div>
+              </div>
+            ))}
+          </div>
+          <Table>
+            <THead>
+              <tr>
+                <TH>Bought</TH>
+                <TH>Drug</TH>
+                <TH className="text-right">Units</TH>
+                <TH className="text-right">Cost</TH>
+                <TH className="text-right">Sells for</TH>
+                <TH className="text-right">Profit if all sold</TH>
+                <TH className="text-right">Sold so far</TH>
+                <TH className="text-right">Profit so far</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {rows.map((l) => (
+                <TR key={l.id}>
+                  <TD className="whitespace-nowrap">
+                    <Link to={`/${branch}/vendors/purchases/${l.billId}`} className="font-medium hover:underline">
+                      {l.vendorName}
+                    </Link>
+                    <div className="text-xs text-muted">
+                      {new Date(`${l.billDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {l.vendorBillNo && ` · ${l.vendorBillNo}`}
+                    </div>
+                  </TD>
+                  <TD>
+                    <div className="font-medium">
+                      {l.medicineName} {l.strength && <span className="font-normal text-muted">{l.strength}</span>}
+                    </div>
+                    <div className="font-mono text-xs text-muted">{l.batchNo}</div>
+                  </TD>
+                  <TD className="text-right tabular-nums">{l.received}</TD>
+                  <TD className="text-right tabular-nums">{formatRupees(l.costPaise)}</TD>
+                  <TD className="text-right tabular-nums">{formatRupees(l.sellValuePaise)}</TD>
+                  <TD className="text-right font-medium tabular-nums">{money(l.profitIfAllSoldPaise)}</TD>
+                  <TD className="text-right tabular-nums">
+                    {l.soldUnits} <span className="text-xs text-muted">of {l.received}</span>
+                  </TD>
+                  <TD className="text-right font-medium tabular-nums">{money(l.profitSoFarPaise)}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+          <Pager {...pager} />
+        </>
+      )}
+    </Card>
+  );
+}
+
 function ReportBatchTable({ rows }: { rows: StockReportBatch[] }) {
   return (
     // Phones scroll sideways; on paper the columns shrink to fit the page.
     <Table className="min-w-[640px] print:min-w-0">
       <THead>
         <tr>
-          <TH>Medicine</TH>
+          <TH>Drug</TH>
           <TH>Batch</TH>
           <TH>Expiry</TH>
           <TH className="text-right">Qty</TH>

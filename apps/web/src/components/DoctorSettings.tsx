@@ -56,8 +56,34 @@ export function DoctorSettings({ branch, branchName }: { branch: string; branchN
   }
 
   return (
-    <Card className="mb-4">
+    <Card className="h-full">
       <CardHeader title={`Doctors · ${branchName}`} />
+      <div className="border-b border-border bg-subtle/40 p-4">
+        <Field
+          label="Default doctor"
+          htmlFor="default-doctor"
+          error={fieldErrors.defaultDoctorUserId?.[0]}
+          hint="New OP visits are given to this doctor unless the front desk picks another."
+          className="sm:max-w-sm"
+        >
+          <NativeSelect
+            id="default-doctor"
+            value={defaultId ?? ''}
+            aria-invalid={!!fieldErrors.defaultDoctorUserId}
+            onChange={(e) => {
+              setFieldErrors({});
+              setDefaultId(e.target.value ? Number(e.target.value) : null);
+            }}
+          >
+            <option value="">None</option>
+            {doctors.map((d) => (
+              <option key={d.userId} value={d.userId}>
+                {d.name}
+              </option>
+            ))}
+          </NativeSelect>
+        </Field>
+      </div>
       <p className="px-4 pt-3 text-sm text-muted">Tick everyone who sees patients here. A doctor can also be the owner or a branch admin.</p>
       <ul className="mt-2 divide-y divide-border border-y border-border">
         {data.people.map((p) => {
@@ -89,32 +115,8 @@ export function DoctorSettings({ branch, branchName }: { branch: string; branchN
         })}
       </ul>
       {fieldErrors.doctorUserIds && <p className="px-4 pt-3 text-xs font-medium text-critical">{fieldErrors.doctorUserIds[0]}</p>}
-      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-        <Field
-          label="Default doctor"
-          htmlFor="default-doctor"
-          error={fieldErrors.defaultDoctorUserId?.[0]}
-          hint="New OP visits are given to this doctor unless the front desk picks another."
-          className="sm:w-80"
-        >
-          <NativeSelect
-            id="default-doctor"
-            value={defaultId ?? ''}
-            aria-invalid={!!fieldErrors.defaultDoctorUserId}
-            onChange={(e) => {
-              setFieldErrors({});
-              setDefaultId(e.target.value ? Number(e.target.value) : null);
-            }}
-          >
-            <option value="">None</option>
-            {doctors.map((d) => (
-              <option key={d.userId} value={d.userId}>
-                {d.name}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Button className="sm:mt-6" disabled={!changed || saving} onClick={save}>
+      <div className="flex justify-end p-4">
+        <Button disabled={!changed || saving} onClick={save}>
           {saving ? 'Saving…' : 'Save doctors'}
         </Button>
       </div>

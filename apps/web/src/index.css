@@ -80,3 +80,15 @@ body {
   outline: 2px solid var(--color-ring);
   outline-offset: 2px;
 }
+
+/* Toasts stay clickable while a window (dialog) is open: Undo must work there too. */
+[data-sonner-toaster] {
+  pointer-events: auto;
+}
+
+/* Toasts never print (after collecting, the bill prints while the toast is still on screen). */
+@media print {
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+}

@@ -39,9 +39,10 @@ export function CounterNote({ branch, visit, field, label, placeholder, canEdit 
       <label htmlFor={id} className="mb-1.5 block text-sm font-medium">
         {label}
       </label>
-      <div className="flex items-start gap-2">
-        <Textarea id={id} rows={2} maxLength={500} placeholder={placeholder} value={text} onChange={(e) => setText(e.target.value)} />
-        <Button variant="outline" disabled={save.isPending || text.trim() === saved} onClick={() => save.mutate()}>
+      <Textarea id={id} rows={3} maxLength={500} placeholder={placeholder} className="w-full" value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-xs text-muted">{text.trim() === saved ? (saved ? 'Saved' : 'Optional') : 'Not saved yet'}</span>
+        <Button disabled={save.isPending || text.trim() === saved} onClick={() => save.mutate()}>
           {save.isPending ? 'Saving…' : 'Save note'}
         </Button>
       </div>
