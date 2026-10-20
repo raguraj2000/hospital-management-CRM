@@ -199,3 +199,68 @@ describe('owner details (owner only)', () => {
     expect((await owner('/api/org/owner', { method: 'PATCH', body: { ...body, mobile: M('owner') } })).status).toBe(200);
   });
 });
+
+describe('permissions per branch (Settings > Permissions, owner only)', () => {
+  it('a branch can give a role more or less than the others; reset goes back; only the owner', async () => {
+    const owner = await t.as('owner');
+    const desk = await t.as('desk');
+    const json = async (r: Response | Promise<Response>) => (await r).json() as Promise<any>;
+    const branches = (await json(owner('/api/org/branches'))).branches;
+    const main = branches.find((b: any) => b.slug === 'main');
+    const east = branches.find((b: any) => b.slug === 'east');
+    const roles = (await json(owner(`/api/org/branches/${main.id}/roles`))).roles;
+    const fd = roles.find((r: any) => r.key === 'front_desk');
+    expect(fd.custom).toBe(false);
+    const before = (await json(desk('/api/auth/me'))).branches.find((b: any) => b.slug === 'main').permissions;
+    expect(before).toContain('billing.receive');
+    // Main only: front desk may not take money, and may skip the Undo.
+    const put = await owner(`/api/org/branches/${main.id}/roles/${fd.id}/permissions`, { method: 'PUT', body: { permissions: [...before.filter((p: string) => p !== 'billing.receive'), 'undo.skip', 'users.manage'] } });
+    expect(put.status).toBe(200);
+    const now = (await json(desk('/api/auth/me'))).branches.find((b: any) => b.slug === 'main').permissions;
+    expect(now).not.toContain('billing.receive');
+    expect(now).toContain('undo.skip');
+    expect(now).not.toContain('users.manage'); // only the Branch admin role manages staff
+    expect((await desk('/api/b/main/bills')).status).toBe(403);
+    // The other branch is unchanged.
+    expect((await json(owner(`/api/org/branches/${east.id}/roles`))).roles.find((r: any) => r.key === 'front_desk').permissions).toContain('billing.receive');
+    expect((await json(owner(`/api/org/branches/${main.id}/roles`))).roles.find((r: any) => r.key === 'front_desk').custom).toBe(true);
+    // Everything unticked stays unticked (not back to the role's list).
+    await owner(`/api/org/branches/${main.id}/roles/${fd.id}/permissions`, { method: 'PUT', body: { permissions: [] } });
+    expect((await json(desk('/api/auth/me'))).branches.find((b: any) => b.slug === 'main').permissions).toEqual([]);
+    // Reset: the role's list again.
+    await owner(`/api/org/branches/${main.id}/roles/${fd.id}/permissions`, { method: 'PUT', body: { reset: true } });
+    expect((await json(desk('/api/auth/me'))).branches.find((b: any) => b.slug === 'main').permissions).toEqual(before);
+    // Not the owner: refused.
+    expect((await desk(`/api/org/branches/${main.id}/roles`)).status).toBe(403);
+  });
+});
+
+describe('the branch admin permissions tab, and the owner "all branches"', () => {
+  it('a branch admin changes roles of their branch only (not the Branch admin role); the owner can apply to every branch', async () => {
+    const owner = await t.as('owner');
+    const json = async (r: Response | Promise<Response>) => (await r).json() as Promise<any>;
+    const roles = (await json(owner('/api/b/main/roles'))).roles;
+    const adminRole = roles.find((r: any) => r.key === 'branch_admin');
+    const fd = roles.find((r: any) => r.key === 'front_desk');
+    expect((await owner('/api/b/main/staff', { method: 'POST', body: { name: 'Main Admin', mobile: '9811122233', password: 'admin-pass-123', roleId: adminRole.id } })).status).toBe(201);
+    const login = await t.app.request('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mobile: '9811122233', password: 'admin-pass-123' }) });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]!;
+    const admin = (path: string, init: { method?: string; body?: unknown } = {}) => t.app.request(path, { method: init.method ?? 'GET', headers: { cookie, 'content-type': 'application/json', origin: 'http://localhost' }, body: init.body ? JSON.stringify(init.body) : undefined });
+    const desk = await t.as('desk');
+    const eastdesk = await t.as('eastdesk');
+    const perms = async (who: typeof desk, slug: string) => (await json(who('/api/auth/me'))).branches.find((b: any) => b.slug === slug).permissions as string[];
+
+    // Main's admin takes "Billing" away from front desk in main; east is not touched.
+    const put = await admin(`/api/b/main/roles/${fd.id}/permissions`, { method: 'PUT', body: { permissions: fd.permissions.filter((p: string) => p !== 'billing.receive') } });
+    expect(put.status).toBe(200);
+    expect(await perms(desk, 'main')).not.toContain('billing.receive');
+    expect(await perms(eastdesk, 'east')).toContain('billing.receive');
+    // Not their own role, not another branch, not as a doctor.
+    expect((await admin(`/api/b/main/roles/${adminRole.id}/permissions`, { method: 'PUT', body: { permissions: [] } })).status).toBe(403);
+    expect((await admin(`/api/b/east/roles/${fd.id}/permissions`, { method: 'PUT', body: { permissions: [] } })).status).toBe(404);
+    expect((await (await t.as('doc'))(`/api/b/main/roles/${fd.id}/permissions`, { method: 'PUT', body: { permissions: [] } })).status).toBe(403);
+    // The owner, "All branches": every branch follows the one list again (main's own list goes).
+    expect((await owner(`/api/org/roles/${fd.id}/permissions`, { method: 'PUT', body: { permissions: fd.permissions, allBranches: true } })).status).toBe(200);
+    expect(await perms(desk, 'main')).toContain('billing.receive');
+  });
+});

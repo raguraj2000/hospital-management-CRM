@@ -9,7 +9,8 @@ export const AUDIT_KEEP_DAYS = 30;
  * Entries that are never removed: they mark a one-time step as done (see lib/lab-merge.ts). Without them the step
  * would run again at the next start.
  */
-export const AUDIT_MARKERS = ['sugar_lines_optional', 'role_added_visiting_doctor', 'permission_added_reports_view', 'random_blood_sugar_test', 'hba1c_test'];
+// 'amend' = a completed lab report corrected afterwards: who, when and why stays for good (medical record).
+export const AUDIT_MARKERS = ['amend', 'sugar_lines_optional', 'role_added_visiting_doctor', 'permission_added_reports_view', 'permission_added_lab_correct', 'random_blood_sugar_test', 'hba1c_test'];
 
 /** Removes history older than AUDIT_KEEP_DAYS days. Returns how many entries went. */
 export async function purgeOldAudit(db: Db, keepDays = AUDIT_KEEP_DAYS): Promise<number> {

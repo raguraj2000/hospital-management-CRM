@@ -39,6 +39,7 @@ import {
 import { api, ApiError, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { fmtDay } from '@/components/format';
+import { ListSearch, textMatch } from '@/components/ListSearch';
 
 
 
@@ -107,14 +108,23 @@ export function Vendors({ embedded }: { embedded?: boolean }) {
   );
 }
 
-function PurchaseBillsTable({ branch, bills, loading, error }: { branch: string; bills?: PurchaseBillSummary[]; loading: boolean; error: unknown }) {
+function PurchaseBillsTable({ branch, bills: all, loading, error }: { branch: string; bills?: PurchaseBillSummary[]; loading: boolean; error: unknown }) {
   const navigate = useNavigate();
+  const [q, setQ] = useState('');
+  const bills = all?.filter((b) => textMatch(q, b.vendorName, b.vendorBillNo));
   return (
     <Card>
+      {(all?.length ?? 0) > 0 && (
+        <div className="border-b border-border p-3">
+          <ListSearch label="Search the purchase bills" placeholder="Vendor or bill no.…" value={q} onChange={setQ} />
+        </div>
+      )}
       {loading ? (
         <div className="space-y-3 p-4">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-10" />)}</div>
       ) : error ? (
         <p className="p-4 text-sm text-critical">{errorMessage(error)}</p>
+      ) : q && !bills?.length ? (
+        <EmptyState icon={ReceiptText} title={`Nothing matches “${q}”`} />
       ) : !bills?.length ? (
         <EmptyState icon={ReceiptText} title="No purchase bills yet" description="When medicines arrive, enter the vendor's bill here. It adds the stock in one go." />
       ) : (
@@ -162,8 +172,10 @@ function PurchaseBillsTable({ branch, bills, loading, error }: { branch: string;
   );
 }
 
-function VendorsTable({ branch, vendors, loading, canManage }: { branch: string; vendors?: Vendor[]; loading: boolean; canManage: boolean }) {
+function VendorsTable({ branch, vendors: all, loading, canManage }: { branch: string; vendors?: Vendor[]; loading: boolean; canManage: boolean }) {
   const qc = useQueryClient();
+  const [q, setQ] = useState('');
+  const vendors = all?.filter((v) => textMatch(q, v.name, v.phone, v.gstNo));
   const [editing, setEditing] = useState<Vendor | 'new' | null>(null);
   const [deleting, setDeleting] = useState<Vendor | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['vendors', branch] });
@@ -178,15 +190,20 @@ function VendorsTable({ branch, vendors, loading, canManage }: { branch: string;
 
   return (
     <Card>
-      {canManage && (
-        <div className="flex justify-end border-b border-border p-3">
-          <Button size="sm" onClick={() => setEditing('new')}>
-            <Plus /> Add vendor
-          </Button>
+      {(canManage || (all?.length ?? 0) > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-3">
+          {(all?.length ?? 0) > 0 ? <ListSearch label="Search the vendors" placeholder="Vendor name, phone or GST no.…" value={q} onChange={setQ} /> : <span />}
+          {canManage && (
+            <Button size="sm" onClick={() => setEditing('new')}>
+              <Plus /> Add vendor
+            </Button>
+          )}
         </div>
       )}
       {loading ? (
         <Skeleton className="m-4 h-24" />
+      ) : q && !vendors?.length ? (
+        <EmptyState icon={Building2} title={`Nothing matches “${q}”`} />
       ) : !vendors?.length ? (
         <EmptyState icon={Building2} title="No vendors yet" description="Add the distributors you buy medicines from." />
       ) : (

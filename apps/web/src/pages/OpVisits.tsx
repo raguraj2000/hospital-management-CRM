@@ -12,6 +12,7 @@ import { NewVisitForm, tokenName, useCallNext, useDoctors, VisitActions, VisitSt
 import { ageOf, formatPhone } from './Patients';
 import { KeyHint } from '@/components/Shortcuts';
 import { NEW_OP_EVENT } from '@/components/QuickOp';
+import { ListSearch, textMatch } from '@/components/ListSearch';
 
 /** The day's visits in four lists, so 100+ patients never mean scrolling past the finished ones. */
 const SHOW: { key: 'queue' | 'counter' | 'done' | 'all'; label: string; tone: string; has: (v: OpVisitRow) => boolean }[] = [
@@ -49,15 +50,15 @@ export function OpVisits() {
         `/b/${branch}/visits?${new URLSearchParams({ ...(date ? { date } : {}), ...(doctorId ? { doctor: doctorId } : {}) })}`,
       ),
     // The list stays current by itself (a result entered at the lab shows up without reloading):
-    // every 20 s while the tab is visible, and whenever the window gets the focus back.
-    refetchInterval: 20_000,
+    // when something changed in the branch (AppShell's change watch), and whenever the window gets the focus back.
     refetchOnWindowFocus: 'always',
   });
 
   const visits = data?.visits ?? [];
   const show = SHOW.find((t) => t.key === params.get('show'))?.key ?? 'queue';
-  const shown = visits.filter(SHOW.find((t) => t.key === show)!.has);
-  const { rows, pager } = usePaged(shown, `${show}|${data?.date}|${doctorId}`);
+  const [q, setQ] = useState('');
+  const shown = visits.filter(SHOW.find((t) => t.key === show)!.has).filter((v) => textMatch(q, v.patientName, v.patientUhid, v.opNo, v.token, v.complaint));
+  const { rows, pager } = usePaged(shown, `${show}|${data?.date}|${doctorId}|${q}`);
   const queueDoctor = data?.queue?.doctorUserId != null ? doctors.data?.doctors.find((d) => d.userId === data.queue!.doctorUserId)?.name : undefined;
 
   return (
@@ -101,15 +102,18 @@ export function OpVisits() {
       {/* Only today has a queue (the server sends none for another day). */}
       {data?.queue && <QueueBanner branch={branch!} queue={data.queue} doctorName={queueDoctor} />}
 
-      <Tabs value={show} onValueChange={(t) => setParam('show', t === 'queue' ? '' : t)}>
-        <TabsList className="mb-3 h-11 max-w-full overflow-x-auto">
-          {SHOW.map((t) => (
-            <TabsTrigger key={t.key} value={t.key} className="h-9 px-4 text-base">
-              {t.label} <b className={cn('tabular-nums', t.tone)}>{visits.filter(t.has).length}</b>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <Tabs className="min-w-0 max-w-full" value={show} onValueChange={(t) => setParam('show', t === 'queue' ? '' : t)}>
+          <TabsList className="h-11 max-w-full overflow-x-auto">
+            {SHOW.map((t) => (
+              <TabsTrigger key={t.key} value={t.key} className="h-9 px-4 text-base">
+                {t.label} <b className={cn('tabular-nums', t.tone)}>{visits.filter(t.has).length}</b>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <ListSearch label="Search the visits" placeholder="Name, UHID, token or complaint…" value={q} onChange={setQ} />
+      </div>
 
       <Card>
         {error ? (
@@ -119,7 +123,7 @@ export function OpVisits() {
         ) : visits.length === 0 ? (
           <EmptyState icon={ClipboardList} title="No OP visits on this day" description="Press “New OP visit” (Ctrl+K) to find or register a patient and add them to the list." />
         ) : shown.length === 0 ? (
-          <EmptyState icon={ClipboardList} title={EMPTY[show]} />
+          <EmptyState icon={ClipboardList} title={q ? `Nobody matches “${q}”` : EMPTY[show]} />
         ) : (
           <Table>
             <THead>

@@ -6,7 +6,7 @@ import { Hono } from 'hono';
 import { bookmarkApplySchema, bookmarkInputSchema, suggestedQuantity, type Bookmark, type BookmarkLine, type VisitInstruction } from '@platform/shared';
 import { AppError, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { medicine, prescriptionItem, treatmentBookmark, treatmentBookmarkLine, user, visitInstruction } from '../db/schema.js';
-import { localToday, visitOfBranch } from '../lib/clinic.js';
+import { assertVisitOpen, localToday, visitOfBranch } from '../lib/clinic.js';
 import { medicinesWithStock } from './pharmacy.js';
 import { createDoses } from './treatments.js';
 
@@ -127,7 +127,7 @@ export function createBookmarkRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    assertVisitOpen(v.status);
     if (v.status === 'completed') throw new AppError(409, 'bad_state', 'This visit is already completed');
     const bookmark = await bookmarkOf(b.id, Number(c.req.param('id')));
     // Each chosen line as the bookmark has it, with what the doctor changed for this patient on top.

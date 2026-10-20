@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useParams, useSearchParams } from 'react-router';
-import { Building2, CircleUserRound, DatabaseBackup, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users, History, Bookmark } from 'lucide-react';
+import { Building2, CircleUserRound, DatabaseBackup, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users, History, Bookmark, Syringe, Wifi } from 'lucide-react';
 import {
   ADMIN_ONLY_PERMISSIONS,
   ADMIN_ROLE_KEY,
@@ -11,7 +11,9 @@ import {
   branchInputSchema,
   CLINIC_PERMISSIONS,
   CORE_PERMISSIONS,
+  ipAllowed,
   newStaffSchema,
+  parseNetworks,
   ownerDetailsSchema,
   PERMISSION_LABELS,
   resetPasswordSchema,
@@ -55,25 +57,25 @@ import {
   TR,
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
-import { ME_KEY, useBranch, useCan, useMe } from '@/state/auth';
-import { BranchLogoCard } from '@/components/BranchLogo';
-import { BillingSettings } from '@/components/BillingSettings';
-import { DoctorSettings } from '@/components/DoctorSettings';
+import { ME_KEY, useBranch, useCan, useMe, useModuleOn } from '@/state/auth';
+import { BranchSettings } from '@/components/BranchSettings';
 import { BackupRestore } from '@/components/BackupRestore';
 import { AuditLog } from '@/components/AuditLog';
 import { BookmarkList } from '@/components/Bookmarks';
+import { CourseTemplates } from '@/components/Courses';
 
 export function Settings() {
   const { data: me } = useMe();
   const canStaff = useCan('users.manage');
   const canHeader = useCan('settings.manage');
+  const coursesOn = useModuleOn('courses');
   const canAudit = useCan('audit.view');
   const canPrescribe = useCan('prescription.write');
   const current = useBranch();
   const isOwner = !!me?.user.isOwner;
   const first = canStaff ? 'staff' : canHeader ? 'print' : isOwner ? 'branches' : 'none';
   // ?tab=print#ready-made-charges (a link from elsewhere): that tab, scrolled to that box.
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const { hash } = useLocation();
   useEffect(() => {
     if (!hash) return;
@@ -89,8 +91,8 @@ export function Settings() {
           <EmptyState icon={ShieldCheck} title="Nothing to manage here" description="Your role doesn't include staff management." />
         </Card>
       ) : (
-        <Tabs defaultValue={params.get('tab') ?? first}>
-          <TabsList className="mb-4 max-w-full overflow-x-auto">
+        <Tabs value={params.get('tab') ?? first} onValueChange={(t) => setParams({ tab: t }, { replace: true })}>
+          <TabsList className="mb-4 h-auto max-w-full flex-wrap">
             {canStaff && (
               <TabsTrigger value="staff">
                 <Users className="size-4" /> Staff
@@ -106,6 +108,11 @@ export function Settings() {
                 <Bookmark className="size-4" /> Bookmarks
               </TabsTrigger>
             )}
+            {canHeader && coursesOn && (
+              <TabsTrigger value="course-templates">
+                <Syringe className="size-4" /> Course templates
+              </TabsTrigger>
+            )}
             {canHeader && (
               <TabsTrigger value="backup">
                 <DatabaseBackup className="size-4" /> Backup
@@ -116,9 +123,9 @@ export function Settings() {
                 <Building2 className="size-4" /> Branches
               </TabsTrigger>
             )}
-            {isOwner && (
+            {(isOwner || canStaff) && (
               <TabsTrigger value="roles">
-                <ShieldCheck className="size-4" /> Roles
+                <ShieldCheck className="size-4" /> Permissions
               </TabsTrigger>
             )}
             {canAudit && (
@@ -139,21 +146,17 @@ export function Settings() {
           )}
           {canHeader && current && (
             <TabsContent value="print">
-              {/* Row 1: the small settings side by side. Row 2: who the doctors are, and what can be charged. */}
-              <div className="mb-4 grid gap-4 lg:grid-cols-3">
-                <BranchLogoCard branch={current.slug} branchName={current.name} />
-                <BillingSettings branch={current.slug} part="fee" />
-                <BillingSettings branch={current.slug} part="counts" />
-              </div>
-              <div className="grid gap-4 xl:grid-cols-2">
-                <DoctorSettings branch={current.slug} branchName={current.name} />
-                <BillingSettings branch={current.slug} part="charges" />
-              </div>
+              <BranchSettings branch={current.slug} branchName={current.name} />
             </TabsContent>
           )}
           {canHeader && canPrescribe && current && (
             <TabsContent value="bookmarks">
               <BookmarkList branch={current.slug} />
+            </TabsContent>
+          )}
+          {canHeader && coursesOn && current && (
+            <TabsContent value="course-templates">
+              <CourseTemplates branch={current.slug} />
             </TabsContent>
           )}
           {canHeader && current && (
@@ -166,7 +169,7 @@ export function Settings() {
               <BranchesTab />
             </TabsContent>
           )}
-          {isOwner && (
+          {(isOwner || canStaff) && (
             <TabsContent value="roles">
               <RolesTab />
             </TabsContent>
@@ -503,6 +506,9 @@ function BranchesTab() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<BranchInfo | null>(null);
   const { data, isLoading, error } = useQuery({ queryKey: ['org-branches'], queryFn: () => api.get<{ branches: BranchInfo[] }>('/org/branches') });
+  // The platform admin's limit: at it, the button gives way to "contact support" (the server refuses anyway).
+  const maxBranches = useMe().data?.organization.maxBranches ?? null;
+  const atLimit = maxBranches != null && (data?.branches ?? []).filter((b) => b.isActive).length >= maxBranches;
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['org-branches'] });
     qc.invalidateQueries({ queryKey: ['me'] }); // the branch switcher picks up new names/branches
@@ -514,9 +520,17 @@ function BranchesTab() {
         title="Branches"
         description="Every branch keeps its own patients, visits and records."
         action={
-          <Button size="sm" onClick={() => setAdding(true)}>
-            <Plus /> Add branch
-          </Button>
+          atLimit ? (
+            <span className="text-right text-xs text-muted">
+              Your plan has {maxBranches} branch{maxBranches === 1 ? '' : 'es'}.
+              <br />
+              Need more? Please contact support.
+            </span>
+          ) : (
+            <Button size="sm" onClick={() => setAdding(true)}>
+              <Plus /> Add branch
+            </Button>
+          )
         }
       />
       {isLoading ? (
@@ -549,7 +563,14 @@ function BranchesTab() {
                   <div className="truncate">{b.address ?? '—'}</div>
                   <div className="text-xs">{b.phone ?? ''}</div>
                 </TD>
-                <TD className="tabular-nums">{b.staffCount}</TD>
+                <TD className="tabular-nums">
+                  {b.staffCount}
+                  {b.allowedNetworks && (
+                    <Badge tone="brand" className="ml-2">
+                      <Wifi className="size-3" /> Network lock
+                    </Badge>
+                  )}
+                </TD>
                 <TD className="text-right">
                   <Button size="sm" variant="outline" onClick={() => setEditing(b)}>
                     Edit
@@ -585,8 +606,71 @@ function BranchesTab() {
             }}
           />
         )}
+        {editing && <NetworkLock key={editing.id} branch={editing} onSaved={refresh} />}
       </Dialog>
     </Card>
+  );
+}
+
+/**
+ * Network lock of one branch (owner only): its pages open only on the hospital's own Wi-Fi / LAN. The owner and
+ * branch admins are never locked; other roles only with "Work from outside the hospital network".
+ */
+function NetworkLock({ branch, onSaved }: { branch: BranchInfo; onSaved: () => void }) {
+  const mine = useQuery({ queryKey: ['my-network'], queryFn: () => api.get<{ ip: string | null; suggestion: string | null }>('/org/my-network'), staleTime: 0 });
+  const [on, setOn] = useState(!!branch.allowedNetworks);
+  const [text, setText] = useState(branch.allowedNetworks ?? '');
+  const { list, bad } = parseNetworks(text);
+  const here = mine.data?.ip ?? null;
+  const hereOk = here ? ipAllowed(here, list) : null;
+  const save = useMutation({
+    mutationFn: () => api.patch(`/org/branches/${branch.id}`, { allowedNetworks: on ? text : null }),
+    onSuccess: () => {
+      onSaved();
+      toast.success(on ? `Network lock on for ${branch.name}` : `Network lock off for ${branch.name}`, { description: on ? 'Staff outside these networks are stopped at once.' : 'Staff can work from anywhere again.' });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const changed = on !== !!branch.allowedNetworks || (on && list.join('\n') !== (branch.allowedNetworks ?? ''));
+  return (
+    <div className="mt-6 border-t border-border pt-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 font-semibold">
+            <Wifi className="size-4" /> Network lock
+          </div>
+          <p className="mt-0.5 text-sm text-muted">Staff can open this branch only on the hospital's own Wi-Fi or network. You and branch admins are never locked. To let someone else work from outside, tick “{PERMISSION_LABELS['access.anywhere']}” for their role on the Permissions page.</p>
+        </div>
+        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm font-medium">
+          <input type="checkbox" role="switch" className="size-5 accent-[var(--color-primary)]" checked={on} onChange={(e) => { setOn(e.target.checked); if (e.target.checked && !text && mine.data?.suggestion) setText(mine.data.suggestion); }} />
+          {on ? 'On' : 'Off'}
+        </label>
+      </div>
+      {on && (
+        <div className="mt-3 space-y-2">
+          <Field label="Allowed networks" htmlFor="networks" hint="One per line, like 192.168.1.0/24 (the whole Wi-Fi) or 192.168.1.20 (one computer)." error={bad.length ? `Not a network: ${bad.join(', ')}` : undefined}>
+            <textarea id="networks" rows={3} className="w-full rounded-lg border border-border bg-background p-2 font-mono text-sm outline-none focus-visible:border-ring" value={text} onChange={(e) => setText(e.target.value)} placeholder="192.168.1.0/24" />
+          </Field>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {here && (
+              <span className={hereOk ? 'text-positive' : 'text-warning'}>
+                This computer is {here}: {hereOk ? 'inside the allowed networks' : 'not inside them (you are never locked, your staff here would be)'}
+              </span>
+            )}
+            {mine.data?.suggestion && !list.includes(mine.data.suggestion) && (
+              <Button type="button" size="sm" variant="outline" onClick={() => setText([...list, mine.data!.suggestion!].join('\n'))}>
+                Add this computer's network ({mine.data.suggestion})
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="mt-3 flex justify-end">
+        <Button type="button" variant={changed ? 'default' : 'outline'} disabled={!changed || save.isPending || (on && (!list.length || bad.length > 0))} onClick={() => save.mutate()}>
+          {save.isPending ? 'Saving…' : 'Save network lock'}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -650,30 +734,67 @@ const GROUPS: { title: string; permissions: readonly Permission[] }[] = [
   { title: 'Administration', permissions: CORE_PERMISSIONS },
 ];
 
+/**
+ * What each role may do. The owner: "All branches" (one list every branch follows) or one branch (that branch
+ * only). A branch admin: their own branch, every role except the Branch admin role.
+ * A mistake: "Discard" before saving; after saving, "Undo last save" puts back what was there.
+ */
 function RolesTab() {
   const qc = useQueryClient();
-  const { data, isLoading, error } = useQuery({ queryKey: ['org-roles'], queryFn: () => api.get<{ roles: RoleInfo[] }>('/org/roles') });
+  const current = useBranch();
+  const { data: me } = useMe();
+  const isOwner = !!me?.user.isOwner;
+  const branches = useQuery({ queryKey: ['org-branches'], queryFn: () => api.get<{ branches: BranchInfo[] }>('/org/branches'), enabled: isOwner });
+  // 'all' = every branch (owner); else a branch id. A branch admin is always on their own branch.
+  const [scope, setScope] = useState<'all' | number | null>(null);
+  // The owner starts on the common list for every branch.
+  const sel: 'all' | number | 'mine' = !isOwner ? 'mine' : (scope ?? 'all');
+  const scopeName = sel === 'all' ? 'all branches' : sel === 'mine' ? (current?.name ?? 'this branch') : (branches.data?.branches.find((b) => b.id === sel)?.name ?? '');
+  const url = sel === 'all' ? '/org/roles' : sel === 'mine' ? `/b/${current?.slug}/roles` : `/org/branches/${sel}/roles`;
+  const { data, isLoading, error } = useQuery({ queryKey: ['org-roles', sel], queryFn: () => api.get<{ roles: RoleInfo[] }>(url), enabled: !!current && (!isOwner || !branches.isLoading) });
   const [draft, setDraft] = useState<Record<number, Set<Permission>>>({});
-
+  // What was there before the last save, to put it back.
+  const [before, setBefore] = useState<{ sel: typeof sel; roles: RoleInfo[] } | null>(null);
   useEffect(() => {
     if (data) setDraft(Object.fromEntries(data.roles.map((r) => [r.id, new Set(r.permissions)])));
   }, [data]);
+  const locked = (r: RoleInfo) => !isOwner && r.key === ADMIN_ROLE_KEY; // a branch admin cannot change their own role
 
   const changed = useMemo(
     () => (data?.roles ?? []).filter((r) => {
       const d = draft[r.id];
-      return d && (d.size !== r.permissions.length || r.permissions.some((p) => !d.has(p)));
+      return d && !locked(r) && (d.size !== r.permissions.length || r.permissions.some((p) => !d.has(p)));
     }),
     [data, draft],
   );
-
+  const put = (s: typeof sel, roleId: number, body: unknown) =>
+    api.put(s === 'all' ? `/org/roles/${roleId}/permissions` : s === 'mine' ? `/b/${current!.slug}/roles/${roleId}/permissions` : `/org/branches/${s}/roles/${roleId}/permissions`, body);
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['org-roles'] });
+    qc.invalidateQueries({ queryKey: ['roles'] });
+    qc.invalidateQueries({ queryKey: ['me'] });
+  };
   const save = useMutation({
-    mutationFn: () => Promise.all(changed.map((r) => api.put(`/org/roles/${r.id}/permissions`, { permissions: [...draft[r.id]!] }))),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['org-roles'] });
-      qc.invalidateQueries({ queryKey: ['me'] });
-      toast.success('Permissions saved', { description: 'Staff get the change on their next page load.' });
+    mutationFn: async () => {
+      const prev = { sel, roles: changed.map((r) => ({ ...r })) };
+      await Promise.all(changed.map((r) => put(sel, r.id, sel === 'all' ? { permissions: [...draft[r.id]!], allBranches: true } : { permissions: [...draft[r.id]!] })));
+      return prev;
     },
+    onSuccess: (prev) => {
+      setBefore(prev);
+      refresh();
+      toast.success(`Permissions saved · ${scopeName}`, { description: sel === 'all' ? 'Every branch follows this list now.' : 'Only this branch changes. Staff get it on their next page load.' });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const undo = useMutation({
+    mutationFn: () => Promise.all(before!.roles.map((r) => (before!.sel !== 'all' && !r.custom ? put(before!.sel, r.id, { reset: true }) : put(before!.sel, r.id, before!.sel === 'all' ? { permissions: r.permissions } : { permissions: r.permissions })))),
+    onSuccess: () => (setBefore(null), refresh(), toast.success('Put back as it was before the last save')),
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const reset = useMutation({
+    mutationFn: (r: RoleInfo) => put(sel, r.id, { reset: true }),
+    onSuccess: (_d, r) => (setBefore({ sel, roles: [{ ...r }] }), refresh(), toast.success(`${r.name}: back to the usual permissions`)),
     onError: (e) => toast.error(errorMessage(e)),
   });
 
@@ -686,19 +807,33 @@ function RolesTab() {
     });
   }
 
-  if (isLoading) return <Skeleton className="h-96" />;
+  if (isLoading || branches.isLoading) return <Skeleton className="h-96" />;
   if (error || !data) return <Card className="p-4 text-sm text-critical">{errorMessage(error)}</Card>;
 
   return (
     <Card>
       <CardHeader
-        title="Roles & permissions"
-        description="Applies to every branch. The owner always has everything."
+        title={`Permissions · ${scopeName[0]!.toUpperCase()}${scopeName.slice(1)}`}
+        description={
+          sel === 'all'
+            ? 'One list for every branch. Saving here makes every branch follow it (a branch’s own changes for that role go).'
+            : 'What each role may do in this branch only. The owner always has everything.'
+        }
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {isOwner && (
+              <NativeSelect aria-label="Which branches" className="h-9 w-auto min-w-44" value={String(sel)} disabled={changed.length > 0} title={changed.length ? 'Save or discard first' : undefined} onChange={(e) => (setBefore(null), setScope(e.target.value === 'all' ? 'all' : Number(e.target.value)))}>
+                <option value="all">All branches</option>
+                {(branches.data?.branches ?? []).map((b) => (
+                  <option key={b.id} value={b.id}>
+                    Only {b.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            )}
             {changed.length > 0 && (
               <Button size="sm" variant="outline" onClick={() => setDraft(Object.fromEntries(data.roles.map((r) => [r.id, new Set(r.permissions)])))}>
-                Discard
+                Discard changes
               </Button>
             )}
             <Button size="sm" disabled={!changed.length || save.isPending} onClick={() => save.mutate()}>
@@ -707,14 +842,31 @@ function RolesTab() {
           </div>
         }
       />
+      {before && before.sel === sel && changed.length === 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-warning-soft/50 px-4 py-2 text-sm">
+          <span>Saved. Clicked something by mistake?</span>
+          <Button size="sm" variant="outline" disabled={undo.isPending} onClick={() => undo.mutate()}>
+            Undo last save
+          </Button>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-subtle/60">
             <tr className="border-b border-border">
               <th className="sticky left-0 bg-subtle px-4 py-2.5 text-left text-xs font-medium text-muted">Permission</th>
               {data.roles.map((r) => (
-                <th key={r.id} className="px-3 py-2.5 text-center text-xs font-medium whitespace-nowrap">
-                  {r.name}
+                <th key={r.id} className="px-3 py-2 text-center text-xs font-medium whitespace-nowrap">
+                  <div>{r.name}</div>
+                  {sel === 'all' ? null : locked(r) ? (
+                    <div className="mt-0.5 text-[11px] font-normal text-muted">Owner sets this</div>
+                  ) : r.custom ? (
+                    <button type="button" className="mt-0.5 text-[11px] font-normal text-brand hover:underline" disabled={reset.isPending} onClick={() => reset.mutate(r)} title="This branch has its own list for this role. Reset = the usual list.">
+                      This branch only · Reset
+                    </button>
+                  ) : (
+                    <div className="mt-0.5 text-[11px] font-normal text-muted">Usual</div>
+                  )}
                 </th>
               ))}
             </tr>
@@ -733,7 +885,7 @@ function RolesTab() {
                     <td key={r.id} className="px-3 py-2.5 text-center">
                       <input
                         type="checkbox"
-                        disabled={r.key !== ADMIN_ROLE_KEY && (ADMIN_ONLY_PERMISSIONS as readonly string[]).includes(p)}
+                        disabled={locked(r) || (r.key !== ADMIN_ROLE_KEY && (ADMIN_ONLY_PERMISSIONS as readonly string[]).includes(p))}
                         title={r.key !== ADMIN_ROLE_KEY && (ADMIN_ONLY_PERMISSIONS as readonly string[]).includes(p) ? 'Only the Branch admin role (and the owner) can manage staff and roles' : undefined}
                         aria-label={`${r.name}: ${PERMISSION_LABELS[p]}`}
                         className="size-4 cursor-pointer accent-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-30"
@@ -748,7 +900,7 @@ function RolesTab() {
           </tbody>
         </table>
       </div>
-      <p className="border-t border-border px-4 py-3 text-xs text-muted">{ALL_PERMISSIONS.length} permissions · changes apply to staff in all branches.</p>
+      <p className="border-t border-border px-4 py-3 text-xs text-muted">{ALL_PERMISSIONS.length} permissions · {sel === 'all' ? 'changes apply to the staff of every branch' : `changes apply to the staff of ${scopeName} only`}.</p>
     </Card>
   );
 }

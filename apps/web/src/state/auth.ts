@@ -2,8 +2,9 @@
 // TanStack Query cache -- no token is ever stored in the browser.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
-import type { LoginInput, MeBranch, MeResponse, Permission } from '@platform/shared';
+import type { LoginInput, MeBranch, MeResponse, ModuleKey, Permission } from '@platform/shared';
 import { api, ApiError } from '@/api/client';
+import { clearAllDrafts } from '@/components/drafts';
 
 export const ME_KEY = ['me'] as const;
 
@@ -35,6 +36,7 @@ export function useLogout() {
   return useMutation({
     mutationFn: () => api.post('/auth/logout'),
     onSettled: () => {
+      clearAllDrafts(); // what was typed in forms stays with the person who typed it
       qc.clear(); // drop every cached record of the old session
       qc.setQueryData(ME_KEY, null);
     },
@@ -49,6 +51,12 @@ export function useBranch(): MeBranch | null {
 }
 
 /** UI-only check (hide what you can't use). The server re-checks every request. */
+/** Is this module switched on for the hospital (the platform admin can switch Lab and Courses off)? */
+export function useModuleOn(key: ModuleKey): boolean {
+  const { data } = useMe();
+  return !(data?.organization.modulesOff ?? []).includes(key);
+}
+
 export function useCan(permission: Permission): boolean {
   return useBranch()?.permissions.includes(permission) ?? false;
 }

@@ -101,6 +101,10 @@ export const medicine = sqliteTable(
     /** Selling price for ONE unit (tablet, bottle, ...), in paise. */
     pricePaise: integer('price_paise').notNull(),
     reorderLevel: integer('reorder_level').notNull().default(10),
+    /** How the doctor usually writes it (filled in when it is picked; the doctor can change it): "1-0-1". */
+    defaultDose: text('default_dose'),
+    defaultInstructions: text('default_instructions'),
+    defaultDays: integer('default_days'),
     ...timestamps,
     deletedAt: text('deleted_at'),
   },
@@ -147,11 +151,35 @@ export const prescriptionItem = sqliteTable(
     status: text('status', { enum: ['pending', 'dispensed', 'declined'] })
       .notNull()
       .default('pending'),
+    /** The doctor's order (dragged); 0 = not placed yet: after the placed ones, in the order they were added. */
+    sortOrder: integer('sort_order').notNull().default(0),
     createdBy: integer('created_by').references(() => user.id),
     ...timestamps,
     deletedAt: text('deleted_at'),
   },
   (t) => [index('ix_rx_visit').on(t.branchId, t.visitId), index('ix_rx_status').on(t.branchId, t.status)],
+);
+
+/**
+ * A line of the doctor's between the medicines of a prescription: a note ("Stop if the fever goes") or an
+ * instruction ("Check BP tomorrow"). Never sold or billed. It sits after one medicine (null = at the top).
+ */
+export const prescriptionNote = sqliteTable(
+  'prescription_note',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    visitId: integer('visit_id')
+      .notNull()
+      .references(() => opVisit.id),
+    kind: text('kind', { enum: ['note', 'instruction'] }).notNull(),
+    text: text('text').notNull(),
+    afterItemId: integer('after_item_id').references(() => prescriptionItem.id),
+    createdBy: integer('created_by').references(() => user.id),
+    ...timestamps,
+    deletedAt: text('deleted_at'),
+  },
+  (t) => [index('ix_rx_note_visit').on(t.branchId, t.visitId)],
 );
 
 /**
@@ -196,6 +224,8 @@ export const pharmacySale = sqliteTable(
     visitId: integer('visit_id').references(() => opVisit.id),
     patientId: integer('patient_id').references(() => patient.id),
     totalPaise: integer('total_paise').notNull(),
+    /** Direct sale: added so the customer pays a round figure; already inside totalPaise. 0 for prescription sales. */
+    roundOffPaise: integer('round_off_paise').notNull().default(0),
     paymentMode: text('payment_mode', { enum: ['cash', 'upi', 'card'] }).notNull(),
     createdBy: integer('created_by').references(() => user.id),
     createdAt: timestamps.createdAt,
@@ -652,4 +682,112 @@ export const labPackage = sqliteTable(
     deletedAt: text('deleted_at'),
   },
   (t) => [index('ix_lab_package').on(t.branchId)],
+);
+
+/**
+ * A treatment course: one complaint treated over several sittings (dengue: IV morning and evening for 3 days,
+ * platelet counts, a doctor review). Paid sitting by sitting, or all on day one (pay_mode).
+ * Frozen after two missed sittings; closed a day later if the patient still does not come (credit = what was
+ * paid on day one and not given).
+ */
+export const treatmentCourse = sqliteTable(
+  'treatment_course',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    patientId: integer('patient_id')
+      .notNull()
+      .references(() => patient.id),
+    /** The visit the doctor started it on. */
+    visitId: integer('visit_id')
+      .notNull()
+      .references(() => opVisit.id),
+    name: text('name').notNull(),
+    payMode: text('pay_mode', { enum: ['per_sitting', 'day_one'] }).notNull().default('per_sitting'),
+    status: text('status', { enum: ['active', 'frozen', 'closed'] }).notNull().default('active'),
+    doctorUserId: integer('doctor_user_id').references(() => user.id),
+    frozenAt: text('frozen_at'),
+    closedAt: text('closed_at'),
+    closedReason: text('closed_reason'),
+    closedBy: integer('closed_by').references(() => user.id),
+    /** Paid on day one and never given, when the course closed after missed sittings. */
+    creditPaise: integer('credit_paise').notNull().default(0),
+    /** Day 1 of the course (India date, YYYY-MM-DD), picked when it is started; null = its first sitting's day. */
+    startDay: text('start_day'),
+    createdBy: integer('created_by').references(() => user.id),
+    ...timestamps,
+    deletedAt: text('deleted_at'),
+  },
+  (t) => [index('ix_course_patient').on(t.branchId, t.patientId), index('ix_course_status').on(t.branchId, t.status)],
+);
+
+/** One sitting of a course: when, what kind, and the visit it became. */
+export const courseSitting = sqliteTable(
+  'course_sitting',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    courseId: integer('course_id')
+      .notNull()
+      .references(() => treatmentCourse.id),
+    /** When it is due (UTC ISO). */
+    dueAt: text('due_at').notNull(),
+    /** nurse: injections, IV, dressing (no token) · review: the doctor sees the patient · lab: tests only. */
+    kind: text('kind', { enum: ['nurse', 'review', 'lab'] }).notNull(),
+    /** Review only: the doctor's fee for this review; null = no fee. */
+    reviewFeePaise: integer('review_fee_paise'),
+    status: text('status', { enum: ['planned', 'started', 'done', 'missed', 'cancelled'] }).notNull().default('planned'),
+    visitId: integer('visit_id').references(() => opVisit.id),
+    doneAt: text('done_at'),
+    /** The doctor's notes for this sitting ("Check platelets before the drip"). */
+    note: text('note'),
+    ...timestamps,
+  },
+  (t) => [index('ix_sitting_course').on(t.branchId, t.courseId), index('ix_sitting_due').on(t.branchId, t.dueAt)],
+);
+
+/** What is given or done at a sitting: a medicine (with quantity), a lab test, or a charge (IV set, dressing...). */
+export const courseItem = sqliteTable(
+  'course_item',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    sittingId: integer('sitting_id')
+      .notNull()
+      .references(() => courseSitting.id),
+    /** note: a line of the doctor's between the others ("Give slowly"), never given or billed. */
+    kind: text('kind', { enum: ['medicine', 'test', 'charge', 'note'] }).notNull(),
+    medicineId: integer('medicine_id').references(() => medicine.id),
+    testId: integer('test_id').references(() => labTest.id),
+    description: text('description').notNull(),
+    /** Place in the sitting, as the doctor put them. */
+    sortOrder: integer('sort_order').notNull().default(0),
+    quantity: integer('quantity').notNull().default(1),
+    /** Charges: the amount. Medicines and tests: the price when it was paid on day one (locked). */
+    pricePaise: integer('price_paise').notNull().default(0),
+    /** Paid on day one (nothing to bill at the sitting). */
+    prepaid: integer('prepaid', { mode: 'boolean' }).notNull().default(false),
+    givenAt: text('given_at'),
+    givenBy: integer('given_by').references(() => user.id),
+    ...timestamps,
+  },
+  (t) => [index('ix_course_item_sitting').on(t.branchId, t.sittingId)],
+);
+
+/**
+ * A course template ("Dengue", like a bookmark): the usual sittings by day and part of the day, picked in one
+ * click to start a patient's course. JSON in `sittings`: [{ day, part, kind, reviewFeePaise, items: [...] }].
+ */
+export const courseTemplate = sqliteTable(
+  'course_template',
+  {
+    id: integer('id').primaryKey(),
+    ...branchColumns,
+    name: text('name').notNull(),
+    sittings: text('sittings').notNull(),
+    createdBy: integer('created_by').references(() => user.id),
+    ...timestamps,
+    deletedAt: text('deleted_at'),
+  },
+  (t) => [index('ix_course_template').on(t.branchId)],
 );

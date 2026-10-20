@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { PrintHeader } from '@platform/shared';
 import { api } from '@/api/client';
-import { ReportHeader } from './ReportHeader';
+import { ReportHeader, ReportWatermark } from './ReportHeader';
 import { PrintActions, type ShareInfo } from './PrintActions';
 
 /** The branch's letterhead for a printed paper. */
@@ -18,6 +18,7 @@ const SHEET_CSS = `
     .no-print { display: none !important; }
     .sheet { width: auto !important; margin: 0 !important; padding: 0 !important; box-shadow: none !important; }
     .print-page tr, .closing { break-inside: avoid; }
+    .report-watermark { position: fixed !important; }
   }
 `;
 
@@ -67,11 +68,14 @@ export function PrintSheet({
         <span className="flex-1" />
         <PrintActions canPrint={canPrint} share={share} />
       </div>
-      <div className="sheet mx-auto my-6 w-[210mm] max-w-full bg-white px-[11mm] py-[9mm] shadow">
+      <div className="sheet relative mx-auto my-6 w-[210mm] max-w-full bg-white px-[11mm] py-[9mm] shadow">
+        <ReportWatermark header={header} />
+        <div className="relative z-[1]">
         <ReportHeader header={header} />
         <div className="mb-3 text-center text-[15px] font-semibold text-[#1f6b4f]">{title}</div>
         {children}
         {signature && <PrintSignature />}
+        </div>
       </div>
     </div>
   );

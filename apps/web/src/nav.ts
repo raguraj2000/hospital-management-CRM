@@ -23,7 +23,7 @@ export const NAV: NavItem[] = [
   { path: 'billing', label: 'Billing', icon: Receipt, permission: 'billing.receive', group: 'Clinic', primary: true },
   { path: 'pharmacy', label: 'Pharmacy', icon: Pill, permission: 'pharmacy.sell', group: 'Clinic' },
   { path: 'lab', label: 'Lab', icon: FlaskConical, permission: 'lab.view', group: 'Clinic' },
-  { path: 'treatments', label: 'Doses to give', icon: Syringe, permission: 'treatment.give', group: 'Clinic' },
+  { path: 'treatments', label: "Today's treatments", icon: Syringe, permission: 'treatment.give', group: 'Clinic' },
   // Settings > Bookmarks for whoever has Settings; a doctor without Settings keeps it in the menu.
   { path: 'bookmarks', label: 'Bookmarks', icon: Bookmark, permission: 'prescription.write', group: 'Clinic', foldedWith: 'settings.manage' },
   { path: 'inventory', label: 'Inventory', icon: Package, permission: 'inventory.view', group: 'Manage' },

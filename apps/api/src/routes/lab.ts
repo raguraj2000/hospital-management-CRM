@@ -10,6 +10,7 @@ import {
   type LabPackage,
   labResultsSchema,
   labTestInputSchema,
+  reorderSchema,
   LAB_ORDER_STATUSES,
   type LabOrder,
   type LabQueueEntry,
@@ -18,9 +19,9 @@ import {
   type LabTestDetail,
   type PatientLabOrder,
 } from '@platform/shared';
-import { AppError, notFound, printHeaderOf, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
+import { AppError, notFound, printHeaderOf, requireAnyPermission, requireModule, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { labOrder, labPackage, labResult, labTest, labTestParameter, opBill, opBillLine, opVisit, patient, user } from '../db/schema.js';
-import { localToday, patientOfBranch, visitOfBranch, withToken, assertPatientActive } from '../lib/clinic.js';
+import { assertVisitOpen, periodOf, patientOfBranch, textSearch, visitOfBranch, withToken, assertPatientActive } from '../lib/clinic.js';
 import { labPaymentState, onLabOrderCancel } from './billing.js';
 
 const doctor = alias(user, 'doctor');
@@ -67,7 +68,7 @@ export function createLabRoutes(db: Db) {
       .from(patient)
       .where(eq(patient.id, v!.patientId));
     const orders = await db
-      .select({ ...orderColumns, department: labTest.department, kind: labTest.kind, sortOrder: labTest.sortOrder })
+      .select({ ...orderColumns, updatedAt: labOrder.updatedAt, department: labTest.department, kind: labTest.kind, sortOrder: labTest.sortOrder })
       .from(labOrder)
       .innerJoin(labTest, eq(labTest.id, labOrder.testId))
       .where(and(eq(labOrder.branchId, branchId), eq(labOrder.visitId, visitId), sql`${labOrder.status} <> 'cancelled'`))
@@ -90,6 +91,8 @@ export function createLabRoutes(db: Db) {
       status: o.status,
       sampleCollectedAt: o.sampleCollectedAt,
       completedAt: o.completedAt,
+      // Only a correction touches a completed order (lab/orders/:id/results); completing sets both to the same time.
+      correctedAt: o.status === 'completed' && o.completedAt && o.updatedAt > o.completedAt ? o.updatedAt : null,
       parameters: params
         .filter((x) => x.testId === o.testId)
         .map((x) => {
@@ -206,6 +209,22 @@ export function createLabRoutes(db: Db) {
     return c.json({ added: added.length, skipped: LAB_CATALOG.length - added.length });
   });
 
+  /** Tests & prices dragged into another order: the doctor's list, the queue and the printed report follow it. */
+  app.put('/lab/tests/order', requirePermission('settings.manage'), async (c) => {
+    const parsed = reorderSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const ids = parsed.data.ids;
+    const have = await db.select({ id: labTest.id }).from(labTest).where(and(eq(labTest.branchId, b.id), isNull(labTest.deletedAt), inArray(labTest.id, ids)));
+    if (have.length !== new Set(ids).size || have.length !== ids.length) throw new AppError(400, 'validation', 'Choose tests of this branch, each once');
+    await db.transaction(async (tx) => {
+      for (const [i, id] of ids.entries()) await tx.update(labTest).set({ sortOrder: (i + 1) * 10 }).where(eq(labTest.id, id));
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'reorder', entity: 'lab_test', detail: { ids } });
+    });
+    return c.json({ ok: true });
+  });
+
   app.patch('/lab/tests/:id', requirePermission('settings.manage'), async (c) => {
     const parsed = labTestInputSchema.partial().safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) throw validationError(parsed.error);
@@ -278,7 +297,7 @@ export function createLabRoutes(db: Db) {
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
     await assertPatientActive(db, b.id, v.patientId);
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    assertVisitOpen(v.status);
     const tests = await testsToOrder(db, b.id, parsed.data.testIds, parsed.data.packageIds);
     const testIds = tests.map((t) => t.id);
     await db.transaction(async (tx) => {
@@ -325,7 +344,7 @@ export function createLabRoutes(db: Db) {
     if (found.length !== new Set(ids).size) throw new AppError(400, 'validation', 'Choose tests from this branch', { testIds: ['Choose tests from this branch'] });
   }
 
-  app.get('/lab/packages', requireAnyPermission('lab.view', 'lab.order', 'patient.create'), async (c) => c.json({ packages: await packagesOf(c.get('branch').id) }));
+  app.get('/lab/packages', requireModule('lab'), requireAnyPermission('lab.view', 'lab.order', 'patient.create'), async (c) => c.json({ packages: await packagesOf(c.get('branch').id) }));
 
   app.post('/lab/packages', requirePermission('settings.manage'), async (c) => {
     const parsed = labPackageSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -368,15 +387,14 @@ export function createLabRoutes(db: Db) {
   /** Tests completed in the last ?days= (1, 7, 30, 365): how many of each, and what they were billed at. */
   app.get('/lab/report', requirePermission('reports.view'), async (c) => {
     const b = c.get('branch');
-    const days = Math.min(Math.max(Math.floor(Number(c.req.query('days')) || 1), 1), 366);
-    const to = await localToday(db);
+    const { from, to, days } = await periodOf(db, c.req.query());
     const tests = await db.all<{ testId: number; name: string; department: string; count: number; amountPaise: number }>(sql`
-      select t.id as testId, t.name as name, t.department as department, count(*) as count, coalesce(sum(o.price_paise), 0) as amountPaise
+      select t.id as testId, t.name as name, t.department as department, count(*) as count, coalesce(sum(case when o.price_paise > 0 then o.price_paise else coalesce((select ci.price_paise from course_item ci inner join course_sitting cs on cs.id = ci.sitting_id where cs.visit_id = o.visit_id and ci.test_id = o.test_id and ci.prepaid = 1 limit 1), 0) end), 0) as amountPaise
       from lab_order o inner join lab_test t on t.id = o.test_id
-      where o.branch_id = ${b.id} and o.status = 'completed' and date(o.completed_at, '+330 minutes') between date(${to}, ${`-${days - 1} days`}) and ${to}
+      where o.branch_id = ${b.id} and o.status = 'completed' and date(o.completed_at, '+330 minutes') between ${from} and ${to}
       group by t.id order by count desc, t.name`);
     const [{ waiting }] = await db.all<{ waiting: number }>(sql`select count(*) as waiting from lab_order o inner join op_visit v on v.id = o.visit_id where o.branch_id = ${b.id} and o.status in ('ordered', 'sample_collected') and v.deleted_at is null and v.status <> 'cancelled'`);
-    return c.json({ days, to, tests, totalCount: tests.reduce((s, t) => s + t.count, 0), totalPaise: tests.reduce((s, t) => s + t.amountPaise, 0), waiting });
+    return c.json({ days, from, to, tests, totalCount: tests.reduce((s, t) => s + t.count, 0), totalPaise: tests.reduce((s, t) => s + t.amountPaise, 0), waiting });
   });
 
   // ---------------------------------------------------------------- results of earlier visits
@@ -415,7 +433,8 @@ export function createLabRoutes(db: Db) {
       .innerJoin(patient, eq(patient.id, labOrder.patientId))
       .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
       // A deleted visit's tests are gone with it; a cancelled visit has nothing waiting at the lab.
-      .where(and(eq(labOrder.branchId, b.id), inArray(labOrder.status, [...statuses]), isNull(opVisit.deletedAt), status === 'completed' ? undefined : sql`${opVisit.status} <> 'cancelled'`))
+      // ?q=: name, UHID, OP no., phone or test, over everything (not only the latest 300).
+      .where(and(eq(labOrder.branchId, b.id), inArray(labOrder.status, [...statuses]), isNull(opVisit.deletedAt), status === 'completed' ? undefined : sql`${opVisit.status} <> 'cancelled'`, textSearch(c.req.query('q'), [patient.name, patient.uhid, opVisit.opNo, labTest.name], patient.phone)))
       // The queue in the order the tests came in; finished ones newest first, and only the latest (the rest are on the patient's page).
       .orderBy(status === 'completed' ? desc(labOrder.id) : asc(labOrder.id))
       .limit(status === 'completed' ? 300 : 1000);
@@ -465,6 +484,8 @@ export function createLabRoutes(db: Db) {
     if (!o) throw notFound('Lab order not found');
     if (o.status === 'cancelled') throw new AppError(409, 'bad_state', 'This test was cancelled');
     const amending = o.status === 'completed';
+    if (amending && !c.get('branch').permissions.includes('lab.correct')) throw new AppError(403, 'forbidden', 'This report is completed. Only someone allowed to correct lab results can change it.');
+    if (amending && (parsed.data.reason ?? '').length < 3) throw new AppError(400, 'validation', 'Write why the completed result is being corrected', { reason: ['Write why it is corrected'] });
     const params = await db
       .select({ id: labTestParameter.id, name: labTestParameter.name, refRange: labTestParameter.refRange, noFlag: labTestParameter.noFlag, optional: labTestParameter.optional })
       .from(labTestParameter)
@@ -508,7 +529,7 @@ export function createLabRoutes(db: Db) {
         // The first value typed means the sample was taken: no separate "Sample collected" press needed.
         await tx.update(labOrder).set({ status: 'sample_collected', sampleCollectedAt: now, updatedAt: now }).where(eq(labOrder.id, id));
       }
-      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: amending ? 'amend' : parsed.data.complete ? 'complete' : 'results', entity: 'lab_order', entityId: id, detail: amending ? { results: parsed.data.results } : undefined });
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: amending ? 'amend' : parsed.data.complete ? 'complete' : 'results', entity: 'lab_order', entityId: id, detail: amending ? { reason: parsed.data.reason, results: parsed.data.results } : undefined });
     });
     return c.json({ ok: true });
   });

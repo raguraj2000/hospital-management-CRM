@@ -96,7 +96,7 @@ describe('a cancelled visit', () => {
     expect([await inLab(), await inPharmacy()]).toEqual([false, false]);
     expect((await json(owner('/api/b/main/dashboard'))).labPending).toBe(pendingBefore - 1);
     const res = await pharm('/api/b/main/pharmacy/dispense', { method: 'POST', body: { visitId: v.id, itemIds: [item], paymentMode: 'cash' } });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     expect((await res.json()).code).toBe('visit_cancelled');
   });
 });
@@ -176,6 +176,30 @@ describe('last purchase', () => {
     expect((await doc(`/api/b/main/patients/${p.id}/last-purchase`)).status).toBe(403); // not the pharmacy counter
     expect((await owner(`/api/b/east/patients/${p.id}/last-purchase`)).status).toBe(404); // another branch: like a missing patient
   });
+
+  it('adds the round off of a direct sale to the total and the printed bill, ₹10 at most', async () => {
+    const { sale } = await json(pharm('/api/b/main/pharmacy/sales', { method: 'POST', body: { items: [{ medicineId: para, quantity: 1 }], paymentMode: 'cash', roundOffPaise: 300 } }));
+    const detail = (await json(pharm(`/api/b/main/pharmacy/sales/${sale.id}`))).sale;
+    const lines = detail.lines.reduce((s: number, l: { amountPaise: number }) => s + l.amountPaise, 0);
+    expect(detail).toMatchObject({ roundOffPaise: 300, totalPaise: lines + 300 });
+    expect(sale.totalPaise).toBe(lines + 300);
+    expect((await pharm('/api/b/main/pharmacy/sales', { method: 'POST', body: { items: [{ medicineId: para, quantity: 1 }], paymentMode: 'cash', roundOffPaise: 1100 } })).status).toBe(400);
+    expect((await owner(`/api/b/east/pharmacy/sales/${sale.id}`)).status).toBe(404); // another branch: like a missing sale
+  });
+
+  it('counts a direct sale round off as round off in the reports, not as medicines; the money received keeps it', async () => {
+    const before = await json(owner('/api/b/main/billing/day-report'));
+    const period0 = await json(owner('/api/b/main/reports/period?days=1'));
+    const { sale } = await json(pharm('/api/b/main/pharmacy/sales', { method: 'POST', body: { items: [{ medicineId: para, quantity: 1 }], paymentMode: 'cash', roundOffPaise: 200 } }));
+    const after = await json(owner('/api/b/main/billing/day-report'));
+    const period1 = await json(owner('/api/b/main/reports/period?days=1'));
+    expect(after.billed.roundOffPaise - before.billed.roundOffPaise).toBe(200);
+    expect(after.billed.pharmacyPaise - before.billed.pharmacyPaise).toBe(sale.totalPaise - 200);
+    expect(after.totalPaise - before.totalPaise).toBe(sale.totalPaise);
+    expect(period1.billed.roundOffPaise - period0.billed.roundOffPaise).toBe(200);
+    expect(period1.received.pharmacyDirectPaise - period0.received.pharmacyDirectPaise).toBe(sale.totalPaise - 200);
+    expect(period1.received.totalPaise - period0.received.totalPaise).toBe(sale.totalPaise);
+  });
 });
 
 describe('completed payments', () => {
@@ -214,11 +238,19 @@ describe('lab results', () => {
     const order = report.tests[0];
     const put = (value: string) => lab(`/api/b/main/lab/orders/${order.orderId}/results`, { method: 'PUT', body: { results: [{ parameterId: order.parameters[0].id, value }], complete: true } });
     expect((await put('NEGATIVE')).status).toBe(200);
+    expect((await json(lab(`/api/b/main/visits/${v.id}/lab-report`))).tests[0].correctedAt).toBeNull();
     await t.db.update(labOrder).set({ completedAt: '2026-01-01T00:00:00.000Z' }).where(eq(labOrder.id, order.orderId));
-    expect((await put('POSITIVE')).status).toBe(200);
-    expect((await put('')).status).toBe(400); // a final report is not emptied
+    // Completed = locked: the lab technician cannot change it; the owner can, with a reason.
+    expect((await put('POSITIVE')).status).toBe(403);
+    const fix = (value: string, reason?: string) => owner(`/api/b/main/lab/orders/${order.orderId}/results`, { method: 'PUT', body: { results: [{ parameterId: order.parameters[0].id, value }], reason } });
+    expect((await fix('POSITIVE')).status).toBe(400); // no reason
+    expect((await fix('POSITIVE', 'Wrong card read')).status).toBe(200);
+    expect((await fix('', 'Wrong card read')).status).toBe(400); // a final report is not emptied
     const again = (await json(lab(`/api/b/main/visits/${v.id}/lab-report`))).tests[0];
     expect([again.status, again.completedAt, again.parameters[0].value]).toEqual(['completed', '2026-01-01T00:00:00.000Z', 'POSITIVE']);
+    expect(again.correctedAt).toEqual(expect.any(String)); // the print says "corrected on ..."
+    // Another branch: as if it did not exist.
+    expect((await owner(`/api/b/east/lab/orders/${order.orderId}/results`, { method: 'PUT', body: { results: [], reason: 'xyz' } })).status).toBe(404);
   });
 });
 

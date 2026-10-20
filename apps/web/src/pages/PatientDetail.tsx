@@ -1,7 +1,7 @@
 import { formatRupees, ageInfo, GENDER_LABEL } from '@platform/shared';
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { ArrowLeft, CalendarClock, ClipboardPlus, Droplet, Mail, MapPin, MessageCircle, MoreHorizontal, Pencil, Phone, PhoneCall, Scale, Stethoscope, UserRound, Ban, ReceiptText } from 'lucide-react';
 import { DirectLab } from '@/components/DirectLab';
 import { PayDues } from '@/components/PayDues';
@@ -65,7 +65,9 @@ export function PatientDetail() {
   const [deactivating, setDeactivating] = useState(false);
   const [reason, setReason] = useState('');
   const [startingVisit, setStartingVisit] = useState(false);
-  const [tab, setTab] = useState('overview');
+  // ?tab=visits opens a tab straight away (the "View all visits" link of a visit).
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(() => params.get('tab') ?? 'overview');
   const [range, setRange] = useState({ from: '', to: '' });
 
   const visits = useQuery({

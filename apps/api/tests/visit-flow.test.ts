@@ -206,15 +206,20 @@ describe('send and status rules', () => {
     expect((await early.json()).code).toBe('not_settled');
     expect((await patch({ status: 'waiting' })).status).toBe(200);
     expect((await patch({ status: 'completed' })).status).toBe(200);
+    // Completed is final: not cancelled, not back to waiting.
     expect((await patch({ status: 'cancelled' })).status).toBe(409);
-    expect((await patch({ status: 'waiting' })).status).toBe(200);
-    expect((await patch({ status: 'cancelled' })).status).toBe(200);
-    expect((await patch({ status: 'completed' })).status).toBe(409);
-    expect((await patch({ status: 'waiting' })).status).toBe(200);
+    expect((await patch({ status: 'waiting' })).status).toBe(409);
+    expect(await statusOf(owner, v.id)).toBe('completed');
+    // A new visit for the rest of this test.
+    const v2 = await visitFor(owner, 'main', 'Ravi Kumar', docId);
+    const patch2 = (body: unknown) => owner(`/api/b/main/visits/${v2.id}`, { method: 'PATCH', body });
+    expect((await patch2({ status: 'cancelled' })).status).toBe(200);
+    expect((await patch2({ status: 'completed' })).status).toBe(409);
+    expect((await patch2({ status: 'waiting' })).status).toBe(200);
 
     // Handed to another doctor while inside: waits for the new doctor, so that doctor never has two inside.
     await callNext(doc);
-    expect((await json(patch({ doctorUserId: ownerId }))).visit).toMatchObject({ doctorUserId: ownerId, status: 'waiting' });
+    expect((await json(patch2({ doctorUserId: ownerId }))).visit).toMatchObject({ doctorUserId: ownerId, status: 'waiting' });
   });
 });
 

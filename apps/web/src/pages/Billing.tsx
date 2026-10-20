@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useDeferredValue, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { Banknote, CreditCard, FilePlus2, Printer, ReceiptText, Smartphone, Truck, Users, Wallet } from 'lucide-react';
@@ -13,6 +13,7 @@ import { billLabel, billTone, fmtDate, fmtDay, fmtTime, modeLabel } from '@/comp
 import { PrintLink, printInPlace } from '@/components/print';
 import { formatPhone } from './Patients';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
+import { ListSearch, textMatch } from '@/components/ListSearch';
 
 interface ToBill {
   visitId: number;
@@ -43,8 +44,8 @@ export function Billing() {
   // With pharmacy.sell too, this counter takes the visit's whole payment (checkout cards); otherwise it bills consultation + lab, as before.
   const fullCheckout = useCan('pharmacy.sell');
   const checkout = useCheckoutQueue(branch, fullCheckout);
-  const toBill = useQuery({ queryKey: ['to-bill', branch], queryFn: () => api.get<{ visits: ToBill[]; today: string }>(`/b/${branch}/billing/to-bill`), refetchInterval: 20_000, enabled: !fullCheckout });
-  const due = useQuery({ queryKey: ['bills-due', branch], queryFn: () => api.get<{ bills: BillListRow[] }>(`/b/${branch}/bills`), refetchInterval: 20_000 });
+  const toBill = useQuery({ queryKey: ['to-bill', branch], queryFn: () => api.get<{ visits: ToBill[]; today: string }>(`/b/${branch}/billing/to-bill`), enabled: !fullCheckout });
+  const due = useQuery({ queryKey: ['bills-due', branch], queryFn: () => api.get<{ bills: BillListRow[] }>(`/b/${branch}/bills`) });
   const waiting = fullCheckout ? (checkout.data?.queue.length ?? 0) : (toBill.data?.visits.length ?? 0);
 
   return (
@@ -163,8 +164,14 @@ function dueSince(createdAt: string) {
 function PendingPayments({ branch, data, loading, error }: { branch: string; data?: BillListRow[]; loading: boolean; error: unknown }) {
   const navigate = useNavigate();
   const [receiving, setReceiving] = useState<BillListRow | null>(null);
-  const total = (data ?? []).reduce((s, b) => s + b.totalPaise - b.paidPaise, 0);
-  const { rows, pager } = usePaged(data ?? []);
+  const [q, setQ] = useState('');
+  // Typed: the server looks through every unpaid bill (the list shows the newest 200).
+  const asked = useDeferredValue(q.trim());
+  const searched = useQuery({ queryKey: ['bills-due', branch, 'due', asked], queryFn: () => api.get<{ bills: BillListRow[] }>(`/b/${branch}/bills?status=due&q=${encodeURIComponent(asked)}`), enabled: asked.length >= 2 });
+  const found = (asked.length >= 2 && searched.data ? searched.data.bills : data ?? []).filter((b) => textMatch(q, b.patientName, b.patientUhid, b.patientPhone, b.billNo, b.opNo));
+  const { rows, pager } = usePaged(found, q);
+  // What the list on screen still owes (all of it, or what the search found).
+  const total = found.reduce((sum, b) => sum + b.totalPaise - b.paidPaise, 0);
   return (
     <Card>
       <CardHeader
@@ -172,7 +179,14 @@ function PendingPayments({ branch, data, loading, error }: { branch: string; dat
         description="Bills not fully paid yet, newest first."
         icon={Wallet}
         iconTone="critical"
-        action={!!data?.length && <span className="text-base font-semibold tabular-nums">{formatRupees(total)} due</span>}
+        action={
+          !!data?.length && (
+            <div className="flex flex-wrap items-center gap-3">
+              <ListSearch className="sm:w-56" label="Search pending payments" placeholder="Name, phone or bill no.…" value={q} onChange={setQ} />
+              <span className="text-base font-semibold tabular-nums">{formatRupees(total)} due</span>
+            </div>
+          )
+        }
       />
       {loading ? (
         <Skeleton className="m-4 h-16" />
@@ -180,6 +194,8 @@ function PendingPayments({ branch, data, loading, error }: { branch: string; dat
         <p className="p-4 text-sm text-critical">{errorMessage(error)}</p>
       ) : !data?.length ? (
         <EmptyState icon={ReceiptText} title="Nothing pending" description="All bills are fully paid." />
+      ) : !found.length ? (
+        <EmptyState icon={ReceiptText} title={`Nothing matches “${q}”`} />
       ) : (
         <Table>
           <THead>
@@ -239,19 +255,25 @@ function PendingPayments({ branch, data, loading, error }: { branch: string; dat
 function CompletedPayments({ branch }: { branch: string }) {
   const navigate = useNavigate();
   const [date, setDate] = useState('');
+  const [q, setQ] = useState('');
+  // Typed: every day is searched (newest 200), not only the day picked.
+  const asked = useDeferredValue(q.trim());
+  const searching = asked.length >= 2;
   // Keyed under "bills-due": every payment already refreshes that.
-  const { data, isLoading, error } = useQuery({ queryKey: ['bills-due', branch, 'paid', date], queryFn: () => api.get<{ bills: BillListRow[]; date: string }>(`/b/${branch}/bills?status=paid${date ? `&date=${date}` : ''}`), refetchInterval: 20_000 });
+  const { data, isLoading, error } = useQuery({ queryKey: ['bills-due', branch, 'paid', date, searching ? asked : ''], queryFn: () => api.get<{ bills: BillListRow[]; date: string | null }>(`/b/${branch}/bills?status=paid${date ? `&date=${date}` : ''}${searching ? `&q=${encodeURIComponent(asked)}` : ''}`), placeholderData: (prev) => prev });
   const bills = data?.bills ?? [];
-  const { rows, pager } = usePaged(bills, data?.date);
+  const found = bills.filter((b) => textMatch(q, b.patientName, b.patientUhid, b.patientPhone, b.billNo, b.opNo, b.token));
+  const { rows, pager } = usePaged(found, `${data?.date}|${q}`);
   return (
     <Card>
       <CardHeader
         title="Completed payments"
-        description={data ? `Fully paid bills of ${fmtDay(data.date)}, newest first.` : 'Fully paid bills, newest first.'}
+        description={data?.date ? `Fully paid bills of ${fmtDay(data.date)}, newest first.` : searching ? `Fully paid bills of every day matching “${asked}”, newest first.` : 'Fully paid bills, newest first.'}
         icon={ReceiptText}
         iconTone="positive"
         action={
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {(bills.length > 0 || q) && <ListSearch className="sm:w-56" label="Search completed payments" placeholder="Name, phone, bill no. or token…" value={q} onChange={setQ} />}
             {bills.length > 0 && <span className="hidden text-base font-semibold tabular-nums sm:inline">{formatRupees(bills.reduce((s, b) => s + b.paidPaise, 0))}</span>}
             <Input type="date" aria-label="Day" className="w-auto" value={data?.date ?? date} onChange={(e) => setDate(e.target.value)} />
           </div>
@@ -261,6 +283,8 @@ function CompletedPayments({ branch }: { branch: string }) {
         <Skeleton className="m-4 h-16" />
       ) : error ? (
         <p className="p-4 text-sm text-critical">{errorMessage(error)}</p>
+      ) : q && !found.length ? (
+        <EmptyState icon={ReceiptText} title={`Nothing matches “${q}”`} />
       ) : !bills.length ? (
         <EmptyState icon={ReceiptText} title="No completed payments on this day" description="Bills show here once they are paid in full." />
       ) : (
@@ -321,6 +345,9 @@ function ReceiveDialog({ branch, bill, onClose }: { branch: string; bill: BillLi
   const [amount, setAmount] = useState(String(balance / 100));
   const [mode, setMode] = useState<BillPaymentMode>('cash');
   const paise = toPaise(Number(amount) || 0);
+  // What the bill was for and what was paid when: the counter sees why the patient still owes.
+  const detail = useQuery({ queryKey: ['bill', branch, String(bill.id)], queryFn: () => api.get<{ bill: OpBill }>(`/b/${branch}/bills/${bill.id}`), staleTime: 0 });
+  const full = detail.data?.bill;
   const pay = useMutation({
     mutationFn: () => api.post<{ bill: OpBill }>(`/b/${branch}/bills/${bill.id}/payments`, { amountPaise: paise, mode }),
     onSuccess: ({ bill: paid }) => {
@@ -332,6 +359,57 @@ function ReceiveDialog({ branch, bill, onClose }: { branch: string; bill: BillLi
   });
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()} title="Receive payment" description={`${bill.patientName} · bill ${bill.billNo} · ${formatRupees(balance)} due`}>
+      <div className="mb-4 rounded-lg border border-border text-sm">
+        {!full ? (
+          <p className="px-3 py-3 text-muted">Loading the bill…</p>
+        ) : (
+          <>
+            <div className="flex justify-between border-b border-border bg-subtle/50 px-3 py-1.5 text-xs font-semibold text-muted uppercase">
+              <span>
+                Bill {full.billNo} · {fmtDate(full.createdAt)}
+              </span>
+              <span>{bill.opNo}</span>
+            </div>
+            <ul className="divide-y divide-border">
+              {full.consultationFeePaise > 0 && (
+                <li className="flex justify-between px-3 py-1.5">
+                  <span>Consultation</span>
+                  <span className="tabular-nums">{formatRupees(full.consultationFeePaise)}</span>
+                </li>
+              )}
+              {full.lines.map((l) => (
+                <li key={l.id} className="flex justify-between gap-3 px-3 py-1.5">
+                  <span>{l.description}</span>
+                  <span className="tabular-nums">{formatRupees(l.amountPaise)}</span>
+                </li>
+              ))}
+              {full.discountPaise > 0 && (
+                <li className="flex justify-between px-3 py-1.5 text-positive">
+                  <span>Discount</span>
+                  <span className="tabular-nums">− {formatRupees(full.discountPaise)}</span>
+                </li>
+              )}
+              <li className="flex justify-between px-3 py-1.5 font-semibold">
+                <span>Bill total</span>
+                <span className="tabular-nums">{formatRupees(full.totalPaise)}</span>
+              </li>
+              {full.payments.map((p) => (
+                <li key={p.id} className="flex justify-between px-3 py-1.5 text-muted">
+                  <span>
+                    Paid {fmtDate(p.receivedAt)} · {modeLabel[p.mode]}
+                    {p.receivedByName ? ` · ${p.receivedByName}` : ''}
+                  </span>
+                  <span className="tabular-nums">− {formatRupees(p.amountPaise)}</span>
+                </li>
+              ))}
+              <li className="flex justify-between bg-warning-soft px-3 py-2 font-semibold text-warning">
+                <span>Still due</span>
+                <span className="tabular-nums">{formatRupees(balance)}</span>
+              </li>
+            </ul>
+          </>
+        )}
+      </div>
       <form
         className="grid grid-cols-2 gap-3"
         onSubmit={(e) => {

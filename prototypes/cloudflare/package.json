@@ -1,0 +1,14 @@
+{
+  "name": "hms-cloudflare-prototype",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway prototype: does HMS run on one Cloudflare Worker + one Durable Object (SQLite) per hospital? Not part of the app.",
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "dev": "wrangler dev --port 8787",
+    "check": "node check.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.2"
+  }
+}

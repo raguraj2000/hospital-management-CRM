@@ -2,7 +2,9 @@
 // (pharmacy reports) and the dashboard (a doctor's own patients).
 import { useQuery } from '@tanstack/react-query';
 import { formatRupees } from '@platform/shared';
-import { Card, CardHeader, cn, Skeleton, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
+import { useState } from 'react';
+import { CalendarRange } from 'lucide-react';
+import { Button, Card, CardHeader, cn, Input, Skeleton, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { Link } from 'react-router';
 import { fmtDateTime, fmtDay } from './format';
@@ -13,23 +15,56 @@ export const PERIODS = [
   { days: 30, label: '30 days' },
   { days: 365, label: '1 year' },
 ] as const;
-export type PeriodDays = (typeof PERIODS)[number]['days'];
+/** A report's period: today / 7 / 30 / 365 days ending today, or two chosen dates (both included). */
+export type PeriodDays = number | { from: string; to: string };
+/** What the report endpoints take: "days=7" or "from=2026-10-06&to=2026-10-09". */
+export const periodQuery = (p: PeriodDays) => (typeof p === 'number' ? `days=${p}` : `from=${p.from}&to=${p.to}`);
+const short = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
-/** Today · 7 days · 30 days · 1 year. */
+/** Today · 7 days · 30 days · 1 year · Pick dates (from – to, e.g. 4 days of last week). */
 export function PeriodPicker({ value, onChange, className }: { value: PeriodDays; onChange: (days: PeriodDays) => void; className?: string }) {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState(typeof value === 'number' ? today : value.from);
+  const [to, setTo] = useState(typeof value === 'number' ? today : value.to);
+  const custom = typeof value !== 'number';
+  const btn = (on: boolean) => cn('h-8 rounded-md px-3 text-sm font-medium transition-colors', on ? 'bg-primary text-primary-foreground' : 'text-muted hover:bg-subtle hover:text-ink');
   return (
-    <div role="group" aria-label="Period" className={cn('inline-flex rounded-lg border border-border bg-surface p-0.5', className)}>
-      {PERIODS.map((p) => (
-        <button
-          key={p.days}
-          type="button"
-          aria-pressed={value === p.days}
-          onClick={() => onChange(p.days)}
-          className={cn('h-8 rounded-md px-3 text-sm font-medium transition-colors', value === p.days ? 'bg-primary text-primary-foreground' : 'text-muted hover:bg-subtle hover:text-ink')}
-        >
-          {p.label}
+    <div className={cn('flex flex-col items-end gap-2', className)}>
+      <div role="group" aria-label="Period" className="inline-flex flex-wrap rounded-lg border border-border bg-surface p-0.5">
+        {PERIODS.map((p) => (
+          <button key={p.days} type="button" aria-pressed={value === p.days} onClick={() => (onChange(p.days), setOpen(false))} className={btn(value === p.days)}>
+            {p.label}
+          </button>
+        ))}
+        <button type="button" aria-pressed={custom} aria-expanded={open} onClick={() => setOpen((o) => !o)} className={cn(btn(custom), 'inline-flex items-center gap-1.5')}>
+          <CalendarRange className="size-4" /> {custom ? (value.from === value.to ? short(value.from) : `${short(value.from)} – ${short(value.to)}`) : 'Pick dates'}
         </button>
-      ))}
+      </div>
+      {open && (
+        <form
+          className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-surface p-2 shadow-sm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (from && to) {
+              onChange(from <= to ? { from, to } : { from: to, to: from });
+              setOpen(false);
+            }
+          }}
+        >
+          <label className="text-xs text-muted">
+            From
+            <Input type="date" aria-label="From date" max={today} className="mt-0.5 w-auto" value={from} onChange={(e) => setFrom(e.target.value)} />
+          </label>
+          <label className="text-xs text-muted">
+            To
+            <Input type="date" aria-label="To date" max={today} className="mt-0.5 w-auto" value={to} onChange={(e) => setTo(e.target.value)} />
+          </label>
+          <Button type="submit" size="sm" disabled={!from || !to}>
+            Show
+          </Button>
+        </form>
+      )}
     </div>
   );
 }
@@ -52,7 +87,7 @@ export interface PeriodData {
   /** Only the caller's own line (a doctor without the billing pages). */
   own: boolean;
   doctors: DoctorLine[];
-  received?: { cash: number; upi: number; card: number; totalPaise: number; billsPaise: number; pharmacyOpPaise: number; pharmacyDirectPaise: number };
+  received?: { cash: number; upi: number; card: number; totalPaise: number; billsPaise: number; pharmacyOpPaise: number; pharmacyDirectPaise: number; pharmacyRoundOffPaise?: number };
   billed?: { consultationPaise: number; labPaise: number; otherPaise: number; roundOffPaise?: number; discountPaise: number; bills: number; duePaise: number };
   expensesPaise?: number;
   vendorPaidPaise?: number;
@@ -60,8 +95,8 @@ export interface PeriodData {
   newPatients?: number;
   discounts?: { billId: number; billNo: string; at: string; patientName: string; discountPaise: number; roundOffPaise: number; totalPaise: number }[];
 }
-export const usePeriodReport = (branch: string | undefined, days: number, enabled = true) =>
-  useQuery({ queryKey: ['collection', branch, 'period', days], queryFn: () => api.get<PeriodData>(`/b/${branch}/reports/period?days=${days}`), enabled: !!branch && enabled, staleTime: 15_000 });
+export const usePeriodReport = (branch: string | undefined, days: PeriodDays, enabled = true) =>
+  useQuery({ queryKey: ['collection', branch, 'period', periodQuery(days)], queryFn: () => api.get<PeriodData>(`/b/${branch}/reports/period?${periodQuery(days)}`), enabled: !!branch && enabled, staleTime: 15_000 });
 
 function Tile({ label, value, sub, strong }: { label: string; value: string; sub?: string; strong?: boolean }) {
   return (
@@ -138,7 +173,7 @@ export function PeriodSummary({ branch, days, pharmacyOnly }: { branch: string; 
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
           <Tile strong label="All medicine sales" value={formatRupees(medicines)} />
           <Tile label="To OP patients (on a prescription)" value={formatRupees(r.pharmacyOpPaise)} />
-          <Tile label="Direct sales over the counter" value={formatRupees(r.pharmacyDirectPaise)} />
+          <Tile label="Direct sales over the counter" value={formatRupees(r.pharmacyDirectPaise)} sub={r.pharmacyRoundOffPaise ? `+ ${formatRupees(r.pharmacyRoundOffPaise)} round off received on top` : undefined} />
         </div>
       </Card>
     );
@@ -164,7 +199,7 @@ export function PeriodSummary({ branch, days, pharmacyOnly }: { branch: string; 
           <Tile label="Medicines, direct sale" value={formatRupees(r.pharmacyDirectPaise)} />
         </div>
         <div className="grid grid-cols-2 gap-3 border-t border-border p-4 lg:grid-cols-5">
-          <Tile label="Round off added" value={formatRupees(b.roundOffPaise ?? 0)} sub="Extra from rounding bills up" />
+          <Tile label="Round off added" value={formatRupees(b.roundOffPaise ?? 0)} sub="Extra from rounding OP bills and direct sales up" />
           <Tile label="Discount given" value={formatRupees(b.discountPaise)} />
           <Tile label="Still due from patients" value={formatRupees(b.duePaise)} sub="On bills made in these days" />
           <Tile label="Paid to medicine vendors" value={formatRupees(data.vendorPaidPaise ?? 0)} />

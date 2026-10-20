@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { DatabaseBackup, Download, TriangleAlert, Upload } from 'lucide-react';
 import type { ApiErrorBody } from '@platform/shared';
 import { Button, Card, CardHeader, ConfirmDelete, toast } from '@platform/ui';
+import { useCan } from '@/state/auth';
 
 /** These two calls carry a file, not JSON, so they do not go through the JSON api client. */
 async function errorOf(res: Response): Promise<string> {
@@ -13,6 +14,7 @@ const sizeLabel = (bytes: number) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 
 /** Settings → Backup: download everything as one file, or put a backup file back (branch admin / owner). */
 export function BackupRestore({ branch }: { branch: string }) {
   const [downloading, setDownloading] = useState(false);
+  const canLog = useCan('audit.view');
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [lastFile, setLastFile] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -71,6 +73,14 @@ export function BackupRestore({ branch }: { branch: string }) {
           </Button>
           {lastFile && <p className="text-sm text-positive">Saved: {lastFile} (in this browser's Downloads folder).</p>}
           {downloadError && <p role="alert" className="text-sm font-medium text-critical">{downloadError}</p>}
+          <p className="border-t border-border pt-3 text-sm text-muted">
+            Automatic: a copy is made every day in C:\HMS\backups (last 14 days), and on a pendrive with an HMS-Backup folder when plugged in.
+          </p>
+          {canLog && (
+            <a href={`/api/b/${branch}/logs`} className="inline-flex text-sm font-medium text-brand hover:underline">
+              Download the error log (for support)
+            </a>
+          )}
         </div>
       </Card>
 

@@ -1,10 +1,10 @@
 import { and, eq } from 'drizzle-orm';
 import type { MiddlewareHandler } from 'hono';
-import { ALL_PERMISSIONS, type Permission } from '@platform/shared';
+import { ADMIN_ROLE_KEY, ipAllowed, MODULES, OWNER_PERMISSIONS, parseNetworks, withoutModules, type ModuleKey, type Permission } from '@platform/shared';
 import type { Db } from './db/index.js';
 import { branch, branchMember, role } from './db/schema.js';
 import { AppError, forbidden } from './errors.js';
-import { permissionsForRole, type AuthEnv } from './auth.js';
+import { orgLimits, permissionsForRole, type AuthEnv } from './auth.js';
 
 export interface BranchInfo {
   id: number;
@@ -13,9 +13,17 @@ export interface BranchInfo {
   codePrefix: string;
   roleName: string;
   permissions: Permission[];
+  /** Switched off for this hospital by the platform admin. */
+  modulesOff: ModuleKey[];
 }
 
 export type BranchEnv = AuthEnv & { Variables: AuthEnv['Variables'] & { branch: BranchInfo } };
+
+/** The caller's address as the server's socket sees it (never a header: those can be typed by anyone). */
+export function clientIp(c: { env: unknown }): string | null {
+  const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
+  return env?.incoming?.socket?.remoteAddress ?? null;
+}
 
 /**
  * THE branch gate. Mount on `/b/:branch/*` after requireAuth. It finds the
@@ -36,20 +44,36 @@ export function branchContext(db: Db): MiddlewareHandler<BranchEnv> {
       .limit(1);
     if (!b) throw notFound;
 
+    const { modulesOff } = await orgLimits(db, u.organizationId);
     let info: BranchInfo;
     if (u.isOwner) {
-      info = { id: b.id, slug: b.slug, name: b.name, codePrefix: b.codePrefix, roleName: 'Owner', permissions: [...ALL_PERMISSIONS] };
+      info = { id: b.id, slug: b.slug, name: b.name, codePrefix: b.codePrefix, roleName: 'Owner', permissions: withoutModules(OWNER_PERMISSIONS, modulesOff), modulesOff };
     } else {
       const [m] = await db
-        .select({ roleId: role.id, roleName: role.name })
+        .select({ roleId: role.id, roleName: role.name, roleKey: role.key })
         .from(branchMember)
         .innerJoin(role, eq(role.id, branchMember.roleId))
         .where(and(eq(branchMember.branchId, b.id), eq(branchMember.userId, u.id), eq(branchMember.isActive, true)))
         .limit(1);
       if (!m) throw notFound;
-      info = { id: b.id, slug: b.slug, name: b.name, codePrefix: b.codePrefix, roleName: m.roleName, permissions: await permissionsForRole(db, m.roleId) };
+      info = { id: b.id, slug: b.slug, name: b.name, codePrefix: b.codePrefix, roleName: m.roleName, permissions: withoutModules(await permissionsForRole(db, m.roleId, b.id), modulesOff), modulesOff };
+      // Network lock, on every request: only from the hospital's network, unless the role may work from anywhere.
+      // The owner and the branch admin never are locked out (they can always switch the lock off).
+      const networks = parseNetworks(b.allowedNetworks).list;
+      if (networks.length && m.roleKey !== ADMIN_ROLE_KEY && !info.permissions.includes('access.anywhere') && !ipAllowed(clientIp(c), networks)) {
+        throw new AppError(403, 'outside_network', `${b.name} can only be used on the hospital's network. Ask the owner if you need to work from outside.`);
+      }
     }
     c.set('branch', info);
+    await next();
+  };
+}
+
+/** Route guard for a module that has no permissions of its own: refused when this hospital has it switched off. */
+export function requireModule(key: ModuleKey): MiddlewareHandler<BranchEnv> {
+  const label = MODULES.find((m) => m.key === key)?.label ?? key;
+  return async (c, next) => {
+    if (c.get('branch').modulesOff.includes(key)) throw new AppError(403, 'module_off', `${label} is not switched on for this hospital. Please contact support.`);
     await next();
   };
 }

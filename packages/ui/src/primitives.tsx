@@ -217,8 +217,8 @@ export function TR({ className, onOpen, onClick, children, ...props }: HTMLAttri
       {...props}
     >
       {children}
-      {/* Sticky, so the arrow stays in view when a wide table scrolls sideways on a phone. */}
-      <td aria-hidden className="sticky right-0 w-10 bg-surface pr-3 pl-1 align-middle transition-colors group-hover:bg-subtle group-active:bg-subtle">
+      {/* Sticky on a phone, so the arrow stays in view when a wide table scrolls sideways; never over a row's buttons on a computer. */}
+      <td aria-hidden className="sticky right-0 w-10 bg-surface pr-3 pl-1 align-middle md:static transition-colors group-hover:bg-subtle group-active:bg-subtle">
         <ChevronRight className="ml-auto size-5 text-muted group-hover:text-ink" />
       </td>
     </tr>

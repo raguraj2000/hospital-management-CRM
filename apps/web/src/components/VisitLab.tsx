@@ -103,7 +103,7 @@ export function VisitLab({ branch, visit, onOrdered }: { branch: string; visit: 
           ))}
         </ul>
       )}
-      {canOrder && visit.status !== 'cancelled' && (
+      {canOrder && visit.status !== 'cancelled' && visit.status !== 'completed' && (
         <div className="border-t border-border p-4">
           <div className="mb-2 text-sm font-medium">Order tests</div>
           {tests.data?.tests.length === 0 ? (

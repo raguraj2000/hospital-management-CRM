@@ -440,7 +440,11 @@ export interface CheckoutQueueEntry {
   patientPhone?: string | null;
   doctorName: string | null;
   /** Made without the doctor: by "Direct lab test" or by "Create bill". */
-  direct?: 'lab' | 'bill' | null;
+  direct?: 'lab' | 'bill' | 'course' | null;
+  /** A course sitting: "Dengue course · Day 2 evening". */
+  courseLabel?: string | null;
+  /** Still with the doctor or at the lab, sample taken: the lab (with the fee) is paid in advance; medicines come later. */
+  labAdvance?: boolean;
   /** Pending prescription lines and what they cost. */
   medicinesWaiting: number | null;
   medicinesPaise: number | null;

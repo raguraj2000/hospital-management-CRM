@@ -181,7 +181,7 @@ export function Dashboard() {
               <THead>
                 <tr>
                   <TH>Patient</TH>
-                  <TH className="hidden sm:table-cell lg:hidden xl:table-cell">Phone</TH>
+                  <TH className="hidden sm:table-cell lg:hidden 2xl:table-cell">Phone</TH>
                   <TH className="text-right">Added</TH>
                   <TH />
                 </tr>
@@ -198,7 +198,7 @@ export function Dashboard() {
                         </span>
                       </Link>
                     </TD>
-                    <TD className="hidden whitespace-nowrap text-muted tabular-nums sm:table-cell lg:hidden xl:table-cell">{formatPhone(p.phone)}</TD>
+                    <TD className="hidden whitespace-nowrap text-muted tabular-nums sm:table-cell lg:hidden 2xl:table-cell">{formatPhone(p.phone)}</TD>
                     <TD className="text-right">
                       <Badge>{new Date(p.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' })}</Badge>
                     </TD>

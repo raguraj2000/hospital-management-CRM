@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseNetworks } from './network.js';
 import { dispenseQuantitiesSchema } from './billing.js';
 
 // ---------------------------------------------------------------------------
@@ -6,7 +7,7 @@ import { dispenseQuantitiesSchema } from './billing.js';
 // school, ...) adds its own list. A role is just a set of these strings.
 // ---------------------------------------------------------------------------
 
-export const CORE_PERMISSIONS = ['users.manage', 'settings.manage', 'audit.view'] as const;
+export const CORE_PERMISSIONS = ['users.manage', 'settings.manage', 'audit.view', 'access.anywhere'] as const;
 
 export const CLINIC_PERMISSIONS = [
   'dashboard.view',
@@ -18,6 +19,8 @@ export const CLINIC_PERMISSIONS = [
   'lab.order',
   'billing.receive',
   'lab.view',
+  // Change a lab report after it was completed (with a reason; the print says "Corrected on ...").
+  'lab.correct',
   'pharmacy.sell',
   'inventory.view',
   'inventory.manage',
@@ -25,6 +28,8 @@ export const CLINIC_PERMISSIONS = [
   'treatment.give',
   // Money reports: Billing > Payment reports, Pharmacy > Pharmacy reports, every doctor's line on the dashboard.
   'reports.view',
+  // For people at ease with the computer: Collect, Send, Register... happen at once, without the 5-second Undo wait.
+  'undo.skip',
 ] as const;
 
 /** Only this role (and the owner) may ever hold these: managing staff and roles. */
@@ -32,7 +37,41 @@ export const ADMIN_ROLE_KEY = 'branch_admin';
 export const ADMIN_ONLY_PERMISSIONS = ['users.manage', 'settings.manage'] as const;
 
 export const ALL_PERMISSIONS = [...CORE_PERMISSIONS, ...CLINIC_PERMISSIONS] as const;
+/** Given only by ticking them on a role: not part of a new branch admin role's "everything". */
+export const OPT_IN_PERMISSIONS: readonly string[] = ['undo.skip', 'access.anywhere'];
+/** What the owner has: everything (the owner skips the 5-second Undo too). */
+export const OWNER_PERMISSIONS = [...ALL_PERMISSIONS];
 export type Permission = (typeof ALL_PERMISSIONS)[number];
+
+/**
+ * The menu counts: the small number next to a page of the side menu, and what it counts (one name everywhere:
+ * the menu, its hover text, the tabs of the page and Settings > Branch settings > Menu counts).
+ */
+export const MENU_COUNTS = [
+  { key: 'visits', page: 'OP visits', name: 'Waiting for the doctor', meaning: "Today's patients waiting, with the doctor or at the lab" },
+  { key: 'billing', page: 'Billing', name: 'To collect', meaning: 'Patients the counter still has to collect from' },
+  { key: 'pharmacy', page: 'Pharmacy', name: 'Medicines to give out', meaning: 'Patients waiting for their medicines' },
+  { key: 'lab', page: 'Lab', name: 'Tests to do', meaning: 'Lab tests ordered and not completed yet' },
+  { key: 'treatments', page: "Today's treatments", name: 'Treatments due today', meaning: 'Course sittings and doses still to give today' },
+] as const;
+
+/**
+ * Parts of HMS the platform admin can switch off for one hospital. Off = its permissions are taken away from
+ * everyone there (owner included), so its pages hide and its server routes refuse. Billing and Pharmacy stay on:
+ * checkout and prescribing depend on them.
+ */
+export const MODULES = [
+  { key: 'lab', label: 'Lab', permissions: ['lab.order', 'lab.view', 'lab.correct'] },
+  { key: 'courses', label: 'Treatment courses', permissions: [] },
+] as const satisfies readonly { key: string; label: string; permissions: readonly Permission[] }[];
+export type ModuleKey = (typeof MODULES)[number]['key'];
+export const MODULE_KEYS = MODULES.map((m) => m.key) as [ModuleKey, ...ModuleKey[]];
+
+/** The permissions left when these modules are switched off. */
+export function withoutModules(permissions: readonly Permission[], off: readonly string[]): Permission[] {
+  const gone = new Set<string>(MODULES.filter((m) => off.includes(m.key)).flatMap((m) => [...m.permissions]));
+  return permissions.filter((p) => !gone.has(p));
+}
 
 export function isPermission(value: string): value is Permission {
   return (ALL_PERMISSIONS as readonly string[]).includes(value);
@@ -46,7 +85,7 @@ export const DEFAULT_ROLES: { key: string; name: string; permissions: Permission
   {
     key: 'branch_admin',
     name: 'Branch admin',
-    permissions: ALL_PERMISSIONS.filter((p) => p !== 'audit.view'),
+    permissions: OWNER_PERMISSIONS.filter((p) => p !== 'audit.view' && !OPT_IN_PERMISSIONS.includes(p)),
   },
   {
     key: 'doctor',
@@ -101,7 +140,8 @@ export interface MeBranch {
 
 export interface MeResponse {
   user: { id: number; name: string; mobile: string; isOwner: boolean; isPlatformAdmin: boolean };
-  organization: { id: number; name: string };
+  /** Limits set by the platform admin: null = no limit. */
+  organization: { id: number; name: string; modulesOff: ModuleKey[]; maxBranches: number | null; maxStaff: number | null; plan: { paidUntil: string | null; graceDays: number } };
   branches: MeBranch[];
 }
 
@@ -147,6 +187,8 @@ export interface RoleInfo {
   key: string;
   name: string;
   permissions: Permission[];
+  /** In one branch: the owner set this branch's own list (else it is the role's list, the same in every branch). */
+  custom?: boolean;
 }
 
 export const branchInputSchema = z.object({
@@ -159,7 +201,19 @@ export const branchInputSchema = z.object({
   address: z.string().trim().max(300).transform((v) => (v === '' ? null : v)).nullable().optional(),
   phone: z.string().trim().max(30).transform((v) => (v === '' ? null : v)).nullable().optional(),
 });
-export const updateBranchSchema = branchInputSchema.omit({ slug: true }).partial();
+export const updateBranchSchema = branchInputSchema
+  .omit({ slug: true })
+  .partial()
+  .extend({
+    /** Network lock: the hospital's networks, one per line ("192.168.1.0/24"); empty = off. */
+    allowedNetworks: z
+      .string()
+      .max(500)
+      .nullable()
+      .optional()
+      .transform((v) => (v == null ? v : parseNetworks(v).list.join('\n') || null))
+      .refine((v) => v == null || parseNetworks(v).bad.length === 0, { message: 'Write each network like 192.168.1.0/24 or 192.168.1.20' }),
+  });
 export type BranchInput = z.input<typeof branchInputSchema>;
 
 export interface BranchInfo {
@@ -170,9 +224,11 @@ export interface BranchInfo {
   phone: string | null;
   isActive: boolean;
   staffCount: number;
+  /** Network lock: the allowed networks, one per line; null = off. */
+  allowedNetworks: string | null;
 }
 
-export const rolePermissionsSchema = z.object({ permissions: z.array(z.string()) });
+export const rolePermissionsSchema = z.object({ permissions: z.array(z.string()), /** Owner, "All branches": every branch follows this list. */ allBranches: z.boolean().optional() });
 
 /** Settings → Owner: the owner's own name and login mobile, and the organization's name. */
 export const ownerDetailsSchema = z.object({
@@ -187,6 +243,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'users.manage': 'Manage staff',
   'settings.manage': 'Branch settings',
   'audit.view': 'View audit log',
+  'access.anywhere': 'Work from outside the hospital network',
   'dashboard.view': 'Dashboard',
   'patient.view': 'View patients & visits',
   'patient.create': 'Register patients & start visits',
@@ -196,7 +253,9 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'lab.order': 'Order lab tests',
   'billing.receive': 'Billing & payments',
   'reports.view': 'Reports: payment & pharmacy reports',
+  'undo.skip': 'Skip the 5-second Undo (for people at ease with the computer)',
   'lab.view': 'Lab queue',
+  'lab.correct': 'Correct completed lab results (with a reason)',
   'treatment.give': 'Give treatments (tick doses given in the hospital)',
   'pharmacy.sell': 'Pharmacy: dispense & sell',
   'inventory.view': 'View medicines & stock',
@@ -235,6 +294,10 @@ export const medicineInputSchema = z.object({
   strength: z.string().trim().max(40).transform((v) => (v === '' ? null : v)).nullable().optional(),
   pricePaise: z.number({ error: 'Enter the price' }).int().min(0, 'Enter the price').max(10_000_000),
   reorderLevel: z.number().int().min(0).max(100_000).optional(),
+  /** The usual line when a doctor picks it: dose, instruction, days (all optional). */
+  defaultDose: z.string().trim().max(40).transform((v) => (v === '' ? null : v)).nullable().optional(),
+  defaultInstructions: z.string().trim().max(200).transform((v) => (v === '' ? null : v)).nullable().optional(),
+  defaultDays: z.number().int().min(1, 'At least 1 day').max(365).nullable().optional(),
 });
 export type MedicineInput = z.output<typeof medicineInputSchema>;
 
@@ -245,6 +308,9 @@ export interface Medicine {
   strength: string | null;
   pricePaise: number;
   reorderLevel: number;
+  defaultDose: string | null;
+  defaultInstructions: string | null;
+  defaultDays: number | null;
   /** Units in stock that have not expired. */
   stock: number;
   /** Earliest expiry among batches still in stock. */
@@ -349,6 +415,23 @@ export const prescriptionItemSchema = z.object({
   /** Given in the hospital, dose by dose (an injection, a drip): the nurse ticks each dose on the Treatments page. */
   givenHere: z.boolean().optional(),
 });
+/** A new order for a list (drag and drop): every id of it, in the new order. */
+export const reorderSchema = z.object({ ids: z.array(z.number().int().positive()).min(1).max(500) });
+
+/** A note or an instruction between the medicines of a prescription (never sold or billed). */
+export const prescriptionNoteSchema = z.object({
+  kind: z.enum(['note', 'instruction']),
+  text: z.string().trim().min(1, 'Type the note').max(300),
+  /** The medicine it comes after; null = at the top. */
+  afterItemId: z.number().int().positive().nullable().optional(),
+});
+export interface PrescriptionNote {
+  id: number;
+  kind: 'note' | 'instruction';
+  text: string;
+  afterItemId: number | null;
+}
+
 /** Changing a line already on the prescription (also one a bookmark put there): the medicine itself stays. */
 export const prescriptionItemEditSchema = prescriptionItemSchema.omit({ medicineId: true, givenHere: true });
 export type PrescriptionItemInput = z.output<typeof prescriptionItemSchema>;
@@ -361,6 +444,8 @@ export type PrescriptionStatus = (typeof PRESCRIPTION_STATUSES)[number];
 export interface PrescriptionSuggestions {
   doses: string[];
   instructions: string[];
+  /** Each medicine's usual line: how it was written the last time (filled in when the doctor picks it). */
+  usual: { medicineId: number; dose: string; instructions: string | null; days: number }[];
 }
 
 export interface PrescriptionItem {
@@ -536,6 +621,8 @@ export const directSaleSchema = z.object({
     }),
   paymentMode: z.enum(PAYMENT_MODES),
   patientId: z.number().int().positive().nullable().optional(),
+  /** Added on top so the customer pays a round figure. 1000 = ROUND_OFF_MAX_PAISE of billing.ts (not imported: that file imports this one). */
+  roundOffPaise: z.number().int().min(0).max(1000, 'Round off can be ₹10 at most').optional(),
 });
 
 export interface PharmacyQueueEntry {
@@ -577,7 +664,9 @@ export interface PharmacySaleDetail {
   /** UTC, ISO 8601. */
   createdAt: string;
   paymentMode: PaymentMode;
+  /** What was paid: the lines plus the round off. */
   totalPaise: number;
+  roundOffPaise: number;
   soldByName: string | null;
   /** null for a walk-in customer. */
   patient: { name: string; uhid: string; phone?: string | null } | null;
@@ -679,6 +768,8 @@ export const labResultsSchema = z.object({
   complete: z.boolean().optional(),
   /** Lines the lab unticked "Required" on for this one result: they may stay empty when completing. */
   notRequired: z.array(z.number().int().positive()).max(200).optional(),
+  /** Changing a completed test: why (needs "Correct completed lab results"). */
+  reason: z.string().trim().max(200).optional(),
 });
 
 export interface LabReportParameter {
@@ -705,6 +796,8 @@ export interface LabReportTest {
   status: LabOrderStatus;
   sampleCollectedAt: string | null;
   completedAt: string | null;
+  /** Changed after it was completed: when (the last time). */
+  correctedAt: string | null;
   parameters: LabReportParameter[];
 }
 
@@ -1142,6 +1235,80 @@ export const newCustomerSchema = z.object({
 });
 export type NewCustomerInput = z.input<typeof newCustomerSchema>;
 
+/** Platform admin: what one hospital may have. null = no limit. */
+export const customerLimitsSchema = z
+  .object({
+    maxBranches: z.number().int().min(1, 'At least 1 branch').max(100).nullable(),
+    maxStaff: z.number().int().min(1, 'At least 1 staff member').max(5000).nullable(),
+    modulesOff: z.array(z.enum(MODULE_KEYS)).max(MODULE_KEYS.length),
+  })
+  .partial();
+export type CustomerLimitsInput = z.input<typeof customerLimitsSchema>;
+
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose a date');
+
+/** Platform admin: the hospital's plan. paidUntil null = not billed (never suspended for payment). */
+export const customerPlanSchema = z
+  .object({
+    planName: z.string().trim().max(60).transform((v) => (v === '' ? null : v)).nullable(),
+    yearlyFeePaise: z.number().int().min(0).max(100_000_000),
+    paidUntil: day.nullable(),
+    graceDays: z.number().int().min(0).max(60),
+  })
+  .partial();
+/** One PATCH for both: limits and plan. */
+export const customerUpdateSchema = customerLimitsSchema.extend(customerPlanSchema.shape);
+
+/** "Mark paid": a payment for whole years (plans are yearly), continuing from where the last paid period ended. */
+export const platformPaymentSchema = z.object({
+  amountPaise: z.number().int().min(1, 'Enter the amount').max(100_000_000),
+  years: z.number().int().min(1, 'At least 1 year').max(3),
+  paidOn: day,
+  note: z.string().trim().max(200).optional(),
+});
+export type PlatformPaymentInput = z.input<typeof platformPaymentSchema>;
+
+/** Owner help (super admin panel): a temporary password for the owner, or another person of the hospital as owner. */
+export const ownerPasswordResetSchema = z.object({ password: z.string().min(8, 'Use at least 8 characters').max(200) });
+export const ownerChangeSchema = z.object({ userId: z.number({ error: 'Choose who becomes the owner' }).int().positive() });
+
+export interface OwnerHelp {
+  owner: { id: number; name: string; mobile: string | null; lastSignInAt: string | null; lockedUntil: string | null } | null;
+  /** Active people of the hospital who could become the owner. */
+  candidates: { id: number; name: string; mobile: string | null }[];
+}
+
+export interface PlatformPayment {
+  id: number;
+  amountPaise: number;
+  paidOn: string;
+  periodFrom: string;
+  periodTo: string;
+  note: string | null;
+  createdAt: string;
+}
+
+/** YYYY-MM-DD plus whole days. */
+export function addDaysIso(dayIso: string, n: number): string {
+  return new Date(Date.parse(`${dayIso}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** The last day of `months` months starting on `from`: 15 Jan + 1 month -> 14 Feb; 31 Jan + 1 month -> 27 Feb (the next starts 28 Feb). */
+export function periodEnd(from: string, months: number): string {
+  const [y, m, d] = from.split('-').map(Number) as [number, number, number];
+  const lastOfTarget = new Date(Date.UTC(y, m - 1 + months + 1, 0)).getUTCDate();
+  const sameDay = new Date(Date.UTC(y, m - 1 + months, Math.min(d, lastOfTarget)));
+  return addDaysIso(sameDay.toISOString().slice(0, 10), -1);
+}
+
+/** Where a hospital's plan stands today: shown to you (console) and to its owner (banner). */
+export function planStatus(paidUntil: string | null, graceDays: number, today: string): { state: 'unbilled' | 'paid' | 'due_soon' | 'overdue'; daysLeft: number | null; suspendOn: string | null } {
+  if (!paidUntil) return { state: 'unbilled', daysLeft: null, suspendOn: null };
+  const daysLeft = Math.round((Date.parse(`${paidUntil}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  const suspendOn = addDaysIso(paidUntil, graceDays + 1); // at the midnight that starts this day
+  return { state: daysLeft < 0 ? 'overdue' : daysLeft <= 7 ? 'due_soon' : 'paid', daysLeft, suspendOn };
+}
+
 export interface Customer {
   id: number;
   name: string;
@@ -1153,4 +1320,13 @@ export interface Customer {
   patients: number;
   ownerName: string | null;
   ownerMobile: string | null;
+  maxBranches: number | null;
+  maxStaff: number | null;
+  modulesOff: ModuleKey[];
+  planName: string | null;
+  yearlyFeePaise: number;
+  paidUntil: string | null;
+  graceDays: number;
 }
+export * from './course.js';
+export * from './network.js';

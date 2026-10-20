@@ -22,6 +22,7 @@ import {
 } from '@platform/shared';
 import { AppError, forbidden, notFound, printHeaderOf, requireAnyPermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
+import { sittingLabel } from './courses.js';
 import { localToday, settledAtCounter, visitsToCollect, withToken, assertPatientActive } from '../lib/clinic.js';
 import { billOf, consultationFee, createBill, pendingVisitCharges, visitFee, labPaymentState, payBill, unbilledLabOrders, updateBill } from './billing.js';
 import { dispenseItems, prescriptionLines, saleDetail } from './pharmacy.js';
@@ -73,6 +74,8 @@ async function billState(db: Db | Tx, branchId: number, visitId: number) {
   return { bills, open, unbilled, waiting, willCreate: !open && (bills.length === 0 || unbilled.length > 0 || waiting.length > 0) };
 }
 
+/** Today's patient still waiting, with the doctor or at the lab: the prescription is not finished (only a lab advance is paid). */
+const doctorNotDone = (v: { status: string; visitDate: string }, today: string) => v.visitDate === today && (v.status === 'waiting' || v.status === 'with_doctor' || v.status === 'at_lab');
 const pendingOf = (visitId: number) => and(eq(prescriptionItem.visitId, visitId), eq(prescriptionItem.status, 'pending'));
 
 export function createCheckoutRoutes(db: Db) {
@@ -110,7 +113,9 @@ export function createCheckoutRoutes(db: Db) {
       };
     }
 
-    const medicines = b.permissions.includes('pharmacy.sell') ? { items: await prescriptionLines(db, b.id, await localToday(db), pendingOf(v.id)), pharmacyNote: v.pharmacyNote } : null;
+    // Still with the doctor (paying the lab in advance): the prescription is not finished, nothing is given out yet.
+    const beforeCounter = doctorNotDone(v, await localToday(db));
+    const medicines = b.permissions.includes('pharmacy.sell') ? { items: beforeCounter ? [] : await prescriptionLines(db, b.id, await localToday(db), pendingOf(v.id)), pharmacyNote: v.pharmacyNote } : null;
     const medicinesPaise = medicines?.items.reduce((s, i) => s + i.quantity * i.pricePaise, 0) ?? 0;
     const billDuePaise = bill?.duePaise ?? 0;
     const result: VisitCheckout = {
@@ -150,7 +155,8 @@ export function createCheckoutRoutes(db: Db) {
     if (!canBill && !itemIds.length) throw new AppError(400, 'validation', 'Tick at least one medicine', { itemIds: ['Tick at least one medicine'] });
 
     const v = await visitHeader(db, b.id, Number(c.req.param('visitId')));
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    if (v.status === 'cancelled') throw new AppError(409, 'visit_cancelled', 'This visit was cancelled');
+    if (itemIds.length && doctorNotDone(v, await localToday(db))) throw new AppError(409, 'bad_state', 'The doctor is not done yet: medicines are given after the doctor sends the patient out');
     await assertPatientActive(db, b.id, v.patientId);
     const today = await localToday(db);
     const amountError = (msg: string) => new AppError(400, 'validation', msg, { amountPaise: [msg] });
@@ -183,8 +189,10 @@ export function createCheckoutRoutes(db: Db) {
       }
       const billDuePaise = bills.reduce((s, x) => s + x.balancePaise, 0);
 
-      // 2. Medicines: the ticked lines are sold, the other pending ones are marked declined.
-      const sale = canSell ? await dispenseItems(tx, b.id, u, v, itemIds, paymentMode, today, quantities) : null;
+      // 2. Medicines: the ticked lines are sold, the other pending ones are marked declined -- not while the
+      // doctor is still writing them (a lab advance): they stay pending for the counter later.
+      const beforeCounter = doctorNotDone(v, today);
+      const sale = canSell && !beforeCounter ? await dispenseItems(tx, b.id, u, v, itemIds, paymentMode, today, quantities) : null;
       const medicinesPaise = sale?.totalPaise ?? 0;
 
       // 3. The money: medicines in full, the rest on the bill(s), oldest first.
@@ -248,7 +256,8 @@ export function createCheckoutRoutes(db: Db) {
       // Not billed yet: the fee, the extra charges waiting on the visit, and the lab tests.
       const toBillPaise = canBill ? (v.billCount === 0 ? (v.visitFeePaise ?? fee) : 0) + v.waitingChargePaise + v.unbilledLabPaise : null;
       const balancePaise = canBill ? v.balancePaise : null;
-      const billWaiting = canBill && (v.billCount === 0 || v.unbilledLabCount > 0 || v.waitingChargeCount > 0 || v.balancePaise > 0);
+      // Fresh to collect only (a part-paid bill with nothing new waits in Pending payments).
+      const billWaiting = canBill && (v.billCount === 0 || v.unbilledLabCount > 0 || v.waitingChargeCount > 0 || v.unpaidBillCount > 0);
       if (!billWaiting && !medicinesWaiting) continue; // nothing this caller can collect
       // With the round off the counter adds by itself (up to the next ₹5) when the bill can still carry it: the
       // amount on the closed card is the amount the pharmacist says to the patient.
@@ -256,6 +265,7 @@ export function createCheckoutRoutes(db: Db) {
       const roundable = canBill && (v.billCount === 0 || v.unbilledLabCount > 0 || v.waitingChargeCount > 0 || v.openBillCount > 0);
       const grandTotalPaise = beforeRound + (roundable ? autoRoundOffPaise(beforeRound) : 0);
       const summary = [
+        v.labAdvance ? 'Lab advance: the doctor is not done yet' : null,
         medicinesWaiting ? `Medicines waiting ${medicinesWaiting}` : null,
         toBillPaise ? `Consultation + lab due ${formatRupees(toBillPaise)}` : null,
         balancePaise ? `Balance due ${formatRupees(balancePaise)}` : null,
@@ -264,7 +274,7 @@ export function createCheckoutRoutes(db: Db) {
         .filter(Boolean)
         .join(' · ');
       const { visitId, opNo, token, visitDate, status, patientId, patientName, patientUhid, patientPhone, doctorName } = v;
-      queue.push({ visitId, opNo, token, visitDate, visitAt: v.visitAt, direct: v.complaint === DIRECT_LAB_COMPLAINT ? 'lab' : v.complaint === DIRECT_BILL_COMPLAINT ? 'bill' : null, status, patientId, patientName, patientUhid, patientPhone, doctorName, medicinesWaiting, medicinesPaise, toBillPaise, balancePaise, grandTotalPaise, summary });
+      queue.push({ visitId, opNo, token, visitDate, visitAt: v.visitAt, direct: v.complaint === DIRECT_LAB_COMPLAINT ? 'lab' : v.complaint === DIRECT_BILL_COMPLAINT ? 'bill' : v.courseName ? 'course' : null, courseLabel: v.courseName && v.courseCreatedAt && v.sittingDueAt ? `${v.courseName} course · ${sittingLabel(v.courseCreatedAt, v.sittingDueAt)}` : null, labAdvance: v.labAdvance, status, patientId, patientName, patientUhid, patientPhone, doctorName, medicinesWaiting, medicinesPaise, toBillPaise, balancePaise, grandTotalPaise, summary });
     }
     return c.json({ queue, today });
   });

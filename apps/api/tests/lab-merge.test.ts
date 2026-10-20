@@ -146,9 +146,10 @@ it('a test is completed only when every required line has a value; optional line
   const done = (await json(lab(`/api/b/main/visits/${visit.id}/lab-report`))).tests[0];
   expect(done.status).toBe('completed');
   expect(done.parameters.map((p: any) => p.value)).toEqual(['', '110', '5']);
-  // Afterwards: an optional line may be emptied, a required one may not.
-  expect((await put([{ parameterId: random.id, value: '' }], false)).status).toBe(200);
-  expect((await put([{ parameterId: quality.id, value: '' }], false)).status).toBe(400);
+  // Afterwards (a correction, by the owner with a reason): an optional line may be emptied, a required one may not.
+  const fix = (results: unknown) => owner(`/api/b/main/lab/orders/${rep.orderId}/results`, { method: 'PUT', body: { results, reason: 'Corrected' } });
+  expect((await fix([{ parameterId: random.id, value: '' }])).status).toBe(200);
+  expect((await fix([{ parameterId: quality.id, value: '' }])).status).toBe(400);
 });
 
 it('side-menu counts and the purchase profit report: right numbers, own branch only, hidden from roles without the page', async () => {
@@ -577,4 +578,27 @@ it('lab: packages at one price, paid tag in the queue, referred by, report by pe
   const r = await json(owner('/api/b/main/lab/report?days=1'));
   expect(r.tests.find((x: any) => x.testId === a)).toMatchObject({ count: 1, amountPaise: 24000 });
   expect((await lab('/api/b/main/lab/report')).status).toBe(403);
+});
+
+it('reports take chosen dates (?from=&to=), both ends included, in either order, at most 366 days', async () => {
+  const owner = await t.as('owner');
+  const r = await json(owner('/api/b/main/reports/period?from=2026-01-10&to=2026-01-13'));
+  expect(r).toMatchObject({ from: '2026-01-10', to: '2026-01-13', days: 4 });
+  expect(await json(owner('/api/b/main/reports/period?from=2026-01-13&to=2026-01-10'))).toMatchObject({ from: '2026-01-10', to: '2026-01-13' });
+  expect((await json(owner('/api/b/main/reports/period?from=2020-01-01&to=2026-01-01'))).days).toBe(366);
+  expect(await json(owner('/api/b/main/lab/report?from=2026-01-10&to=2026-01-13'))).toMatchObject({ from: '2026-01-10', to: '2026-01-13', tests: [] });
+  expect(await json(owner('/api/b/main/pharmacy/sales?from=2026-01-10&to=2026-01-13'))).toMatchObject({ from: '2026-01-10', to: '2026-01-13', sales: [] });
+  expect((await json(owner('/api/b/main/reports/period?from=bad&to=2026-01-13'))).days).toBe(1); // not a date: today
+});
+
+it('"Correct completed lab results": the branch admin role gets it once; the lab technician only when ticked', async () => {
+  const { addLabCorrectPermission } = await import('../src/lib/lab-merge.js');
+  const { sql } = await import('drizzle-orm');
+  await t.db.run(sql`delete from role_permission where permission = 'lab.correct'`);
+  expect(await addLabCorrectPermission(t.db)).toBe(1);
+  expect(await addLabCorrectPermission(t.db)).toBe(0); // marked as done: an owner who unticks it keeps it unticked
+  const owner = await t.as('owner');
+  const roles = (await json(owner('/api/b/main/roles'))).roles;
+  expect(roles.find((r: any) => r.key === 'branch_admin').permissions).toContain('lab.correct');
+  expect(roles.find((r: any) => r.key === 'lab_technician')?.permissions ?? []).not.toContain('lab.correct');
 });

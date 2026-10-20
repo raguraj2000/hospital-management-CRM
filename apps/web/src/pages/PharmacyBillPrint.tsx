@@ -78,6 +78,14 @@ export function PharmacyBillPrint() {
                   <td className="py-1.5 text-right tabular-nums">{printMoney(l.amountPaise)}</td>
                 </tr>
               ))}
+              {s.roundOffPaise > 0 && (
+                <tr>
+                  <td colSpan={5} className="py-1.5 text-right">
+                    Round off
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums">{printMoney(s.roundOffPaise)}</td>
+                </tr>
+              )}
               <tr className="border-t-2 border-[#111] text-[15px] font-bold">
                 <td colSpan={5} className="py-2 text-right">
                   Total

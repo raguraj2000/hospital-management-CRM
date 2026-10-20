@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import { config } from './config.js';
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, sql, type AnyColumn } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -18,11 +20,12 @@ import {
   type Db,
 } from '@platform/core';
 import type { Permission } from '@platform/shared';
-import { billPayment, labOrder, medicine, medicineBatch, opBill, opVisit, patient, pharmacySale, treatmentDose } from './db/schema.js';
+import { billPayment, courseSitting, labOrder, medicine, medicineBatch, opBill, opVisit, patient, pharmacySale, treatmentCourse, treatmentDose } from './db/schema.js';
 import { visitsToCollect } from './lib/clinic.js';
 import { AUDIT_KEEP_DAYS } from './lib/audit-retention.js';
 import { createPatientRoutes } from './routes/patients.js';
 import { createTreatmentRoutes } from './routes/treatments.js';
+import { createCourseRoutes } from './routes/courses.js';
 import { createBookmarkRoutes } from './routes/bookmarks.js';
 import { createVisitRoutes } from './routes/visits.js';
 import { createDoctorRoutes } from './routes/doctors.js';
@@ -40,6 +43,10 @@ const NEAR_EXPIRY_DAYS = 30;
 const DASHBOARD_LIST_SIZE = 5;
 
 /** The whole API, without starting a server (tests call app.request directly). */
+/** Changes since the server started, per branch (see GET /changes). */
+const changeCount = new Map<number, number>();
+const BOOT = Date.now().toString(36);
+
 export function createApp(db: Db) {
   const app = new Hono();
   app.onError(handleError);
@@ -66,6 +73,17 @@ export function createApp(db: Db) {
   // Everything inside a branch: signed in + member of that branch.
   const b = new Hono<BranchEnv>();
   b.use('*', requireAuth(db), branchContext(db));
+  // "Has anything changed?": a number per branch that goes up after every successful change (any POST, PUT,
+  // PATCH, DELETE). Screens ask for it (tiny) instead of reloading their lists, and reload only when it moved.
+  // Kept in memory: after a restart it starts again with a new prefix, so every screen reloads once.
+  b.use('*', async (c, next) => {
+    await next();
+    if (c.req.method !== 'GET' && c.res.status < 400) {
+      const id = c.get('branch').id;
+      changeCount.set(id, (changeCount.get(id) ?? 0) + 1);
+    }
+  });
+  b.get('/changes', (c) => c.json({ version: `${BOOT}-${changeCount.get(c.get('branch').id) ?? 0}` }));
 
   b.get('/dashboard', requirePermission('dashboard.view'), async (c) => {
     const branchId = c.get('branch').id;
@@ -206,7 +224,7 @@ export function createApp(db: Db) {
     }
     if (can('billing.receive') || can('pharmacy.sell')) {
       const rows = await visitsToCollect(db, branchId, today);
-      if (can('billing.receive')) counts.billing = rows.filter((v) => v.billCount === 0 || v.unbilledLabCount > 0 || v.waitingChargeCount > 0 || v.balancePaise > 0 || (can('pharmacy.sell') && v.medicinesWaiting > 0)).length;
+      if (can('billing.receive')) counts.billing = rows.filter((v) => v.billCount === 0 || v.unbilledLabCount > 0 || v.waitingChargeCount > 0 || v.unpaidBillCount > 0 || (can('pharmacy.sell') && v.medicinesWaiting > 0)).length;
       if (can('pharmacy.sell')) counts.pharmacy = rows.filter((v) => v.medicinesWaiting > 0).length;
     }
     if (can('lab.view')) {
@@ -219,7 +237,13 @@ export function createApp(db: Db) {
     }
     if (can('treatment.give')) {
       const [r] = await db.select({ n }).from(treatmentDose).where(and(eq(treatmentDose.branchId, branchId), eq(treatmentDose.dueDate, today), isNull(treatmentDose.givenAt)));
-      counts.treatments = r!.n;
+      // Course sittings of today (India date) not done yet, of courses still going.
+      const [s] = await db
+        .select({ n })
+        .from(courseSitting)
+        .innerJoin(treatmentCourse, eq(treatmentCourse.id, courseSitting.courseId))
+        .where(and(eq(courseSitting.branchId, branchId), isNull(treatmentCourse.deletedAt), sql`${treatmentCourse.status} <> 'closed'`, inArray(courseSitting.status, ['planned', 'started']), sql`date(${courseSitting.dueAt}, '+330 minutes') = ${today}`));
+      counts.treatments = r!.n + s!.n;
     }
     return c.json({ enabled: true, counts });
   });
@@ -287,11 +311,44 @@ export function createApp(db: Db) {
   b.route('/', createBillingRoutes(db));
   b.route('/', createCheckoutRoutes(db));
   b.route('/', createTreatmentRoutes(db));
+  b.route('/', createCourseRoutes(db));
   b.route('/', createBookmarkRoutes(db));
   b.route('/', createBackupRoutes(db));
   b.route('/patients', createPatientRoutes(db));
 
+  /**
+   * The server's log, for support (owner only): the last 300 KB as a text file. Errors of the browser screens are
+   * in it too (see /client-error).
+   */
+  b.get('/logs', requirePermission('audit.view'), (c) => {
+    const file = config.logFile;
+    if (!file || !fs.existsSync(file)) return c.text('No log file on this computer yet.', 200);
+    const size = fs.statSync(file).size;
+    const fd = fs.openSync(file, 'r');
+    const len = Math.min(size, 300_000);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    fs.closeSync(fd);
+    c.header('content-disposition', `attachment; filename="hms-log-${new Date().toISOString().slice(0, 10)}.txt"`);
+    return c.text(buf.toString('utf8'));
+  });
+
   api.route('/b/:branch', b);
+
+  /**
+   * A screen crashed in someone's browser: one line in the server log, so it can be found later. Signed-in users
+   * only; short; at most 30 a minute for the whole server (a broken page cannot flood the log).
+   */
+  let clientErrors = { minute: 0, count: 0 };
+  api.post('/client-error', requireAuth(db), async (c) => {
+    const minute = Math.floor(Date.now() / 60_000);
+    if (clientErrors.minute !== minute) clientErrors = { minute, count: 0 };
+    if (++clientErrors.count > 30) return c.json({ ok: false }, 429);
+    const body = (await c.req.json().catch(() => ({}))) as { message?: unknown; stack?: unknown; url?: unknown };
+    const text = (v: unknown, max: number) => String(v ?? '').replace(/[\r\n]+/g, ' | ').slice(0, max);
+    console.error(`[browser] user ${c.get('user').id} · ${text(body.url, 200)} · ${text(body.message, 500)} · ${text(body.stack, 1500)}`);
+    return c.json({ ok: true });
+  });
   app.route('/api', api);
   return app;
 }

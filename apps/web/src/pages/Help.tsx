@@ -54,7 +54,7 @@ const GUIDES: Guide[] = [
       <>Finish: “Create prescription &amp; send to pharmacy” (<K>Alt</K>+<K>S</K>). Only now does the patient appear at the counter.</>,
     ],
     notes: [
-      <>“Given here in the hospital” on a medicine (an injection, a drip) puts every dose on the <B>Doses to give</B> page for the nurse.</>,
+      <>“Given here in the hospital” on a medicine (an injection, a drip) puts every dose on the <B>Today’s treatments</B> page for the nurse.</>,
       <>Long-term conditions (sugar, BP…) entered on the patient show in red at every visit.</>,
     ],
   },
@@ -75,9 +75,9 @@ const GUIDES: Guide[] = [
     id: 'nurse',
     title: 'Nurse: give the doses and tick them',
     who: 'Nurse (the doctor can do it too)',
-    page: { path: 'treatments', label: 'Doses to give' },
+    page: { path: 'treatments', label: 'Today’s treatments' },
     steps: [
-      <>Open <B>Doses to give</B> in the side menu. It lists every dose for today: time, patient, medicine.</>,
+      <>Open <B>Today’s treatments</B> in the side menu. It lists every dose for today: time, patient, medicine.</>,
       <>Give the dose, press “Given”, add a note if needed (for example “Left arm”), press “Yes, given”.</>,
       <>Gave everything on the list? Press “Mark all as given”, read the list, confirm.</>,
       <>Pressed by mistake? “Undo” puts the dose back to “To give”.</>,
@@ -105,6 +105,7 @@ const GUIDES: Guide[] = [
       <>Several tests for one patient: at the top of the print page, tick the tests that should start on a new page. The ticks are remembered for those tests on that computer.</>,
       <>Packages (several tests at one price): Lab → Tests &amp; prices → “New package”. They are ticked like a test when ordering. The queue shows “Paid” or “Not paid” on every test; Lab → Lab reports shows the tests done and what they brought in.</>,
       <>While typing results, each line shows the patient’s earlier results of the same test (“Earlier: …”). A lab-only visit can carry “Referred by” (an outside doctor); it prints on the report with the sample numbers.</>,
+      <>A completed test is locked. To change it, someone with “Correct completed lab results” (the owner and branch admin; tick it on another role in Settings → Roles) presses “Correct results” and writes why. The printed report then says when it was corrected.</>,
       <>Pressed “Sample collected” by mistake? Press “Undo sample” on that row. “Back to doctor” sends the patient to the doctor’s waiting list; the test stays in the queue until it is completed or cancelled.</>,
     ],
   },

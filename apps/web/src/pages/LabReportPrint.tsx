@@ -155,6 +155,14 @@ function Sheet({ data, tests }: { data: LabReport; tests: LabReportTest[] }) {
         <Kv k="Sample No." v={tests.map((t) => `S-${String(t.orderId).padStart(5, '0')}`).join(', ')} />
       </div>
 
+      {tests.some((t) => t.correctedAt) && (
+        <div className="mb-2 text-[11px] italic">
+          {tests
+            .filter((t) => t.correctedAt)
+            .map((t) => `${t.name}: corrected on ${printDateTime(t.correctedAt)}`)
+            .join(' · ')}
+        </div>
+      )}
       {tests.length === 0 ? (
         <p className="no-print py-10 text-center text-[#3f4a45]">No completed results yet. Enter the results and press "Save & complete" in the lab.</p>
       ) : (
