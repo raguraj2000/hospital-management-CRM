@@ -94,6 +94,20 @@ export class Hospital extends DurableObject<Env> {
       }
     });
 
+    // C: the Durable Object's ASYNC transaction — does it also undo SQL writes when the callback throws?
+    this.app.post('/sale-storage', async (c) => {
+      const { items } = await c.req.json<{ items: Item[] }>();
+      try {
+        await this.ctx.storage.transaction(async () => {
+          for (const it of items) await takeAsync(db, it);
+        });
+        return c.json({ ok: true }, 201);
+      } catch (e) {
+        if (e instanceof Short) return c.json({ error: e.message, code: 'out_of_stock' }, 409);
+        return c.json({ error: String(e) }, 500);
+      }
+    });
+
     // B: the Durable Object's own transactionSync — all or nothing, by the platform.
     this.app.post('/sale-sync', async (c) => {
       const { items } = await c.req.json<{ items: Item[] }>();

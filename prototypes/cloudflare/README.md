@@ -12,16 +12,20 @@ Run it: `npm install`, then `npm run dev` (local Cloudflare on :8787), then `BAS
 | The real HMS schema (`apps/api/src/db/schema.ts`) migrates inside a Durable Object | ✓ |
 | Two-item sale, second item short, written **as HMS writes it today** (`db.transaction(async tx => { await … })`) | ✗ refused, but the first item's stock was **not** put back |
 | The same sale with the Durable Object's `transactionSync` (synchronous Drizzle calls) | ✓ all or nothing |
+| The same sale, HMS's async code unchanged, inside the Durable Object's **async** `ctx.storage.transaction(async …)` | ✓ all or nothing (`/sale-storage`) |
 | 25 sales at the same moment, 10 in stock (both styles) | ✓ 10 sold, 15 refused, stock 0 (one hospital's requests run one at a time) |
 | Two hospitals are two separate databases | ✓ |
 | HMS password check (scrypt N=16384) | runs; ~40 ms per check locally — likely over the free plan's 10 ms CPU; real CPU shows only after a deploy |
 
 ## What it means for the move
 
-- Every `db.transaction(async …)` (52 in the API) must become a synchronous transaction on Cloudflare,
-  or it silently loses all-or-nothing. That is the main porting work, in the stock and money code.
-- To keep one codebase for Cloudflare and the offline pendrive (Node), the Node side would also need a
-  synchronous SQLite driver (e.g. better-sqlite3) instead of libsql — not tried yet.
+- Drizzle's own `db.transaction(async …)` silently loses all-or-nothing in a Durable Object. The fix is ONE
+  central wrapper: on Cloudflare, `db.transaction(fn)` runs `fn` inside `ctx.storage.transaction(async () => …)`.
+  The 54 transactions of the API stay as written (no rewrite), and the Node/pendrive server keeps libsql,
+  whose async transactions already roll back.
+- This rollback behaviour of the async storage transaction for SQL was found by test, not read in Cloudflare's
+  docs: keep a rollback test running against a Durable Object.
+- (Tried and undone 2026-10-20: switching Node to better-sqlite3 to force sync transactions — not needed.)
 - Concurrency is safer than today: a hospital's requests are serialized by the platform.
 
 ## Live on Cloudflare (free plan, new HMS account, 2026-10-20)

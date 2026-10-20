@@ -4,7 +4,7 @@ const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'content-
 const stock = async (h) => Object.fromEntries((await (await fetch(`${base}/h/${h}/stock`)).json()).stock.map((r) => [r.medicineId, r.left]));
 const tag = Date.now();
 
-for (const mode of ['async', 'sync']) {
+for (const mode of ['async', 'sync', 'storage']) {
   const h = `rollback-${mode}-${tag}`;
   const { medicines } = await (await post(`/h/${h}/seed`, { stock: 10 })).json();
   const [para, syrup] = medicines.map((m) => m.id);
@@ -14,7 +14,7 @@ for (const mode of ['async', 'sync']) {
   console.log(`[${mode}] two-item sale, second short -> ${r.status}; Paracetamol left ${s[para]} (must be 10): ${s[para] === 10 ? 'ROLLED BACK ✓' : 'NOT ROLLED BACK ✗'}`);
 }
 
-for (const mode of ['async', 'sync']) {
+for (const mode of ['async', 'sync', 'storage']) {
   const h = `race-${mode}-${tag}`;
   const { medicines } = await (await post(`/h/${h}/seed`, { stock: 10 })).json();
   const para = medicines[0].id;
