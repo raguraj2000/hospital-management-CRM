@@ -19,7 +19,7 @@ import {
   type LabTestDetail,
   type PatientLabOrder,
 } from '@platform/shared';
-import { AppError, notFound, printHeaderOf, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
+import { AppError, notFound, printHeaderOf, requireAnyPermission, requireModule, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { labOrder, labPackage, labResult, labTest, labTestParameter, opBill, opBillLine, opVisit, patient, user } from '../db/schema.js';
 import { assertVisitOpen, periodOf, patientOfBranch, textSearch, visitOfBranch, withToken, assertPatientActive } from '../lib/clinic.js';
 import { labPaymentState, onLabOrderCancel } from './billing.js';
@@ -344,7 +344,7 @@ export function createLabRoutes(db: Db) {
     if (found.length !== new Set(ids).size) throw new AppError(400, 'validation', 'Choose tests from this branch', { testIds: ['Choose tests from this branch'] });
   }
 
-  app.get('/lab/packages', requireAnyPermission('lab.view', 'lab.order', 'patient.create'), async (c) => c.json({ packages: await packagesOf(c.get('branch').id) }));
+  app.get('/lab/packages', requireModule('lab'), requireAnyPermission('lab.view', 'lab.order', 'patient.create'), async (c) => c.json({ packages: await packagesOf(c.get('branch').id) }));
 
   app.post('/lab/packages', requirePermission('settings.manage'), async (c) => {
     const parsed = labPackageSchema.safeParse(await c.req.json().catch(() => ({})));

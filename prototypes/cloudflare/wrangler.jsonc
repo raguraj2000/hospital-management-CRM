@@ -1,0 +1,12 @@
+// Throwaway prototype (see README.md). Local only until the user says deploy.
+{
+  "name": "hms-proto",
+  // The NEW HMS account: this PC has CLOUDFLARE_ACCOUNT_ID set to another account for other projects.
+  "account_id": "bc8509d94dbc0fc835d6bf44ed033c5c",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "HOSPITAL", "class_name": "Hospital" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hospital"] }],
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }]
+}

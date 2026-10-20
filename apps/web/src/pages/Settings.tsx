@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useParams, useSearchParams } from 'react-router';
-import { Building2, CircleUserRound, DatabaseBackup, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users, History, Bookmark, Syringe } from 'lucide-react';
+import { Building2, CircleUserRound, DatabaseBackup, KeyRound, MoreHorizontal, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserPlus, UserX, Users, History, Bookmark, Syringe, Wifi } from 'lucide-react';
 import {
   ADMIN_ONLY_PERMISSIONS,
   ADMIN_ROLE_KEY,
@@ -11,7 +11,9 @@ import {
   branchInputSchema,
   CLINIC_PERMISSIONS,
   CORE_PERMISSIONS,
+  ipAllowed,
   newStaffSchema,
+  parseNetworks,
   ownerDetailsSchema,
   PERMISSION_LABELS,
   resetPasswordSchema,
@@ -55,7 +57,7 @@ import {
   TR,
 } from '@platform/ui';
 import { api, ApiError, errorMessage } from '@/api/client';
-import { ME_KEY, useBranch, useCan, useMe } from '@/state/auth';
+import { ME_KEY, useBranch, useCan, useMe, useModuleOn } from '@/state/auth';
 import { BranchSettings } from '@/components/BranchSettings';
 import { BackupRestore } from '@/components/BackupRestore';
 import { AuditLog } from '@/components/AuditLog';
@@ -66,6 +68,7 @@ export function Settings() {
   const { data: me } = useMe();
   const canStaff = useCan('users.manage');
   const canHeader = useCan('settings.manage');
+  const coursesOn = useModuleOn('courses');
   const canAudit = useCan('audit.view');
   const canPrescribe = useCan('prescription.write');
   const current = useBranch();
@@ -105,7 +108,7 @@ export function Settings() {
                 <Bookmark className="size-4" /> Bookmarks
               </TabsTrigger>
             )}
-            {canHeader && (
+            {canHeader && coursesOn && (
               <TabsTrigger value="course-templates">
                 <Syringe className="size-4" /> Course templates
               </TabsTrigger>
@@ -151,7 +154,7 @@ export function Settings() {
               <BookmarkList branch={current.slug} />
             </TabsContent>
           )}
-          {canHeader && current && (
+          {canHeader && coursesOn && current && (
             <TabsContent value="course-templates">
               <CourseTemplates branch={current.slug} />
             </TabsContent>
@@ -503,6 +506,9 @@ function BranchesTab() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<BranchInfo | null>(null);
   const { data, isLoading, error } = useQuery({ queryKey: ['org-branches'], queryFn: () => api.get<{ branches: BranchInfo[] }>('/org/branches') });
+  // The platform admin's limit: at it, the button gives way to "contact support" (the server refuses anyway).
+  const maxBranches = useMe().data?.organization.maxBranches ?? null;
+  const atLimit = maxBranches != null && (data?.branches ?? []).filter((b) => b.isActive).length >= maxBranches;
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['org-branches'] });
     qc.invalidateQueries({ queryKey: ['me'] }); // the branch switcher picks up new names/branches
@@ -514,9 +520,17 @@ function BranchesTab() {
         title="Branches"
         description="Every branch keeps its own patients, visits and records."
         action={
-          <Button size="sm" onClick={() => setAdding(true)}>
-            <Plus /> Add branch
-          </Button>
+          atLimit ? (
+            <span className="text-right text-xs text-muted">
+              Your plan has {maxBranches} branch{maxBranches === 1 ? '' : 'es'}.
+              <br />
+              Need more? Please contact support.
+            </span>
+          ) : (
+            <Button size="sm" onClick={() => setAdding(true)}>
+              <Plus /> Add branch
+            </Button>
+          )
         }
       />
       {isLoading ? (
@@ -549,7 +563,14 @@ function BranchesTab() {
                   <div className="truncate">{b.address ?? '—'}</div>
                   <div className="text-xs">{b.phone ?? ''}</div>
                 </TD>
-                <TD className="tabular-nums">{b.staffCount}</TD>
+                <TD className="tabular-nums">
+                  {b.staffCount}
+                  {b.allowedNetworks && (
+                    <Badge tone="brand" className="ml-2">
+                      <Wifi className="size-3" /> Network lock
+                    </Badge>
+                  )}
+                </TD>
                 <TD className="text-right">
                   <Button size="sm" variant="outline" onClick={() => setEditing(b)}>
                     Edit
@@ -585,8 +606,71 @@ function BranchesTab() {
             }}
           />
         )}
+        {editing && <NetworkLock key={editing.id} branch={editing} onSaved={refresh} />}
       </Dialog>
     </Card>
+  );
+}
+
+/**
+ * Network lock of one branch (owner only): its pages open only on the hospital's own Wi-Fi / LAN. The owner and
+ * branch admins are never locked; other roles only with "Work from outside the hospital network".
+ */
+function NetworkLock({ branch, onSaved }: { branch: BranchInfo; onSaved: () => void }) {
+  const mine = useQuery({ queryKey: ['my-network'], queryFn: () => api.get<{ ip: string | null; suggestion: string | null }>('/org/my-network'), staleTime: 0 });
+  const [on, setOn] = useState(!!branch.allowedNetworks);
+  const [text, setText] = useState(branch.allowedNetworks ?? '');
+  const { list, bad } = parseNetworks(text);
+  const here = mine.data?.ip ?? null;
+  const hereOk = here ? ipAllowed(here, list) : null;
+  const save = useMutation({
+    mutationFn: () => api.patch(`/org/branches/${branch.id}`, { allowedNetworks: on ? text : null }),
+    onSuccess: () => {
+      onSaved();
+      toast.success(on ? `Network lock on for ${branch.name}` : `Network lock off for ${branch.name}`, { description: on ? 'Staff outside these networks are stopped at once.' : 'Staff can work from anywhere again.' });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const changed = on !== !!branch.allowedNetworks || (on && list.join('\n') !== (branch.allowedNetworks ?? ''));
+  return (
+    <div className="mt-6 border-t border-border pt-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 font-semibold">
+            <Wifi className="size-4" /> Network lock
+          </div>
+          <p className="mt-0.5 text-sm text-muted">Staff can open this branch only on the hospital's own Wi-Fi or network. You and branch admins are never locked. To let someone else work from outside, tick “{PERMISSION_LABELS['access.anywhere']}” for their role on the Permissions page.</p>
+        </div>
+        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm font-medium">
+          <input type="checkbox" role="switch" className="size-5 accent-[var(--color-primary)]" checked={on} onChange={(e) => { setOn(e.target.checked); if (e.target.checked && !text && mine.data?.suggestion) setText(mine.data.suggestion); }} />
+          {on ? 'On' : 'Off'}
+        </label>
+      </div>
+      {on && (
+        <div className="mt-3 space-y-2">
+          <Field label="Allowed networks" htmlFor="networks" hint="One per line, like 192.168.1.0/24 (the whole Wi-Fi) or 192.168.1.20 (one computer)." error={bad.length ? `Not a network: ${bad.join(', ')}` : undefined}>
+            <textarea id="networks" rows={3} className="w-full rounded-lg border border-border bg-background p-2 font-mono text-sm outline-none focus-visible:border-ring" value={text} onChange={(e) => setText(e.target.value)} placeholder="192.168.1.0/24" />
+          </Field>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {here && (
+              <span className={hereOk ? 'text-positive' : 'text-warning'}>
+                This computer is {here}: {hereOk ? 'inside the allowed networks' : 'not inside them (you are never locked, your staff here would be)'}
+              </span>
+            )}
+            {mine.data?.suggestion && !list.includes(mine.data.suggestion) && (
+              <Button type="button" size="sm" variant="outline" onClick={() => setText([...list, mine.data!.suggestion!].join('\n'))}>
+                Add this computer's network ({mine.data.suggestion})
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="mt-3 flex justify-end">
+        <Button type="button" variant={changed ? 'default' : 'outline'} disabled={!changed || save.isPending || (on && (!list.length || bad.length > 0))} onClick={() => save.mutate()}>
+          {save.isPending ? 'Saving…' : 'Save network lock'}
+        </Button>
+      </div>
+    </div>
   );
 }
 

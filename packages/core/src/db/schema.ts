@@ -17,7 +17,38 @@ export const organization = sqliteTable('organization', {
   idPrefix: text('id_prefix').notNull().default(''),
   /** Suspended customers can't sign in (platform admin switch). */
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  // ---- set by the platform admin (super admin panel); null = no limit / not used
+  planName: text('plan_name'),
+  yearlyFeePaise: integer('yearly_fee_paise').notNull().default(0),
+  /** Paid up to and including this day (YYYY-MM-DD); null = not billed. */
+  paidUntil: text('paid_until'),
+  /** Days after paidUntil before the hospital is suspended (at midnight). */
+  graceDays: integer('grace_days').notNull().default(7),
+  maxBranches: integer('max_branches'),
+  maxStaff: integer('max_staff'),
+  /** JSON list of switched-off module keys (see MODULES in @platform/shared). */
+  modulesOff: text('modules_off'),
+  /** The owner allowed read-only support access until this moment (ISO). */
+  supportUntil: text('support_until'),
+  /** Offboarding: the hospital's data is deleted on this day (YYYY-MM-DD); null = not leaving. */
+  deleteOn: text('delete_on'),
   ...timestamps,
+});
+
+/** Payments a hospital made to the platform (super admin panel). */
+export const platformPayment = sqliteTable('platform_payment', {
+  id: integer('id').primaryKey(),
+  organizationId: integer('organization_id')
+    .notNull()
+    .references(() => organization.id),
+  amountPaise: integer('amount_paise').notNull(),
+  paidOn: text('paid_on').notNull(),
+  /** The months this payment covers (YYYY-MM-DD). */
+  periodFrom: text('period_from').notNull(),
+  periodTo: text('period_to').notNull(),
+  note: text('note'),
+  createdBy: integer('created_by').references(() => user.id),
+  createdAt: timestamps.createdAt,
 });
 
 /** Organization-wide running numbers (IDs that must never repeat across branches, e.g. UHID). */
@@ -46,6 +77,8 @@ export const branch = sqliteTable(
     phone: text('phone'),
     /** JSON: logo, title, address, doctors, signatures -- see printHeaderSchema. */
     printHeader: text('print_header'),
+    /** Network lock: allowed IPv4 networks, one per line ("192.168.1.0/24"); null = off. */
+    allowedNetworks: text('allowed_networks'),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
     ...timestamps,
   },

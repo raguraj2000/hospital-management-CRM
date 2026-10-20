@@ -96,7 +96,7 @@ describe('a cancelled visit', () => {
     expect([await inLab(), await inPharmacy()]).toEqual([false, false]);
     expect((await json(owner('/api/b/main/dashboard'))).labPending).toBe(pendingBefore - 1);
     const res = await pharm('/api/b/main/pharmacy/dispense', { method: 'POST', body: { visitId: v.id, itemIds: [item], paymentMode: 'cash' } });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     expect((await res.json()).code).toBe('visit_cancelled');
   });
 });

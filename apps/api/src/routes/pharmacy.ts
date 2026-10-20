@@ -661,7 +661,7 @@ export function createPharmacyRoutes(db: Db) {
     const u = c.get('user');
     const { itemIds, paymentMode, quantities } = parsed.data;
     const v = await visitOfBranch(db, b.id, parsed.data.visitId);
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    if (v.status === 'cancelled') throw new AppError(409, 'visit_cancelled', 'This visit was cancelled');
     const today = await localToday(db);
 
     const sale = await db.transaction((tx) => dispenseItems(tx, b.id, u, v, itemIds, paymentMode, today, quantities));

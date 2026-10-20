@@ -8,7 +8,7 @@ import { Avatar, Badge, Button, Card, CardHeader, cn, Dialog, EmptyState, Field,
 import { api, errorMessage } from '@/api/client';
 import { ConditionBadges } from '@/components/Conditions';
 import { fmtDay, fmtTime } from '@/components/format';
-import { useBranch, useCan } from '@/state/auth';
+import { useBranch, useCan, useModuleOn } from '@/state/auth';
 import { ListSearch, textMatch } from '@/components/ListSearch';
 
 /** "1 tablet" / "½ tablet" / "" for a typed dose. */
@@ -53,7 +53,8 @@ export function Treatments() {
   // Two tabs, each with its count (the same "Treatments due today" as the side menu, split in two).
   const [params, setParams] = useSearchParams();
   // Shares the course list's request (same key): no second call.
-  const due = useQuery({ queryKey: ['treatments-due', branch], queryFn: () => api.get<{ today: string; sittings: DueSitting[] }>(`/b/${branch}/treatments/due`), refetchInterval: auto ? AUTO_EVERY_MS : false, refetchOnWindowFocus: false });
+  const coursesOn = useModuleOn('courses');
+  const due = useQuery({ queryKey: ['treatments-due', branch], queryFn: () => api.get<{ today: string; sittings: DueSitting[] }>(`/b/${branch}/treatments/due`), enabled: coursesOn, refetchInterval: auto ? AUTO_EVERY_MS : false, refetchOnWindowFocus: false });
   const sittingsLeft = (due.data?.sittings ?? []).filter((s) => (s.status === 'planned' || s.status === 'started' || s.status === 'missed') && indiaDay(s.dueAt) <= due.data!.today).length;
   const { data, isLoading, error } = useQuery({
     queryKey: ['treatments', branch, date],
@@ -80,7 +81,7 @@ export function Treatments() {
   const missed = (data?.missed ?? []).filter(found);
   const missedLeft = missed.filter((d) => !d.givenAt).length;
   // Opens on the list that has something to do (the course sittings when both have).
-  const tab = params.get('tab') === 'doses' || (params.get('tab') == null && sittingsLeft === 0 && (data?.doses.length ?? 0) > 0) ? 'doses' : 'courses';
+  const tab = !coursesOn || params.get('tab') === 'doses' || (params.get('tab') == null && sittingsLeft === 0 && (data?.doses.length ?? 0) > 0) ? 'doses' : 'courses';
   const left = doses.filter((d) => !d.givenAt).length;
   // "Mark all" leaves out a medicine the patient did not buy: there is nothing to give.
   const toGive = doses.filter((d) => !d.givenAt && d.itemStatus !== 'declined');
@@ -113,9 +114,11 @@ export function Treatments() {
       />
       <Tabs value={tab} onValueChange={(t) => setParams(t === 'courses' ? {} : { tab: t }, { replace: true })}>
         <TabsList className="mb-4 h-11 max-w-full overflow-x-auto">
-          <TabsTrigger value="courses" className="h-9 px-4 text-base">
-            Course sittings <CountPill n={sittingsLeft} />
-          </TabsTrigger>
+          {coursesOn && (
+            <TabsTrigger value="courses" className="h-9 px-4 text-base">
+              Course sittings <CountPill n={sittingsLeft} />
+            </TabsTrigger>
+          )}
           <TabsTrigger value="doses" className="h-9 px-4 text-base">
             Medicines to give <CountPill n={left + missedLeft} tone={missedLeft ? 'critical' : undefined} />
           </TabsTrigger>

@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt, isNull, ne } from 'drizzle-orm';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { OWNER_PERMISSIONS, changePasswordSchema, loginSchema, isPermission, type MeResponse, type Permission } from '@platform/shared';
+import { OWNER_PERMISSIONS, MODULE_KEYS, changePasswordSchema, loginSchema, isPermission, withoutModules, type MeResponse, type ModuleKey, type Permission } from '@platform/shared';
 import type { Db } from './db/index.js';
 import { branch, branchMember, branchRolePermission, organization, role, rolePermission, session, user } from './db/schema.js';
 import { AppError, validationError } from './errors.js';
@@ -100,13 +100,14 @@ export function requireAuth(db: Db): MiddlewareHandler<AuthEnv> {
 
 /** Every branch the user may open, with their role and permissions in it. */
 export async function branchesFor(db: Db, u: AuthUser): Promise<MeResponse['branches']> {
+  const { modulesOff } = await orgLimits(db, u.organizationId);
   if (u.isOwner) {
     const all = await db
       .select({ slug: branch.slug, name: branch.name })
       .from(branch)
       .where(and(eq(branch.organizationId, u.organizationId), eq(branch.isActive, true)))
       .orderBy(branch.id);
-    return all.map((b) => ({ ...b, roleName: 'Owner', permissions: [...OWNER_PERMISSIONS] }));
+    return all.map((b) => ({ ...b, roleName: 'Owner', permissions: withoutModules(OWNER_PERMISSIONS, modulesOff) }));
   }
   const rows = await db
     .select({ branchId: branch.id, slug: branch.slug, name: branch.name, roleId: role.id, roleName: role.name })
@@ -117,9 +118,22 @@ export async function branchesFor(db: Db, u: AuthUser): Promise<MeResponse['bran
     .orderBy(branch.id);
   const result: MeResponse['branches'] = [];
   for (const r of rows) {
-    result.push({ slug: r.slug, name: r.name, roleName: r.roleName, permissions: await permissionsForRole(db, r.roleId, r.branchId) });
+    result.push({ slug: r.slug, name: r.name, roleName: r.roleName, permissions: withoutModules(await permissionsForRole(db, r.roleId, r.branchId), modulesOff) });
   }
   return result;
+}
+
+/** What the platform admin set for a hospital: switched-off modules and limits (null = no limit). */
+export async function orgLimits(db: Db, organizationId: number): Promise<{ modulesOff: ModuleKey[]; maxBranches: number | null; maxStaff: number | null }> {
+  const [o] = await db.select({ modulesOff: organization.modulesOff, maxBranches: organization.maxBranches, maxStaff: organization.maxStaff }).from(organization).where(eq(organization.id, organizationId));
+  let off: unknown = [];
+  try {
+    off = JSON.parse(o?.modulesOff ?? '[]');
+  } catch {
+    /* a broken value switches nothing off */
+  }
+  const modulesOff = Array.isArray(off) ? MODULE_KEYS.filter((k) => off.includes(k)) : [];
+  return { modulesOff, maxBranches: o?.maxBranches ?? null, maxStaff: o?.maxStaff ?? null };
 }
 
 /** What a role may do: in a branch, that branch's own list when the owner set one, else the role's own list. */
@@ -133,10 +147,11 @@ export async function permissionsForRole(db: Db, roleId: number, branchId?: numb
 }
 
 export async function meResponse(db: Db, u: AuthUser): Promise<MeResponse> {
-  const [org] = await db.select({ id: organization.id, name: organization.name }).from(organization).where(eq(organization.id, u.organizationId));
+  const [org] = await db.select({ id: organization.id, name: organization.name, paidUntil: organization.paidUntil, graceDays: organization.graceDays }).from(organization).where(eq(organization.id, u.organizationId));
+  const { paidUntil, graceDays, ...rest } = org!;
   return {
     user: { id: u.id, name: u.name, mobile: u.mobile, isOwner: u.isOwner, isPlatformAdmin: u.isPlatformAdmin },
-    organization: org,
+    organization: { ...rest, ...(await orgLimits(db, u.organizationId)), plan: { paidUntil, graceDays } },
     branches: await branchesFor(db, u),
   };
 }

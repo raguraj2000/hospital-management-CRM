@@ -155,7 +155,7 @@ export function createCheckoutRoutes(db: Db) {
     if (!canBill && !itemIds.length) throw new AppError(400, 'validation', 'Tick at least one medicine', { itemIds: ['Tick at least one medicine'] });
 
     const v = await visitHeader(db, b.id, Number(c.req.param('visitId')));
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    if (v.status === 'cancelled') throw new AppError(409, 'visit_cancelled', 'This visit was cancelled');
     if (itemIds.length && doctorNotDone(v, await localToday(db))) throw new AppError(409, 'bad_state', 'The doctor is not done yet: medicines are given after the doctor sends the patient out');
     await assertPatientActive(db, b.id, v.patientId);
     const today = await localToday(db);

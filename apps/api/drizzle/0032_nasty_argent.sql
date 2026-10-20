@@ -1,0 +1,1 @@
+ALTER TABLE `branch` ADD `allowed_networks` text;

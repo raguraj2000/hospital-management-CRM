@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, FlaskConical, History, Pill, Printer, Syringe, Wallet } from 'lucide-react';
 import { CourseTab } from '@/components/Courses';
+import { useModuleOn } from '@/state/auth';
 import { formatRupees, type OpBill, type OpVisit, type Patient, type PatientBills, type PrescriptionItem, type VisitFee } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, CardHeader, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger } from '@platform/ui';
 import { VisitBill } from '@/components/VisitBill';
@@ -27,7 +28,9 @@ const TAB = 'h-8 gap-1.5 px-3.5 text-sm data-[state=active]:bg-primary data-[sta
 export function VisitDetail() {
   const { branch, visitId } = useParams();
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') === 'lab' ? 'lab' : params.get('tab') === 'course' ? 'course' : 'op';
+  const labOn = useModuleOn('lab');
+  const coursesOn = useModuleOn('courses');
+  const tab = params.get('tab') === 'lab' && labOn ? 'lab' : params.get('tab') === 'course' && coursesOn ? 'course' : 'op';
   const { data, isLoading, error } = useQuery({
     queryKey: ['visit', branch, visitId],
     queryFn: () => api.get<{ visit: OpVisit; patient: Pick<Patient, 'id' | 'name' | 'uhid' | 'gender' | 'ageYears' | 'dob' | 'phone' | 'conditions'>; fee: VisitFee }>(`/b/${branch}/visits/${visitId}`),
@@ -62,13 +65,17 @@ export function VisitDetail() {
             <Pill className="size-4" /> OP
             {v.medicineCount > 0 && <Badge tone="violet">{v.medicineCount}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="lab" className={TAB}>
-            <FlaskConical className="size-4" /> Lab
-            <LabTabMark branch={branch!} visit={v} />
-          </TabsTrigger>
-          <TabsTrigger value="course" className={TAB}>
-            <Syringe className="size-4" /> Course
-          </TabsTrigger>
+          {labOn && (
+            <TabsTrigger value="lab" className={TAB}>
+              <FlaskConical className="size-4" /> Lab
+              <LabTabMark branch={branch!} visit={v} />
+            </TabsTrigger>
+          )}
+          {coursesOn && (
+            <TabsTrigger value="course" className={TAB}>
+              <Syringe className="size-4" /> Course
+            </TabsTrigger>
+          )}
         </TabsList>
         <TabsContent value="op">
           <RxStepper branch={branch!} visit={v} patientName={p.name} fee={data.fee} onAdded={added} />

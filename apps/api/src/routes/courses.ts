@@ -20,7 +20,7 @@ import {
   type DueSitting,
   type TreatmentCourse,
 } from '@platform/shared';
-import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
+import { AppError, nextNumber, notFound, requireAnyPermission, requireModule, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { courseItem, courseSitting, courseTemplate, labOrder, labTest, medicine, opVisit, patient, prescriptionItem, treatmentCourse, user, visitCharge } from '../db/schema.js';
 import { assertVisitOpen, assertPatientActive, dayStamp, exclusively, localToday, visitOfBranch } from '../lib/clinic.js';
 import { addChargeToVisit, createBill } from './billing.js';
@@ -63,6 +63,9 @@ export function createCourseRoutes(db: Db) {
   const app = new Hono<BranchEnv>();
   /** Who plans and changes a course: the doctor, the branch admin, the owner. */
   const planners = requireAnyPermission('prescription.write', 'settings.manage');
+  // Courses switched off for this hospital (super admin panel): every course route refuses. Each path on its own:
+  // this app is mounted at the branch root, so a '*' here would reach every other branch route too.
+  for (const path of ['/courses/*', '/course-sittings/*', '/course-items/*', '/course-templates', '/course-templates/*', '/visits/:visitId/courses', '/patients/:id/courses', '/treatments/due']) app.use(path, requireModule('courses'));
 
   // ------------------------------------------------------------ reading
 

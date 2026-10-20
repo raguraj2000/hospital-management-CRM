@@ -354,7 +354,7 @@ describe('checkout: nothing owed may disappear', () => {
     const v = await visit(w, 'Ravi Kumar');
     await setStatus(v.id, 'cancelled');
     const res = await checkout(w.pharm, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise: 69000 });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     expect((await res.json()).code).toBe('visit_cancelled');
     await expectUntouched(w, v, 'cancelled');
     expect(await queueOf(w.pharm)).toEqual([]);

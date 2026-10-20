@@ -428,7 +428,7 @@ export function createBillingRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const v = await visitOfBranch(db, b.id, Number(c.req.param('visitId')));
-    if (v.status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+    if (v.status === 'cancelled') throw new AppError(409, 'visit_cancelled', 'This visit was cancelled');
     await assertPatientActive(db, b.id, v.patientId);
     const today = await localToday(db);
     const id = await db.transaction((tx) => createBill(tx, b.id, u, v, today));

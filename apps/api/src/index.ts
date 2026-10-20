@@ -7,6 +7,7 @@ import { createApp } from './app.js';
 import { config, ensureDataDir } from './config.js';
 import { keepAuditTrimmed } from './lib/audit-retention.js';
 import { keepDailyBackups } from './lib/daily-backup.js';
+import { keepPlansChecked } from './lib/plan-billing.js';
 import { addHba1cTest, addLabCorrectPermission, addRandomBloodSugar, addRandomBloodSugarTest, addReportsPermission, addVisitingDoctorRole, mergeDifferentialIntoCbc } from './lib/lab-merge.js';
 
 ensureDataDir();
@@ -22,6 +23,7 @@ if (await addHba1cTest(db)) console.log('Lab tests: "HbA1c" added as a test of i
 if (merged) console.log(`Lab tests: differential counts moved into the Complete Blood Count (${merged} branch${merged > 1 ? 'es' : ''}).`);
 
 keepAuditTrimmed(db);
+keepPlansChecked(db);
 if (config.backupDir) keepDailyBackups(db, config.backupDir);
 
 const app = createApp(db);

@@ -17,7 +17,7 @@ import {
   type VisitQueue,
   type VisitSendResponse,
 } from '@platform/shared';
-import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
+import { AppError, nextNumber, notFound, requireAnyPermission, requireModule, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { labOrder, labTest, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
 import { balanceDueOf, settledAtCounter, withToken, assertPatientActive } from '../lib/clinic.js';
 import { feeSlots, visitFee } from './billing.js';
@@ -239,7 +239,7 @@ export function createVisitRoutes(db: Db) {
    * visit -- no doctor, no consultation fee, straight to the counter's list -- and orders the tests on it.
    * The lab finds the tests in its queue; the counter collects the lab charges as for any visit.
    */
-  app.post('/patients/:id/direct-lab', requireAnyPermission('lab.view', 'patient.create'), async (c) => {
+  app.post('/patients/:id/direct-lab', requireModule('lab'), requireAnyPermission('lab.view', 'patient.create'), async (c) => {
     const b = c.get('branch');
     const u = c.get('user');
     const p = await findPatient(b.id, Number(c.req.param('id')));

@@ -15,6 +15,8 @@ import {
   rolePermissionsSchema,
   updateBranchSchema,
   updateStaffSchema,
+  plainIp,
+  suggestNetwork,
   type BranchInfo,
   type RoleInfo,
   type StaffMember,
@@ -23,8 +25,8 @@ import type { Db } from './db/index.js';
 import { branch, branchMember, branchRolePermission, NO_PERMISSIONS, organization, role, rolePermission, user } from './db/schema.js';
 import { AppError, notFound, validationError } from './errors.js';
 import { hashPassword } from './password.js';
-import { meResponse, permissionsForRole, requireOwner, revokeUserSessions, type AuthEnv } from './auth.js';
-import { requirePermission, type BranchEnv } from './branch.js';
+import { meResponse, orgLimits, permissionsForRole, requireOwner, revokeUserSessions, type AuthEnv } from './auth.js';
+import { clientIp, requirePermission, type BranchEnv } from './branch.js';
 import { writeAudit } from './audit.js';
 
 async function rolesOf(db: Db, organizationId: number, branchId?: number): Promise<RoleInfo[]> {
@@ -48,6 +50,14 @@ async function setBranchRole(db: Db, me: { id: number; organizationId: number },
     await writeAudit(tx, { organizationId: me.organizationId, branchId, userId: me.id, action: 'update_permissions', entity: 'role', entityId: r.id, detail: parsed ? { permissions } : { reset: true } });
   });
   return permissionsForRole(db, r.id, branchId);
+}
+
+/** The staff limit the platform admin set: active staff accounts, the owner not counted. */
+async function assertStaffRoom(db: Db, organizationId: number) {
+  const { maxStaff } = await orgLimits(db, organizationId);
+  if (maxStaff == null) return;
+  const [{ n }] = await db.select({ n: sql<number>`count(*)` }).from(user).where(and(eq(user.organizationId, organizationId), eq(user.isActive, true), eq(user.isOwner, false)));
+  if (n >= maxStaff) throw new AppError(403, 'limit_staff', `Your plan allows ${maxStaff} staff account${maxStaff === 1 ? '' : 's'}. Please contact support to add more.`);
 }
 
 async function roleInOrg(db: Db, organizationId: number, roleId: number) {
@@ -148,6 +158,7 @@ export function createStaffRoutes(db: Db) {
     const me = c.get('user');
     const b = c.get('branch');
     await roleInOrg(db, me.organizationId, roleId);
+    await assertStaffRoom(db, me.organizationId);
     // One mobile = one account everywhere (it's the login id).
     const [taken] = await db.select({ id: user.id }).from(user).where(or(eq(user.mobile, mobile), eq(user.username, mobile)));
     if (taken) throw new AppError(409, 'mobile_taken', 'This mobile number already has an account', { mobile: ['This mobile number already has an account'] });
@@ -190,6 +201,10 @@ export function createStaffRoutes(db: Db) {
       const userId = Number(c.req.param('userId'));
       await target(b.id, me.id, userId, { allowInactive: true });
       await assertManagesEveryBranchOf(me.id, me.isOwner, userId);
+      if (action === 'activate') {
+        const [was] = await db.select({ isActive: user.isActive }).from(user).where(eq(user.id, userId));
+        if (!was?.isActive) await assertStaffRoom(db, me.organizationId);
+      }
       await db.update(user).set({ isActive: action === 'activate', failedLogins: 0, lockedUntil: null, updatedAt: new Date().toISOString() }).where(eq(user.id, userId));
       if (action === 'deactivate') await revokeUserSessions(db, userId);
       await writeAudit(db, { organizationId: me.organizationId, branchId: b.id, userId: me.id, action, entity: 'staff', entityId: userId });
@@ -251,14 +266,25 @@ export function createOrgRoutes(db: Db) {
       .where(and(eq(branchMember.isActive, true), eq(user.isActive, true), rows.length ? inArray(branchMember.branchId, rows.map((r) => r.id)) : sql`0`))
       .groupBy(branchMember.branchId);
     const byBranch = new Map(counts.map((r) => [r.branchId, r.n]));
-    const branches: BranchInfo[] = rows.map((b) => ({ id: b.id, slug: b.slug, name: b.name, address: b.address, phone: b.phone, isActive: b.isActive, staffCount: byBranch.get(b.id) ?? 0 }));
+    const branches: BranchInfo[] = rows.map((b) => ({ id: b.id, slug: b.slug, name: b.name, address: b.address, phone: b.phone, isActive: b.isActive, staffCount: byBranch.get(b.id) ?? 0, allowedNetworks: b.allowedNetworks }));
     return c.json({ branches });
+  });
+
+  /** The owner's own address and its network: the suggestion for a branch's network lock. */
+  app.get('/my-network', (c) => {
+    const ip = plainIp(clientIp(c));
+    return c.json({ ip, suggestion: suggestNetwork(ip) });
   });
 
   app.post('/branches', async (c) => {
     const parsed = branchInputSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) throw validationError(parsed.error);
     const me = c.get('user');
+    const { maxBranches } = await orgLimits(db, me.organizationId);
+    if (maxBranches != null) {
+      const [{ n }] = await db.select({ n: sql<number>`count(*)` }).from(branch).where(and(eq(branch.organizationId, me.organizationId), eq(branch.isActive, true)));
+      if (n >= maxBranches) throw new AppError(403, 'limit_branches', `Your plan allows ${maxBranches} branch${maxBranches === 1 ? '' : 'es'}. Please contact support to add more.`);
+    }
     const [taken] = await db.select({ id: branch.id }).from(branch).where(and(eq(branch.organizationId, me.organizationId), eq(branch.slug, parsed.data.slug)));
     if (taken) throw new AppError(409, 'slug_taken', 'Another branch uses that address', { slug: ['Another branch uses that address'] });
     const [b] = await db

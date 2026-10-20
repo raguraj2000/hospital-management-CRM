@@ -139,7 +139,7 @@ export function textSearch(q: string | undefined, cols: AnyColumn[], phone?: Any
 
 /** A completed visit is final: nothing on it changes any more (a new visit is made instead). Cancelled too. */
 export function assertVisitOpen(status: string) {
-  if (status === 'cancelled') throw new AppError(400, 'visit_cancelled', 'This visit was cancelled');
+  if (status === 'cancelled') throw new AppError(409, 'visit_cancelled', 'This visit was cancelled');
   if (status === 'completed') throw new AppError(409, 'visit_completed', 'This visit is completed: it can no longer be changed. Start a new visit for the patient.');
 }
 

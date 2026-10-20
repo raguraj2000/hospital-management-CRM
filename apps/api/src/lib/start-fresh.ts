@@ -38,6 +38,7 @@ export const STOCK_TABLES = ['medicine_batch', 'purchase_bill', 'purchase_line',
 /** The setup: staff, prices, lists. Never touched. */
 export const SETUP_TABLES = [
   'organization',
+  'platform_payment', // what the hospital paid the platform: not trial data
   'branch',
   'user',
   'role',

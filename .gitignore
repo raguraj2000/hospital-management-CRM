@@ -8,3 +8,6 @@ data/
 .env.*
 prototype/
 handoff/
+
+# Cloudflare local state (wrangler dev databases)
+.wrangler/
