@@ -12,7 +12,7 @@
     "seed": "npm run seed -w @platform/api",
     "test": "npm run test -w @platform/api",
     "e2e": "npm run build && node scripts/e2e/smoke.mjs",
-    "typecheck": "tsc -p apps/api && tsc -p apps/web",
+    "typecheck": "tsc -p apps/api && tsc -p apps/web && tsc -p apps/cloud",
     "build": "npm run build -w @platform/web",
     "e2e:screens": "node e2e/screens.mjs",
     "e2e:op": "node e2e/op-flow.mjs",

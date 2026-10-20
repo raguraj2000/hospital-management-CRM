@@ -1,0 +1,14 @@
+// HMS on Cloudflare. Local only until a deploy is approved.
+{
+  "name": "hms",
+  // The HMS account: this PC has CLOUDFLARE_ACCOUNT_ID set to another account for other projects.
+  "account_id": "bc8509d94dbc0fc835d6bf44ed033c5c",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // The built web app; screens are served from Cloudflare's cache, only /api/* runs the Worker.
+  "assets": { "directory": "../web/dist", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*"] },
+  "durable_objects": { "bindings": [{ "name": "HOSPITAL", "class_name": "Hospital" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hospital"] }],
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }]
+}

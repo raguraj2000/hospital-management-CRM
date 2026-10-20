@@ -11,3 +11,6 @@ handoff/
 
 # Cloudflare local state (wrangler dev databases)
 .wrangler/
+
+# Cloudflare local secrets
+.dev.vars

@@ -1,7 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs';
 
-const apiDir = path.resolve(import.meta.dirname, '..');
+// On Cloudflare there is no folder (import.meta.dirname is undefined): the paths below are not used there.
+const apiDir = path.resolve(import.meta.dirname ?? '.', '..');
 
 export const config = {
   port: Number(process.env.PORT ?? 4100),

@@ -1,0 +1,18 @@
+{
+  "name": "@platform/cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HMS on Cloudflare: one Worker (web app + API) and one Durable Object (its own SQLite) per hospital.",
+  "scripts": {
+    "migrations": "node scripts/gen-migrations.mjs",
+    "dev": "node scripts/gen-migrations.mjs && wrangler dev --port 8788"
+  },
+  "dependencies": {
+    "@platform/core": "*",
+    "@platform/shared": "*"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.2"
+  }
+}

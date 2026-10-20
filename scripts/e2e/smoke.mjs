@@ -17,7 +17,10 @@ const root = path.resolve(import.meta.dirname, '..', '..');
 const require = createRequire(path.join(root, 'package.json'));
 const { chromium } = require('playwright-core');
 const PORT = 4399;
-const base = `http://localhost:${PORT}`;
+// E2E_BASE=<url>: test a server that is already running (e.g. the Cloudflare version under `wrangler dev`),
+// set up with the same owner (9000000000 / e2e-password, "E2E Clinic"). Otherwise a fresh local server is started.
+const external = process.env.E2E_BASE;
+const base = external ?? `http://localhost:${PORT}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hms-e2e-'));
 const dbUrl = `file:${path.join(tmp, 'e2e.db').split(path.sep).join('/')}`;
 const env = { ...process.env, PORT: String(PORT), DATABASE_URL: dbUrl, WEB_DIR: path.join(root, 'apps', 'web', 'dist'), OWNER_MOBILE: '9000000000', OWNER_PASSWORD: 'e2e-password', ORG_NAME: 'E2E Clinic', NODE_ENV: 'test' };
@@ -41,8 +44,8 @@ if (!fs.existsSync(path.join(env.WEB_DIR, 'index.html'))) {
   process.exit(1);
 }
 const tsx = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx');
-execFileSync(tsx, ['src/setup-tool.ts', 'init'], { cwd: path.join(root, 'apps', 'api'), env, stdio: 'ignore', shell: process.platform === 'win32' });
-const server = spawn(tsx, ['src/index.ts'], { cwd: path.join(root, 'apps', 'api'), env, stdio: 'ignore', shell: process.platform === 'win32' });
+if (!external) execFileSync(tsx, ['src/setup-tool.ts', 'init'], { cwd: path.join(root, 'apps', 'api'), env, stdio: 'ignore', shell: process.platform === 'win32' });
+const server = external ? null : spawn(tsx, ['src/index.ts'], { cwd: path.join(root, 'apps', 'api'), env, stdio: 'ignore', shell: process.platform === 'win32' });
 for (let i = 0; i < 60; i++) {
   if (await fetch(`${base}/login`).then((r) => r.ok).catch(() => false)) break;
   await new Promise((r) => setTimeout(r, 500));
@@ -228,13 +231,13 @@ try {
   });
 } finally {
   await browser?.close();
-  if (process.platform === 'win32') {
+  if (server && process.platform === 'win32') {
     try {
       execFileSync('taskkill', ['/pid', String(server.pid), '/T', '/F'], { stdio: 'ignore' });
     } catch {
       /* already gone */
     }
-  } else server.kill();
+  } else server?.kill();
   await new Promise((r) => setTimeout(r, 500));
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
