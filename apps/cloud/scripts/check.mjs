@@ -4,10 +4,15 @@ const base = process.argv[2] ?? 'http://127.0.0.1:8788';
 let bad = 0;
 const say = (ok, msg) => { if (!ok) bad++; console.log(`${ok ? '✓' : '✗'} ${msg}`); };
 
-const rb = await (await fetch(`${base}/api/__check/rollback`)).json();
-say(rb.rolledBack === true, `HMS transaction fails after a write -> the write is undone (rowsLeft ${rb.rowsLeft})`);
+// The rollback route exists only locally (never online): skipped when it is not there.
+const rbRes = await fetch(`${base}/api/__check/rollback`);
+if (rbRes.status === 404) console.log('- rollback check: local only, skipped here');
+else {
+  const rb = await rbRes.json();
+  say(rb.rolledBack === true, `HMS transaction fails after a write -> the write is undone (rowsLeft ${rb.rowsLeft})`);
+}
 
-const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mobile: '9000000000', password: 'e2e-password' }) });
+const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mobile: process.env.E2E_OWNER_MOBILE ?? '9000000000', password: process.env.E2E_OWNER_PASSWORD ?? 'e2e-password' }) });
 const cookie = login.headers.get('set-cookie').split(';')[0];
 const call = (method, p, body) => fetch(`${base}/api/b/main${p}`, { method, headers: { cookie, 'content-type': 'application/json', origin: base }, body: body ? JSON.stringify(body) : undefined });
 const { id: med } = await (await call('POST', '/medicines', { name: `Race Tab ${Date.now()}`, form: 'tablet', pricePaise: 100 })).json();

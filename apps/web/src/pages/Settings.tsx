@@ -69,6 +69,8 @@ export function Settings() {
   const canStaff = useCan('users.manage');
   const canHeader = useCan('settings.manage');
   const coursesOn = useModuleOn('courses');
+  // Online (Cloudflare) the database backs itself up: no Backup tab there.
+  const onCloud = useQuery({ queryKey: ['health'], queryFn: () => api.get<{ runtime?: string }>('/health'), staleTime: Infinity }).data?.runtime === 'cloudflare';
   const canAudit = useCan('audit.view');
   const canPrescribe = useCan('prescription.write');
   const current = useBranch();
@@ -113,7 +115,7 @@ export function Settings() {
                 <Syringe className="size-4" /> Course templates
               </TabsTrigger>
             )}
-            {canHeader && (
+            {canHeader && !onCloud && (
               <TabsTrigger value="backup">
                 <DatabaseBackup className="size-4" /> Backup
               </TabsTrigger>
@@ -159,7 +161,7 @@ export function Settings() {
               <CourseTemplates branch={current.slug} />
             </TabsContent>
           )}
-          {canHeader && current && (
+          {canHeader && !onCloud && current && (
             <TabsContent value="backup">
               <BackupRestore branch={current.slug} />
             </TabsContent>

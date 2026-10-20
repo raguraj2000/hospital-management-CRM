@@ -20,10 +20,13 @@ const PORT = 4399;
 // E2E_BASE=<url>: test a server that is already running (e.g. the Cloudflare version under `wrangler dev`),
 // set up with the same owner (9000000000 / e2e-password, "E2E Clinic"). Otherwise a fresh local server is started.
 const external = process.env.E2E_BASE;
+// The owner of that server (staging uses a random password, given here).
+const OWNER = process.env.E2E_OWNER_MOBILE ?? '9000000000';
+const OWNER_PW = process.env.E2E_OWNER_PASSWORD ?? 'e2e-password';
 const base = external ?? `http://localhost:${PORT}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hms-e2e-'));
 const dbUrl = `file:${path.join(tmp, 'e2e.db').split(path.sep).join('/')}`;
-const env = { ...process.env, PORT: String(PORT), DATABASE_URL: dbUrl, WEB_DIR: path.join(root, 'apps', 'web', 'dist'), OWNER_MOBILE: '9000000000', OWNER_PASSWORD: 'e2e-password', ORG_NAME: 'E2E Clinic', NODE_ENV: 'test' };
+const env = { ...process.env, PORT: String(PORT), DATABASE_URL: dbUrl, WEB_DIR: path.join(root, 'apps', 'web', 'dist'), OWNER_MOBILE: OWNER, OWNER_PASSWORD: OWNER_PW, ORG_NAME: 'E2E Clinic', NODE_ENV: 'test' };
 const failures = [];
 const ok = (msg) => console.log(`  ✓ ${msg}`);
 const fail = (msg) => {
@@ -54,7 +57,7 @@ for (let i = 0; i < 60; i++) {
 let browser;
 try {
   // ---- set-up through the API (what a hospital does once)
-  const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mobile: '9000000000', password: 'e2e-password' }) });
+  const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mobile: OWNER, password: OWNER_PW }) });
   const cookie = login.headers.get('set-cookie').split(';')[0];
   const call = async (method, p, body) => {
     const r = await fetch(`${base}/api/b/main${p}`, { method, headers: { cookie, 'content-type': 'application/json', origin: base }, body: body ? JSON.stringify(body) : undefined });
@@ -167,7 +170,10 @@ try {
   await step('6. Pharmacist sells over the counter (direct sale)', async () => {
     const ph = await open(staff.pharmacist);
     await ph.goto(`${base}/main/pharmacy?tab=direct`);
+    // Online the medicine list takes a moment: Enter only adds once the list is there.
+    await ph.waitForLoadState('networkidle');
     await ph.getByLabel('Search medicine to add').fill('Paracetamol');
+    await ph.getByRole('button', { name: /Paracetamol/ }).first().waitFor();
     await ph.keyboard.press('Enter');
     await ph.waitForTimeout(300);
     const before = (await call('GET', '/medicines')).medicines.find((m) => m.id === med.id).stock;
@@ -197,7 +203,7 @@ try {
   });
 
   await step('8. Owner and branch admin see the Permissions page; others do not', async () => {
-    for (const [who, mobile, password, visible] of [['owner', '9000000000', 'e2e-password', true], ['branch_admin', staff.branch_admin, undefined, true], ['front_desk', staff.front_desk, undefined, false]]) {
+    for (const [who, mobile, password, visible] of [['owner', OWNER, OWNER_PW, true], ['branch_admin', staff.branch_admin, undefined, true], ['front_desk', staff.front_desk, undefined, false]]) {
       const page = await open(mobile, password);
       await page.goto(`${base}/main/settings`);
       await page.waitForLoadState('networkidle');
@@ -210,7 +216,7 @@ try {
   });
 
   await step('9. Every page of every role opens cleanly (laptop and phone)', async () => {
-    const people = { owner: ['9000000000', 'e2e-password'], ...Object.fromEntries(Object.entries(staff).map(([k, m]) => [k, [m]])) };
+    const people = { owner: [OWNER, OWNER_PW], ...Object.fromEntries(Object.entries(staff).map(([k, m]) => [k, [m]])) };
     for (const [role, [mobile, password]] of Object.entries(people)) {
       for (const viewport of [{ width: 1366, height: 800 }, { width: 390, height: 800 }]) {
         const page = await open(mobile, password, viewport);

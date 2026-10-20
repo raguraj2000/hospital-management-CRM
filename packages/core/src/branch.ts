@@ -19,8 +19,16 @@ export interface BranchInfo {
 
 export type BranchEnv = AuthEnv & { Variables: AuthEnv['Variables'] & { branch: BranchInfo } };
 
-/** The caller's address as the server's socket sees it (never a header: those can be typed by anyone). */
-export function clientIp(c: { env: unknown }): string | null {
+/** Running on Cloudflare (Worker / Durable Object) rather than on a PC with Node. */
+export const onCloudflare = () => (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent === 'Cloudflare-Workers';
+
+/**
+ * The caller's address. On a PC: as the server's socket sees it (never a header: those can be typed by anyone).
+ * On Cloudflare: the CF-Connecting-IP header, which Cloudflare itself sets at its edge and a visitor cannot
+ * replace; the hospital's database (Durable Object) is only reached through our Worker, never directly.
+ */
+export function clientIp(c: { env: unknown; req: { header: (name: string) => string | undefined } }): string | null {
+  if (onCloudflare()) return c.req.header('cf-connecting-ip') ?? null;
   const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
   return env?.incoming?.socket?.remoteAddress ?? null;
 }

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { AppError, openDb, requirePermission, runMigrations, writeAudit, type BranchEnv, type Db } from '@platform/core';
+import { AppError, onCloudflare, openDb, requirePermission, runMigrations, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { config } from '../config.js';
 
 const SQLITE_MAGIC = 'SQLite format 3';
@@ -33,6 +33,8 @@ export function createBackupRoutes(db: Db) {
 
   /** The file holds every hospital and every branch on this server, so it is only for whoever may see all of it. */
   async function assertMayHandleEverything(user: { organizationId: number; isOwner: boolean }) {
+    // On Cloudflare there is no file to copy: the hospital's database has Cloudflare's own point-in-time restore.
+    if (onCloudflare()) throw new AppError(501, 'not_on_cloud', 'On the online version, Cloudflare backs up the database automatically. Please contact support to restore.');
     if ((await count(sql`select count(distinct organization_id) as n from branch`)) !== 1) {
       throw new AppError(403, 'forbidden', 'This server holds more than one hospital. Backups are made by whoever hosts it.');
     }

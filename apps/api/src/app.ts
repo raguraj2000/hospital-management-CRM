@@ -18,6 +18,7 @@ import {
   securityHeaders,
   type BranchEnv,
   type Db,
+  onCloudflare,
 } from '@platform/core';
 import type { Permission } from '@platform/shared';
 import { billPayment, courseSitting, labOrder, medicine, medicineBatch, opBill, opVisit, patient, pharmacySale, treatmentCourse, treatmentDose } from './db/schema.js';
@@ -58,7 +59,8 @@ export function createApp(db: Db) {
   app.use('/api/*', (c, next) => (c.req.path.endsWith('/restore') ? next() : limitBody(c, next)));
 
   const api = new Hono();
-  api.get('/health', (c) => c.json({ ok: true }));
+  // runtime: the screens hide what only exists on a PC (Backup: on Cloudflare, its own point-in-time restore replaces it).
+  api.get('/health', (c) => c.json({ ok: true, runtime: onCloudflare() ? 'cloudflare' : 'pc' }));
   api.use('/auth/login', rateLimit(20, 60_000));
   api.route('/auth', createAuthRoutes(db));
 

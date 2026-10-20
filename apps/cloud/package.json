@@ -6,7 +6,10 @@
   "description": "HMS on Cloudflare: one Worker (web app + API) and one Durable Object (its own SQLite) per hospital.",
   "scripts": {
     "migrations": "node scripts/gen-migrations.mjs",
-    "dev": "node scripts/gen-migrations.mjs && wrangler dev --port 8788"
+    "dev": "node scripts/gen-migrations.mjs && wrangler dev --port 8788",
+    "deploy:staging": "node scripts/deploy.mjs staging",
+    "deploy:prod": "node scripts/deploy.mjs production",
+    "rollback:prod": "node scripts/deploy.mjs rollback"
   },
   "dependencies": {
     "@platform/core": "*",

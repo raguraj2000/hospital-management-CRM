@@ -15,11 +15,18 @@ import migrations from './migrations.gen.js';
 interface Env {
   HOSPITAL: DurableObjectNamespace<Hospital>;
   ASSETS: Fetcher;
-  /** Local only (.dev.vars): set up an empty hospital with this owner on first start. */
+  /** Local only (.dev.vars): turns on the /api/__check/* routes. Never set online. */
   DEV_SEED?: string;
-  OWNER_MOBILE?: string;
-  OWNER_PASSWORD?: string;
-  ORG_NAME?: string;
+  /**
+   * First-time setup of an EMPTY hospital (secrets: `wrangler secret put`, then deleted): the hospital name and
+   * the owner's login. Ignored once the hospital has data.
+   */
+  SETUP_ORG_NAME?: string;
+  /** Patient IDs start with it ("AH" -> AH000001). */
+  SETUP_ID_PREFIX?: string;
+  SETUP_OWNER_NAME?: string;
+  SETUP_OWNER_MOBILE?: string;
+  SETUP_OWNER_PASSWORD?: string;
 }
 
 export class Hospital extends DurableObject<Env> {
@@ -45,16 +52,16 @@ export class Hospital extends DurableObject<Env> {
       await addRandomBloodSugar(asDb);
       await addRandomBloodSugarTest(asDb);
       await addHba1cTest(asDb);
-      if (env.DEV_SEED === '1' && !(await asDb.select({ id: organization.id }).from(organization).limit(1)).length) {
+      if (env.SETUP_OWNER_MOBILE && env.SETUP_OWNER_PASSWORD && !(await asDb.select({ id: organization.id }).from(organization).limit(1)).length) {
         const r = await seedOrganization(asDb, {
-          orgName: env.ORG_NAME ?? 'HMS',
-          idPrefix: 'HMS',
-          branchName: env.ORG_NAME ?? 'HMS',
+          orgName: env.SETUP_ORG_NAME ?? 'HMS',
+          idPrefix: env.SETUP_ID_PREFIX ?? 'HMS',
+          branchName: env.SETUP_ORG_NAME ?? 'HMS',
           branchSlug: 'main',
           branchPrefix: 'MAIN',
-          ownerMobile: env.OWNER_MOBILE ?? '9000000000',
-          ownerName: 'Owner',
-          ownerPassword: env.OWNER_PASSWORD ?? 'change-me-123',
+          ownerMobile: env.SETUP_OWNER_MOBILE,
+          ownerName: env.SETUP_OWNER_NAME ?? 'Owner',
+          ownerPassword: env.SETUP_OWNER_PASSWORD,
         });
         if (!(await asDb.select().from(clinicSetting).where(eq(clinicSetting.branchId, r.branch.id))).length) await asDb.insert(clinicSetting).values({ branchId: r.branch.id });
       }
