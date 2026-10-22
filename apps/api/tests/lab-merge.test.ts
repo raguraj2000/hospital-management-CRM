@@ -422,6 +422,12 @@ it('Random Blood Sugar becomes a test of its own, once; a required line can be u
   expect(refused.status).toBe(400);
   expect((await refused.json()).code).toBe('missing_results');
   expect((await put(owner, 'east', { complete: true, results, notRequired: [post.id] })).status).toBe(404);
+  // "Untick all": every line may be unticked, but a report with no value at all is refused.
+  const none = [{ parameterId: fasting.id, value: '' }, { parameterId: post.id, value: '' }];
+  const blank = await put(lab, 'main', { complete: true, results: none, notRequired: [fasting.id, post.id] });
+  expect(blank.status).toBe(400);
+  expect((await blank.json()).code).toBe('missing_results');
+  expect((await put(owner, 'east', { complete: true, results: none, notRequired: [fasting.id, post.id] })).status).toBe(404);
   expect((await put(lab, 'main', { complete: true, results, notRequired: [post.id] })).status).toBe(200);
   expect((await json(lab(`/api/b/main/visits/${visit.id}/lab-report`))).tests[0]).toMatchObject({ status: 'completed' });
 });

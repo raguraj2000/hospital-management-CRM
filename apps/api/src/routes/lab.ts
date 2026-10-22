@@ -502,6 +502,8 @@ export function createLabRoutes(db: Db) {
       const value = new Map<number, string>([...saved.map((r) => [r.parameterId, r.value] as const), ...parsed.data.results.map((r) => [r.parameterId, r.value] as const)]);
       const empty = params.filter((p) => !p.optional && !skip.has(p.id) && !(value.get(p.id) ?? '').trim());
       if (empty.length) throw new AppError(400, 'missing_results', `Fill in ${empty.map((p) => p.name).join(', ')} before completing, or untick “Required” on a line that was not done.`);
+      // Every line unticked is fine, but a report needs at least one value.
+      if (!params.some((p) => (value.get(p.id) ?? '').trim())) throw new AppError(400, 'missing_results', 'Type at least one value before completing.');
     }
     const now = new Date().toISOString();
     await db.transaction(async (tx) => {
