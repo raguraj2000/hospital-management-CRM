@@ -65,12 +65,14 @@ export function LeftOpenVisits({ branch }: { branch: string }) {
                   Bring to today
                 </Button>
               )}
-              {canClose && (
+              {canClose && v.movable && (
                 <Button size="sm" variant="outline" onClick={() => setClosing(v)}>
                   Close – not seen
                 </Button>
               )}
             </div>
+            {/* Tests or medicines were ordered: it was seen, so it is finished (or its tests cancelled) on the visit itself. */}
+            {!v.movable && <p className="basis-full text-xs text-muted">Tests or medicines are on it: open it and finish it.</p>}
           </div>
         ))}
       </div>
