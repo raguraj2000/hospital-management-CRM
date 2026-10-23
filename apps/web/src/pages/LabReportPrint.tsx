@@ -86,7 +86,8 @@ export function LabReportPrint() {
           .lab-print { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .no-print { display: none !important; }
           .sheet { width: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; box-shadow: none !important; }
-          .rt tr, .cgrp, .closing { break-inside: avoid; }
+          .rt tr, .rt tbody, .cgrp, .closing { break-inside: avoid; }
+          .rt .keep-next { break-after: avoid; }
           .report-watermark { position: fixed !important; }
           .pages .report-watermark { position: absolute !important; }
           .pages .sheet + .sheet { break-before: page; }
@@ -210,22 +211,25 @@ function PanelResults({ tests }: { tests: LabReportTest[] }) {
           ))}
         </tr>
       </thead>
-      <tbody>
-        {departments.map((d) => [
-          <tr key={d}>
-            <td colSpan={4} className="pt-3 pb-1 text-center font-bold">
-              {d}
-            </td>
-          </tr>,
-          ...tests
-            .filter((t) => t.department === d)
-            .flatMap((t) => [
-              <tr key={`g${t.orderId}`}>
+      {/* One block per test, its heading (and the department's, before its first test) kept on the page with its values. */}
+      {departments.flatMap((d) =>
+        tests
+          .filter((t) => t.department === d)
+          .map((t, i) => (
+            <tbody key={t.orderId}>
+              {i === 0 && (
+                <tr className="keep-next">
+                  <td colSpan={4} className="pt-3 pb-1 text-center font-bold">
+                    {d}
+                  </td>
+                </tr>
+              )}
+              <tr className="keep-next">
                 <td colSpan={4} className="pt-[9px] font-bold">
                   {t.name}
                 </td>
-              </tr>,
-              ...t.parameters
+              </tr>
+              {t.parameters
                 .filter((x) => x.value.trim())
                 .map((x) => {
                   const numeric = /\d/.test(x.value);
@@ -240,10 +244,10 @@ function PanelResults({ tests }: { tests: LabReportTest[] }) {
                       <td className="px-1 py-[3px] align-top">{x.refRange}</td>
                     </tr>
                   );
-                }),
-            ]),
-        ])}
-      </tbody>
+                })}
+            </tbody>
+          )),
+      )}
     </table>
   );
 }
