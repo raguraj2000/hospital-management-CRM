@@ -149,7 +149,8 @@ function Sheet({ data, tests }: { data: LabReport; tests: LabReportTest[] }) {
         <Kv k="Bill Date" v={printDateTime(data.billedAt) || fmt(data.visit.visitDate)} />
         <Kv k="Mobile" v={p.phone?.replace(/^\+91/, '') ?? ''} />
         <Kv k="Sample Date" v={printDateTime(sampleAt)} />
-        <Kv k="Referred By" v={data.visit.referredBy || data.visit.doctorName || ''} />
+        {/* Referred by: only a referrer typed on the visit; otherwise the visit's own doctor, named as such. */}
+        {data.visit.referredBy ? <Kv k="Referred By" v={data.visit.referredBy} /> : <Kv k="Doctor" v={data.visit.doctorName ?? ''} />}
         <Kv k="Report Date" v={printDateTime(reportAt ?? new Date().toISOString())} />
         <Kv k="OP No." v={data.visit.opNo} />
         <Kv k="Bill No." v={data.billNo ?? ''} />

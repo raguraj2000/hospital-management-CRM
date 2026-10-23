@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useParams } from 'react-router';
 import { ArrowLeft, Lock, Printer, Wallet } from 'lucide-react';
-import { billCharges, formatRupees, toPaise, type BillPaymentMode, type OpBill, ROUND_OFF_LINE } from '@platform/shared';
+import { billCharges, formatRupees, toPaise, type BillPaymentMode, type OpBill } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, Field, Input, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
@@ -15,6 +15,7 @@ import { billLabel, billTone, fmtDateTime, modeLabel } from '@/components/format
 import { receiptUrl } from './Billing';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
 import { chargeRowsOf, ChargeRowsEditor, chargesOf, type ChargeRow } from '@/components/BillCharges';
+import { BillChargesTable } from '@/components/BillChargesTable';
 
 const rupees = (p: number) => String(p / 100);
 
@@ -234,16 +235,11 @@ export function BillPrint() {
   if (bill.isLoading || header.isLoading) return <p className="p-8 text-sm">Loading…</p>;
   if (!bill.data || !header.data) return <p className="p-8 text-sm text-red-700">{errorMessage(bill.error ?? header.error)}</p>;
   const b = bill.data.bill;
-  // Each line only when there is something to charge: a bill without a consultation fee (lab only, bill only) prints none.
-  const rows: [string, number][] = b.consultationFeePaise > 0 ? [['Consultation fee', b.consultationFeePaise]] : [];
-  for (const l of b.lines) if (l.labOrderId != null) rows.push([`Lab: ${l.description}`, l.amountPaise]);
-  for (const x of billCharges(b)) if (x.description !== ROUND_OFF_LINE) rows.push([x.description, x.amountPaise]);
-  const roundOffPaise = billCharges(b).filter((x) => x.description === ROUND_OFF_LINE).reduce((s, x) => s + x.amountPaise, 0);
 
   return (
     <PrintSheet
       header={header.data.header}
-      title="BILL"
+      title="Bill"
       tabTitle={`Bill ${b.billNo} - ${b.patientName}`}
       share={{ phone: b.patientPhone, subject: `Bill ${b.billNo}`, message: `Hello ${b.patientName}, your bill ${b.billNo} from ${header.data.header.title || 'the hospital'}: total ₹${b.totalPaise / 100}. Thank you.` }}
     >
@@ -253,45 +249,13 @@ export function BillPrint() {
           ['Bill No.', b.billNo],
           ['UHID', b.patientUhid],
           ['Date & time', printDateTime(b.createdAt)],
-          ['OP No.', b.opNo],
-          ['Doctor', b.doctorName ?? '—'],
+          ['OP No.', b.token != null ? `Token ${b.token} · ${b.opNo}` : b.opNo],
+          ...(b.doctorName ? ([['Doctor', b.doctorName]] as [string, string][]) : []),
         ]}
       />
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-y border-[#111]">
-              <th className="w-10 py-1.5 text-left">#</th>
-              <th className="py-1.5 text-left">Description</th>
-              <th className="py-1.5 text-right">Amount (₹)</th>
-            </tr>
-          </thead>
+      <BillChargesTable bills={[b]} totalLabel="Total" />
+        <table className="ml-auto w-[110mm] border-collapse">
           <tbody>
-            {rows.map(([d, a], i) => (
-              <tr key={i} className="border-b border-[#ccc]">
-                <td className="py-1.5">{i + 1}</td>
-                <td className="py-1.5">{d}</td>
-                <td className="py-1.5 text-right tabular-nums">{printMoney(a)}</td>
-              </tr>
-            ))}
-            {b.discountPaise > 0 && (
-              <tr>
-                <td />
-                <td className="py-1.5 text-right">Discount</td>
-                <td className="py-1.5 text-right tabular-nums">− {printMoney(b.discountPaise)}</td>
-              </tr>
-            )}
-            {roundOffPaise > 0 && (
-              <tr>
-                <td />
-                <td className="py-1.5 text-right">Round off</td>
-                <td className="py-1.5 text-right tabular-nums">+ {printMoney(roundOffPaise)}</td>
-              </tr>
-            )}
-            <tr className="border-t-2 border-[#111] text-[15px] font-bold">
-              <td />
-              <td className="py-2 text-right">Total</td>
-              <td className="py-2 text-right tabular-nums">{printMoney(b.totalPaise)}</td>
-            </tr>
             <tr>
               <td />
               <td className="py-1 text-right">Paid {b.payments.length > 0 && `(${[...new Set(b.payments.map((p) => modeLabel[p.mode]))].join(', ')})`}</td>
