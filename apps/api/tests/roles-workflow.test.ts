@@ -60,3 +60,44 @@ describe('who may start an OP, prescribe and send to the counter (default roles)
     expect((await east(`/api/b/east/visits/${byDesk.id}/send`, { method: 'POST', body: { to: 'counter' } })).status).toBe(404);
   });
 });
+
+describe('visits left open on an earlier day', () => {
+  it('are listed until brought to today (new OP no.), finished or closed; one with work on it cannot move', async () => {
+    const { sql } = await import('drizzle-orm');
+    const owner = await t.as('owner');
+    const desk = await t.as('desk');
+    const visitOf = async (name: string) => {
+      const { patient } = await json(owner('/api/b/main/patients', { method: 'POST', body: { name } }));
+      return (await json(owner(`/api/b/main/patients/${patient.id}/visits`, { method: 'POST', body: { complaint: 'Fever', pulse: 80 } }))).visit;
+    };
+    const idle = await visitOf('Never Seen');
+    const busy = await visitOf('Half Done');
+    const now = await visitOf('Today Patient');
+    const { id: med } = await json(owner('/api/b/main/medicines', { method: 'POST', body: { name: 'Paracetamol', form: 'tablet', pricePaise: 200 } }));
+    const expiry = new Date(Date.now() + 200 * 86_400_000).toISOString().slice(0, 10);
+    await owner(`/api/b/main/medicines/${med}/batches`, { method: 'POST', body: { batchNo: 'B1', expiryDate: expiry, quantity: 50 } });
+    expect((await owner(`/api/b/main/visits/${busy.id}/prescription`, { method: 'POST', body: { medicineId: med, dose: '1-0-1', days: 3 } })).status).toBe(201);
+    await t.db.run(sql`update op_visit set visit_date = date(visit_date, '-1 day') where id in (${idle.id}, ${busy.id})`);
+
+    const list = async () => (await json(desk('/api/b/main/visits/left-open'))).visits as any[];
+    const open = await list();
+    expect(open.map((v) => [v.id, v.movable])).toEqual([
+      [idle.id, true],
+      [busy.id, false],
+    ]); // today's visit is not "left open"
+    expect((await json((await t.as('eastdesk'))('/api/b/east/visits/left-open'))).visits).toEqual([]);
+
+    expect((await (await t.as('eastdesk'))(`/api/b/east/visits/${idle.id}/bring-to-today`, { method: 'POST' })).status).toBe(404);
+    expect((await (await t.as('pharm'))(`/api/b/main/visits/${idle.id}/bring-to-today`, { method: 'POST' })).status).toBe(403);
+    expect((await desk(`/api/b/main/visits/${busy.id}/bring-to-today`, { method: 'POST' })).status).toBe(409);
+    expect((await desk(`/api/b/main/visits/${now.id}/bring-to-today`, { method: 'POST' })).status).toBe(409);
+
+    const moved = await desk(`/api/b/main/visits/${idle.id}/bring-to-today`, { method: 'POST' });
+    expect(moved.status).toBe(201);
+    const { visit } = await moved.json();
+    expect(visit).toMatchObject({ visitDate: now.visitDate, status: 'waiting', complaint: 'Fever', pulse: 80, patientId: idle.patientId });
+    expect(visit.opNo).not.toBe(idle.opNo);
+    expect((await json(owner(`/api/b/main/visits/${idle.id}`))).visit.status).toBe('cancelled');
+    expect((await list()).map((v) => v.id)).toEqual([busy.id]);
+  });
+});
