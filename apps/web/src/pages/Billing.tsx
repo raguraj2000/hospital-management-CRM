@@ -1,7 +1,7 @@
 import { useDeferredValue, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { Banknote, CreditCard, FilePlus2, Printer, ReceiptText, Smartphone, Truck, Users, Wallet } from 'lucide-react';
+import { Banknote, CreditCard, FilePlus2, FileText, Printer, ReceiptText, Smartphone, Truck, Users, Wallet } from 'lucide-react';
 import { formatRupees, toPaise, type BillListRow, type BillPaymentMode, type DayReport, type OpBill } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, CardHeader, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, StatCard, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
@@ -324,9 +324,16 @@ function CompletedPayments({ branch }: { branch: string }) {
                 </TD>
                 <TD className="text-right">
                   {/* The whole visit on one paper: consultation, lab and (for the pharmacy counter) medicines. */}
-                  <PrintLink href={`/${branch}/visits/${b.visitId}/bill/print`} aria-label={`Print bill ${b.billNo}`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
-                    <Printer /> Print
-                  </PrintLink>
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    <PrintLink href={`/${branch}/visits/${b.visitId}/bill/print`} aria-label={`Print bill ${b.billNo}`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
+                      <Printer /> Print
+                    </PrintLink>
+                    {b.hasPrescription && (
+                      <PrintLink href={`/${branch}/visits/${b.visitId}/prescription/print`} aria-label={`Print prescription of ${b.patientName}`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
+                        <FileText /> Prescription
+                      </PrintLink>
+                    )}
+                  </div>
                 </TD>
               </TR>
             ))}

@@ -271,6 +271,8 @@ export interface BillListRow {
   paidPaise: number;
   status: OpBill['status'];
   createdAt: string;
+  /** The visit has medicines on its prescription (its prescription can be printed). */
+  hasPrescription: boolean;
 }
 
 /** A pharmacy sale on the patient's Bills tab. */

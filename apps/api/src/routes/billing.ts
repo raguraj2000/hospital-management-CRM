@@ -29,7 +29,7 @@ import {
   ROUND_OFF_LINE,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, user, vendorPayment, visitCharge } from '../db/schema.js';
+import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, prescriptionItem, user, vendorPayment, visitCharge } from '../db/schema.js';
 import { assertVisitOpen, dayStamp, exclusively, localToday, patientOfBranch, textSearch, visitOfBranch, visitsToCollect, withToken, assertPatientActive } from '../lib/clinic.js';
 import { periodOf } from '../lib/clinic.js';
 
@@ -582,6 +582,8 @@ export function createBillingRoutes(db: Db) {
         totalPaise: opBill.totalPaise,
         paidPaise: sql<number>`coalesce(${paid.paid}, 0)`,
         createdAt: opBill.createdAt,
+        // A medicine on the visit's prescription: the counter can print the prescription too.
+        hasPrescription: sql<number>`exists (select 1 from ${prescriptionItem} where ${prescriptionItem.branchId} = ${b.id} and ${prescriptionItem.visitId} = ${opBill.visitId} and ${prescriptionItem.deletedAt} is null)`,
       })
       .from(opBill)
       .innerJoin(opVisit, eq(opVisit.id, opBill.visitId))
@@ -597,7 +599,7 @@ export function createBillingRoutes(db: Db) {
       )
       .orderBy(desc(opBill.id))
       .limit(200);
-    const bills: BillListRow[] = rows.map((r) => ({ ...withToken(r), status: billStatus(r.totalPaise, r.paidPaise) }));
+    const bills: BillListRow[] = rows.map((r) => ({ ...withToken(r), hasPrescription: !!r.hasPrescription, status: billStatus(r.totalPaise, r.paidPaise) }));
     return c.json({ bills, date: date ?? null });
   });
 
