@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, FlaskConical, History, Pill, Printer, Syringe, Wallet } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, FileText, FlaskConical, History, Pill, Printer, Syringe, Wallet } from 'lucide-react';
 import { CourseTab } from '@/components/Courses';
 import { useModuleOn } from '@/state/auth';
 import { formatRupees, type OpBill, type OpVisit, type Patient, type PatientBills, type PrescriptionItem, type VisitFee } from '@platform/shared';
@@ -283,6 +283,11 @@ function CompletedVisit({ branch, visit }: { branch: string; visit: OpVisit }) {
           <Link to={`/${branch}/visits/${visit.id}/bill/print`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
             <Printer /> Print bill
           </Link>
+          {visit.medicineCount > 0 && (
+            <Link to={`/${branch}/visits/${visit.id}/prescription/print`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
+              <FileText /> Prescription
+            </Link>
+          )}
           {orders.some((o) => o.status === 'completed') && (
             <Link to={`/${branch}/lab/visits/${visit.id}/print`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
               <FlaskConical /> Lab report

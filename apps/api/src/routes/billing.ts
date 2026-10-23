@@ -1,6 +1,6 @@
 // Patient billing: one OP bill per visit (consultation + lab tests + other - discount),
 // part payments, daily collection, and the "lab report only after payment" rule.
-import { and, asc, desc, eq, isNull, lte, ne, notInArray, sql, type AnyColumn } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull, lte, ne, notInArray, sql, type AnyColumn } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import type { z } from 'zod';
@@ -29,7 +29,7 @@ import {
   ROUND_OFF_LINE,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, user, vendorPayment, visitCharge } from '../db/schema.js';
+import { billPayment, clinicSetting, labOrder, labRelease, labTest, opBill, opBillLine, opVisit, patient, pharmacySale, prescriptionItem, user, vendorPayment, visitCharge } from '../db/schema.js';
 import { assertVisitOpen, dayStamp, exclusively, localToday, patientOfBranch, textSearch, visitOfBranch, visitsToCollect, withToken, assertPatientActive } from '../lib/clinic.js';
 import { periodOf } from '../lib/clinic.js';
 
@@ -129,9 +129,14 @@ export async function labPaymentState(db: Db | Tx, branchId: number, visitId: nu
       .where(and(eq(opBillLine.branchId, branchId), eq(labOrder.visitId, visitId)))
   ).map((r) => r.id);
   let duePaise = unbilled.reduce((s, o) => s + o.pricePaise, 0);
+  // Only the lab's part of a bill: the consultation fee or other charges left unpaid do not hold back the report.
+  // A payment covers the lab first (on a ₹620 bill with ₹500 of lab, ₹500 received = the lab is paid).
   for (const id of billIds) {
     const [b] = await db.select({ total: opBill.totalPaise }).from(opBill).where(eq(opBill.id, id));
-    duePaise += Math.max(0, b!.total - (await paidOf(db, id)));
+    const [lab] = await db.select({ sum: sql<number>`coalesce(sum(${opBillLine.amountPaise}), 0)` }).from(opBillLine).where(and(eq(opBillLine.billId, id), isNotNull(opBillLine.labOrderId)));
+    const balance = Math.max(0, b!.total - (await paidOf(db, id)));
+    const otherPaise = b!.total - lab!.sum; // consultation + charges - discount + round off (below 0 with a big discount)
+    duePaise += Math.min(lab!.sum, balance, Math.max(0, balance - otherPaise));
   }
   return { paid: duePaise === 0, released: !!released, releaseReason: released?.reason ?? null, duePaise, printAllowed: duePaise === 0 || !!released };
 }
@@ -577,6 +582,8 @@ export function createBillingRoutes(db: Db) {
         totalPaise: opBill.totalPaise,
         paidPaise: sql<number>`coalesce(${paid.paid}, 0)`,
         createdAt: opBill.createdAt,
+        // A medicine on the visit's prescription: the counter can print the prescription too.
+        hasPrescription: sql<number>`exists (select 1 from ${prescriptionItem} where ${prescriptionItem.branchId} = ${b.id} and ${prescriptionItem.visitId} = ${opBill.visitId} and ${prescriptionItem.deletedAt} is null)`,
       })
       .from(opBill)
       .innerJoin(opVisit, eq(opVisit.id, opBill.visitId))
@@ -592,7 +599,7 @@ export function createBillingRoutes(db: Db) {
       )
       .orderBy(desc(opBill.id))
       .limit(200);
-    const bills: BillListRow[] = rows.map((r) => ({ ...withToken(r), status: billStatus(r.totalPaise, r.paidPaise) }));
+    const bills: BillListRow[] = rows.map((r) => ({ ...withToken(r), hasPrescription: !!r.hasPrescription, status: billStatus(r.totalPaise, r.paidPaise) }));
     return c.json({ bills, date: date ?? null });
   });
 
