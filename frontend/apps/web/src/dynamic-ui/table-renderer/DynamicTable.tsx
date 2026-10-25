@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Card, EmptyState, Paging, cn } from '@platform/ui';
+import { Card, EmptyState, Pager, cn } from '@platform/ui';
 import { Inbox } from 'lucide-react';
 import { formatRupees } from '@platform/shared';
 
@@ -124,11 +124,11 @@ export function DynamicTable<T extends Record<string, any>>({
 
       {showPagination && onPageChange && (
         <div className="border-t border-border p-3 flex justify-end">
-          <Paging
+          <Pager
             page={page}
             total={total}
             pageSize={pageSize}
-            onPageChange={onPageChange}
+            onPage={onPageChange}
           />
         </div>
       )}

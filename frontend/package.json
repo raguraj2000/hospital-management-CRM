@@ -1,5 +1,5 @@
 {
-  "name": "platform",
+  "name": "hms-frontend",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -7,13 +7,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev:api": "npm run dev -w @platform/api",
-    "dev:web": "npm run dev -w @platform/web",
-    "seed": "npm run seed -w @platform/api",
-    "test": "npm run test -w @platform/api",
-    "e2e": "npm run build && node scripts/e2e/smoke.mjs",
-    "typecheck": "tsc -p apps/api && tsc -p apps/web",
+    "dev": "npm run dev -w @platform/web",
     "build": "npm run build -w @platform/web",
+    "typecheck": "tsc -p apps/web",
     "e2e:screens": "node e2e/screens.mjs",
     "e2e:op": "node e2e/op-flow.mjs",
     "e2e:settings": "node e2e/settings-flow.mjs",

@@ -181,8 +181,14 @@ def parse_database_url(url: str) -> Dict[str, Any]:
 
 
 def find_sql_directory() -> Path:
-    """Locates the 'sql' directory relative to script or current directory."""
+    """Locates the 'db' or 'sql' directory relative to script or current directory."""
     candidates = [
+        Path(__file__).resolve().parent.parent.parent / "db",
+        Path(__file__).resolve().parent.parent / "db",
+        Path(__file__).resolve().parent / "db",
+        Path.cwd() / "db",
+        Path.cwd().parent / "db",
+        Path(__file__).resolve().parent.parent.parent / "sql",
         Path(__file__).resolve().parent.parent / "sql",
         Path(__file__).resolve().parent / "sql",
         Path.cwd() / "sql",
@@ -191,7 +197,7 @@ def find_sql_directory() -> Path:
     for candidate in candidates:
         if candidate.is_dir() and (candidate / "00_schema_setup.sql").exists():
             return candidate
-    raise FileNotFoundError("Could not find the 'sql' directory with schema files.")
+    raise FileNotFoundError("Could not find the 'db' or 'sql' directory with schema files.")
 
 
 def get_ordered_sql_files(sql_dir: Path) -> List[str]:

@@ -9,13 +9,12 @@ data/
 prototype/
 handoff/
 
-# Cloudflare local state (wrangler dev databases)
+# Cloudflare local state
 .wrangler/
 
 # Python
-__pycache__/*
+__pycache__/
 *.py[cod]
 *$py.class
 .venv/
-hms_backend.egg-info/*
-docs/
+*.egg-info/
