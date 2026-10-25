@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Wallet } from 'lucide-react';
 import { BILL_PAYMENT_MODES, formatRupees, toPaise, type BillPaymentMode } from '@platform/shared';
 import { Button, Dialog, Field, Input, NativeSelect, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 
 const MODE: Record<BillPaymentMode, string> = { cash: 'Cash', upi: 'UPI', card: 'Card' };
 

@@ -1,4 +1,4 @@
-import { api, ApiError } from '@/api/client';
+import { api, ApiError } from '@/core/api/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -37,9 +37,9 @@ import {
   MenuTrigger,
 } from '@platform/ui';
 import { MENU_COUNTS, planStatus } from '@platform/shared';
-import { NAV, NAV_GROUPS, type NavItem } from '@/nav';
-import { useLogout, useMe } from '@/state/auth';
-import { useTheme, type Theme } from '@/state/theme';
+import { NAV, NAV_GROUPS, useNavItems, type NavItem } from '@/core/navigation';
+import { useLogout, useMe } from '@/core/auth';
+import { useTheme, type Theme } from '@/core/theme';
 import { ChangePasswordDialog } from './ChangePassword';
 import { useBranchLogo } from './BranchLogo';
 import { NEW_OP_EVENT, QuickOp } from './QuickOp';
@@ -116,7 +116,7 @@ export function AppShell() {
     );
 
   // The menu: what the role may open, less the pages that are a tab of another page for them.
-  const items = NAV.filter((n) => current.permissions.includes(n.permission) && !(n.foldedWith && current.permissions.includes(n.foldedWith)));
+  const items = useNavItems(current, me?.organization.modulesOff);
   const to = (path: string) => `/${current.slug}${path ? `/${path}` : ''}`;
   const can = (p: string) => current.permissions.includes(p as never);
   setSkipUndo(can('undo.skip'));

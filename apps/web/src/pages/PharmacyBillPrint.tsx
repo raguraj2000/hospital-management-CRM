@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
 import type { PharmacySaleDetail, PrintHeader } from '@platform/shared';
-import { api, errorMessage } from '@/api/client';
-import { useMe } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useMe } from '@/core/auth';
 import { PrintSheet } from '@/components/PrintSheet';
 import { useAutoPrint } from '@/components/useAutoPrint';
 import { modeLabel } from '@/components/format';

@@ -5,8 +5,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookmarkPlus, Check, ListChecks, Pencil, Pill, Plus, RotateCcw, X } from 'lucide-react';
 import { FORM_UNIT, formatRupees, suggestedQuantity, type Bookmark, type BookmarkApplyInput, type BookmarkInput, type BookmarkLine, type Medicine, type VisitInstruction } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, Combobox, Dialog, Field, Input, Skeleton, toast, ConfirmDelete } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
-import { useCan } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useCan } from '@/core/auth';
 import { fmtDateTime } from './format';
 import { DoseInput, InstructionInput, medicineLabel, medicineOption, useRxChoices } from './Prescription';
 

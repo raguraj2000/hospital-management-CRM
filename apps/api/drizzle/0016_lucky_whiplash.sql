@@ -1,1 +1,0 @@
-ALTER TABLE `lab_test_parameter` ADD `optional` integer DEFAULT false NOT NULL;

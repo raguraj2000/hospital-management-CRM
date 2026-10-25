@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { useState } from 'react';
 import type { PrintHeader } from '@platform/shared';
 import { Card, CardHeader, Skeleton, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { ImagePicker } from './PrintHeaderForm';
 
 /** The branch's logo, where every screen and paper takes it from (the same query the side menu and the reports use). */

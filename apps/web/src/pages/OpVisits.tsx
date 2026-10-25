@@ -5,8 +5,8 @@ import { ClipboardList, ClipboardPlus, DoorOpen, FlaskConical, Search, UserPlus 
 import { DirectLab } from '@/components/DirectLab';
 import type { OpVisitRow, Patient, VisitQueue } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, cn, Dialog, EmptyState, Input, NativeSelect, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, TR, usePaged } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
-import { useBranch, useCan } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useBranch, useCan } from '@/core/auth';
 import { ConditionBadges } from '@/components/Conditions';
 import { NewVisitForm, tokenName, useCallNext, useDoctors, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
 import { ageOf, formatPhone } from './Patients';

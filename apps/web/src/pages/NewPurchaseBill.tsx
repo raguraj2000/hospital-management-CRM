@@ -29,9 +29,9 @@ import {
   type Vendor,
 } from '@platform/shared';
 import { Button, Card, CardHeader, Combobox, Dialog, Field, Input, NativeSelect, PageHeader, toast } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
+import { api, ApiError, errorMessage } from '@/core/api/client';
 import { fmtDay } from '@/components/format';
-import { useCan } from '@/state/auth';
+import { useCan } from '@/core/auth';
 
 /** Today in India (IST), whatever time zone this computer is set to. */
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });

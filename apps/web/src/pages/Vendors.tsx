@@ -36,8 +36,8 @@ import {
   toast,
   TR,
 } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
-import { useBranch, useCan } from '@/state/auth';
+import { api, ApiError, errorMessage } from '@/core/api/client';
+import { useBranch, useCan } from '@/core/auth';
 import { fmtDay } from '@/components/format';
 import { ListSearch, textMatch } from '@/components/ListSearch';
 

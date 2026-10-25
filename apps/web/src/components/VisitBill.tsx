@@ -3,8 +3,8 @@ import { Link, useNavigate } from 'react-router';
 import { ChevronRight, FilePlus2, ReceiptText } from 'lucide-react';
 import { formatRupees, type OpBill } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, Skeleton, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
-import { useCan } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useCan } from '@/core/auth';
 import { billLabel, billTone } from '@/components/format';
 import { VisitChargesBox } from '@/components/VisitCharges';
 

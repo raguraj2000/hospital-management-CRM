@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { OpVisit } from '@platform/shared';
 import { Button, Textarea, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
-import { useCan } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useCan } from '@/core/auth';
 
 /**
  * The doctor's note to a counter (pharmacy or lab) for this visit. Whoever writes the prescription /

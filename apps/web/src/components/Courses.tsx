@@ -27,8 +27,8 @@ import {
   type VisitCharges,
 } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, cn, ConfirmDelete, Dialog, EmptyState, Field, Input, NativeSelect, Skeleton, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
-import { useCan } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useCan } from '@/core/auth';
 import { whatsappNumber } from './PrintActions';
 import { isUndone, withUndo } from './undo';
 import { ListSearch, textMatch } from './ListSearch';

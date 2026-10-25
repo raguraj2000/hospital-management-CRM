@@ -18,8 +18,8 @@ import {
   type PrescriptionSuggestions, } from '@platform/shared';
 import { prettyDose } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, Combobox, EmptyState, Field, Input, NativeSelect, Skeleton, Table, TBody, TD, TH, THead, toast, TR, ConfirmDelete, Dialog } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
-import { useCan } from '@/state/auth';
+import { api, ApiError, errorMessage } from '@/core/api/client';
+import { useCan } from '@/core/auth';
 import { CounterNote } from './CounterNote';
 import { AddNoteBar, NoteLine, NoteRowEditor, useMoveNote, withNotes } from './PrescriptionNotes';
 import { BookmarkSearch, VisitInstructions } from './Bookmarks';

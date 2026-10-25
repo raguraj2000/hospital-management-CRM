@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Package, Pencil, Plus, Trash2 } from 'lucide-react';
 import { formatRupees, toPaise, type LabPackage, type LabTest } from '@platform/shared';
 import { Badge, Button, Card, CardHeader, cn, ConfirmDelete, Dialog, EmptyState, Field, Input, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 
 export const useLabPackages = (branch: string, enabled = true) =>
   useQuery({ queryKey: ['lab-packages', branch], queryFn: () => api.get<{ packages: LabPackage[] }>(`/b/${branch}/lab/packages`), enabled, staleTime: 60_000 });

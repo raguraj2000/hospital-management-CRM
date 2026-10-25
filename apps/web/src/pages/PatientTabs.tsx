@@ -4,10 +4,10 @@ import { Link, useNavigate } from 'react-router';
 import { ClipboardEdit, FlaskConical, Pill, Printer, Receipt, ReceiptText, Scale, Wallet } from 'lucide-react';
 import { formatRupees, type PatientBills, type PatientLabOrder } from '@platform/shared';
 import { Badge, Button, buttonVariants, Card, EmptyState, Input, Skeleton, StatCard, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { PrintLink } from '@/components/print';
 import { LabResultReady } from '@/components/VisitLab';
-import { useCan } from '@/state/auth';
+import { useCan } from '@/core/auth';
 import { TokenBadge } from '@/components/Visits';
 import { billLabel, billTone, fmtDate, fmtDateTime, inDays, istDay, labLabel, labTone, modeLabel } from '@/components/format';
 

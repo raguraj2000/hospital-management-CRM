@@ -16,8 +16,8 @@ import {
   type VisitStatus,
 } from '@platform/shared';
 import { Badge, Button, cn, ConfirmDelete, Dialog, Field, Input, Menu, MenuContent, MenuItem, MenuTrigger, NativeSelect, Skeleton, Textarea, toast, type Tone } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
-import { useCan, useMe } from '@/state/auth';
+import { api, ApiError, errorMessage } from '@/core/api/client';
+import { useCan, useMe } from '@/core/auth';
 import { isUndone, withUndo } from '@/components/undo';
 import { clearDraft, DraftBar, readDraft, saveDraft } from './drafts';
 

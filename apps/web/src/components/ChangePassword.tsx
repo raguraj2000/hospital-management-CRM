@@ -2,7 +2,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { changePasswordSchema } from '@platform/shared';
 import { Button, Dialog, Field, Input, toast } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
+import { api, ApiError, errorMessage } from '@/core/api/client';
 
 type Values = { currentPassword: string; newPassword: string };
 

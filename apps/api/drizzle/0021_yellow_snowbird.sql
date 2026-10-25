@@ -1,1 +1,0 @@
-ALTER TABLE `clinic_setting` ADD `fee_slots` text;

@@ -5,7 +5,7 @@ import { formatRupees } from '@platform/shared';
 import { useState } from 'react';
 import { CalendarRange } from 'lucide-react';
 import { Button, Card, CardHeader, cn, Input, Skeleton, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { Link } from 'react-router';
 import { fmtDateTime, fmtDay } from './format';
 

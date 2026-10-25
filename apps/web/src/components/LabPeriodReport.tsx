@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { FlaskConical } from 'lucide-react';
 import { formatRupees } from '@platform/shared';
 import { Card, CardHeader, EmptyState, Skeleton, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { PeriodPicker, periodQuery, type PeriodDays } from './PeriodReport';
 
 interface LabReportData {

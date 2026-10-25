@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, X } from 'lucide-react';
 import { toPaise, type LabTestDetail } from '@platform/shared';
 import { Button, Field, Input, Skeleton, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 
 interface Line {
   id?: number;

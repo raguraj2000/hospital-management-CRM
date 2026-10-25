@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ClipboardCheck, GripVertical, Pencil, StickyNote, X } from 'lucide-react';
 import type { PrescriptionItem, PrescriptionNote } from '@platform/shared';
 import { Button, cn, Input, NativeSelect, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 
 export const NOTE_WORD = { note: 'Note', instruction: 'Instruction' } as const;
 const NOTE_ICON = { note: StickyNote, instruction: ClipboardCheck } as const;

@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { formatRupees, toPaise, VENDOR_PAYMENT_MODES, type Expense, type Vendor, type VendorPaymentMode } from '@platform/shared';
 import { Button, Card, CardHeader, ConfirmDelete, Field, Input, NativeSelect, Pager, Skeleton, Table, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { fmtDay } from './format';
 import { ListSearch, textMatch } from './ListSearch';
 

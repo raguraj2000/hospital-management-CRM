@@ -34,8 +34,8 @@ import {
   Field,
   Textarea,
 } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
-import { useCan, useMe } from '@/state/auth';
+import { api, ApiError, errorMessage } from '@/core/api/client';
+import { useCan, useMe } from '@/core/auth';
 import { ConditionBadges } from '@/components/Conditions';
 import { PatientForm } from '@/components/PatientForm';
 import { NewVisitForm, TokenBadge, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';

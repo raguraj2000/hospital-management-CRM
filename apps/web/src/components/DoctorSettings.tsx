@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DoctorSettings as DoctorSettingsData, DoctorSettingsInput, DoctorSettingsPerson } from '@platform/shared';
 import { Button, Card, CardHeader, cn, Field, NativeSelect, Skeleton, toast } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
+import { api, ApiError, errorMessage } from '@/core/api/client';
 
 /** Ticked by hand (Doctor-role staff are doctors without a tick). */
 const tickedOf = (people: DoctorSettingsPerson[]) => people.filter((p) => p.isDoctor && !p.isDoctorRole).map((p) => p.userId);

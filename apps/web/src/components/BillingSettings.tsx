@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronUp, Clock, GripVertical, Moon, Plus, Sun, X } from 'lucide-react';
 import { feeSlotAt, formatRupees, MENU_COUNTS, toPaise, type ChargePreset, type FeeSlot } from '@platform/shared';
 import { Button, Card, CardHeader, cn, Field, Input, toast } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 
 /** Rows shown before "Show all charges". */
 const SHORT_LIST = 6;

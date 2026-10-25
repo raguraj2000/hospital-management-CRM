@@ -38,9 +38,9 @@ import {
   Pager,
   usePaged,
 } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
+import { api, ApiError, errorMessage } from '@/core/api/client';
 import { Vendors } from './Vendors';
-import { useBranch, useCan } from '@/state/auth';
+import { useBranch, useCan } from '@/core/auth';
 import { fmtDay } from '@/components/format';
 import { INSTRUCTIONS, START_DOSES } from '@/components/Prescription';
 import { ListSearch, textMatch } from '@/components/ListSearch';

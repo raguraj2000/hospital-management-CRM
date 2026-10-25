@@ -5,10 +5,10 @@ import { Link, useParams, useSearchParams } from 'react-router';
 import { CheckCheck, CheckCircle2, Syringe, Undo2, RefreshCw } from 'lucide-react';
 import { FORM_UNIT, indiaDay, prettyDose, type DueSitting, type TreatmentDose, type TreatmentList } from '@platform/shared';
 import { Avatar, Badge, Button, Card, CardHeader, cn, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { ConditionBadges } from '@/components/Conditions';
 import { fmtDay, fmtTime } from '@/components/format';
-import { useBranch, useCan, useModuleOn } from '@/state/auth';
+import { useBranch, useCan, useModuleOn } from '@/core/auth';
 import { ListSearch, textMatch } from '@/components/ListSearch';
 
 /** "1 tablet" / "½ tablet" / "" for a typed dose. */

@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { PrintHeader } from '@platform/shared';
-import { api } from '@/api/client';
+import { api } from '@/core/api/client';
 import { ReportHeader, ReportWatermark } from './ReportHeader';
 import { PrintActions, type ShareInfo } from './PrintActions';
 

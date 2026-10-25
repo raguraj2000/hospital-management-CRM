@@ -6,8 +6,8 @@ import { Link } from 'react-router';
 import { Pencil, Plus, X } from 'lucide-react';
 import { formatRupees, ROUND_OFF_LINE, toPaise, type VisitCharges } from '@platform/shared';
 import { Button, cn, Input, NativeSelect, toast, ConfirmDelete } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
-import { useCan } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useCan } from '@/core/auth';
 
 /** Everything that shows a visit's money. */
 const AFTER_CHARGE = ['visit-charges', 'checkout', 'checkout-queue', 'visit-bills', 'bill', 'bills-due', 'to-bill', 'patient-bills', 'dashboard'];

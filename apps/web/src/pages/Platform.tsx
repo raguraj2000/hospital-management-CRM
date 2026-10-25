@@ -6,8 +6,8 @@ import { Navigate, useNavigate } from 'react-router';
 import { Building2, IndianRupee, KeyRound, LogOut, Pause, Play, Plus, SlidersHorizontal, Users } from 'lucide-react';
 import { formatRupees, MODULES, newCustomerSchema, planStatus, type Customer, type ModuleKey, type NewCustomerInput, type OwnerHelp, type PlatformPayment } from '@platform/shared';
 import { Badge, Button, Card, Dialog, EmptyState, Field, Input, PageHeader, Skeleton, StatCard, Table, TBody, TD, TH, THead, toast, TR } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
-import { useLogout, useMe } from '@/state/auth';
+import { api, ApiError, errorMessage } from '@/core/api/client';
+import { useLogout, useMe } from '@/core/auth';
 
 /** You (hosting the SaaS): customers, their owner logins, suspend / activate. No patient data here. */
 export function Platform() {

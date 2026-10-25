@@ -4,8 +4,8 @@ import { Navigate, useLocation, useNavigate } from 'react-router';
 import { AlertCircle, HeartPulse, ShieldCheck, Building2, Users } from 'lucide-react';
 import { loginSchema, type LoginInput } from '@platform/shared';
 import { Button, Field, Input } from '@platform/ui';
-import { errorMessage } from '@/api/client';
-import { useLogin, useMe } from '@/state/auth';
+import { errorMessage } from '@/core/api/client';
+import { useLogin, useMe } from '@/core/auth';
 
 const FEATURES = [
   { icon: Building2, text: 'Every branch keeps its own records' },

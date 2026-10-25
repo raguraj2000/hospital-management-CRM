@@ -5,9 +5,9 @@ import { ClipboardEdit, FlaskConical, GripVertical, ListPlus, Pencil, Plus, Prin
 import { formatRupees, LAB_CATALOG, opToken, type LabQueueEntry, type LabTest } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, ConfirmDelete, ConfirmDialog, Dialog, EmptyState, Field, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsContent, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, usePaged } from '@platform/ui';
 import { fmtDateTime } from '@/components/format';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { PrintHeaderForm } from '@/components/PrintHeaderForm';
-import { useBranch, useCan } from '@/state/auth';
+import { useBranch, useCan } from '@/core/auth';
 import { PrintLink } from '@/components/print';
 import { departmentLabel, LabTestForm } from '@/components/LabTestForm';
 import { DirectLab } from '@/components/DirectLab';

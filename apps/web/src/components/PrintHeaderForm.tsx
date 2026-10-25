@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImagePlus, Plus, Trash2, X } from 'lucide-react';
 import type { PrintHeader } from '@platform/shared';
 import { Button, Card, CardHeader, Field, Input, Skeleton, toast, Textarea } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
+import { api, ApiError, errorMessage } from '@/core/api/client';
 import { ReportFooter, ReportHeader, ReportWatermark } from './ReportHeader';
 
 const MAX_IMAGE_BYTES = 300 * 1024;

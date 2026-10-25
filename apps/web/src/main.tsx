@@ -5,11 +5,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Construction, Lock } from 'lucide-react';
 import type { Permission } from '@platform/shared';
 import { Card, EmptyState, ErrorBoundary, PageHeader, Toaster } from '@platform/ui';
-import { initTheme, isDark, useTheme } from './state/theme';
+import { initTheme, isDark, useTheme } from '@/core/theme';
 import './index.css';
-import { setUnauthenticatedHandler } from './api/client';
-import { ME_KEY, useCan, useMe } from './state/auth';
-import { NAV } from './nav';
+import { setUnauthenticatedHandler } from '@/core/api/client';
+import { ME_KEY, useCan, useMe } from '@/core/auth';
+import { NAV } from '@/core/navigation';
 import { AppShell } from './components/AppShell';
 import { AppShellSkeleton, LoginSkeleton, PageSkeleton } from './components/Skeletons';
 import { Login } from './pages/Login';
@@ -38,6 +38,7 @@ const Vendors = lazy(() => import('./pages/Vendors').then((m) => ({ default: m.V
 const PurchaseBillPage = lazy(() => import('./pages/PurchaseBill').then((m) => ({ default: m.PurchaseBillPage })));
 const NewPurchaseBill = lazy(() => import('./pages/NewPurchaseBill').then((m) => ({ default: m.NewPurchaseBill })));
 const Platform = lazy(() => import('./pages/Platform').then((m) => ({ default: m.Platform })));
+const ReportsPage = lazy(() => import('@/modules/reports').then((m) => ({ default: m.ReportsPage })));
 
 initTheme();
 
@@ -99,7 +100,7 @@ function ThemedToaster() {
   return <Toaster theme={isDark(theme) ? 'dark' : 'light'} position="top-right" richColors closeButton />;
 }
 
-const pages: Record<string, ReactNode> = { '': <Dashboard />, patients: <Patients />, visits: <OpVisits />, settings: <Settings />, pharmacy: <Pharmacy />, inventory: <Inventory />, lab: <Lab />, billing: <Billing />, treatments: <Treatments />, bookmarks: <BookmarksPage />, help: <Help />, vendors: <Vendors /> };
+const pages: Record<string, ReactNode> = { '': <Dashboard />, patients: <Patients />, visits: <OpVisits />, settings: <Settings />, pharmacy: <Pharmacy />, inventory: <Inventory />, lab: <Lab />, billing: <Billing />, treatments: <Treatments />, bookmarks: <BookmarksPage />, help: <Help />, vendors: <Vendors />, reports: <ReportsPage /> };
 
 /** A page that is downloaded when first opened: the skeleton shows meanwhile. */
 const Page = ({ children }: { children: ReactNode }) => <Suspense fallback={<PageSkeleton />}>{children}</Suspense>;

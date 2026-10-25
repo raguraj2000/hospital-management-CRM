@@ -5,7 +5,7 @@ import { Link, useParams } from 'react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { GENDER_LABEL, GENDERS, patientInputSchema, type Patient, type PatientFormValues, type PatientInput, ageInfo } from '@platform/shared';
 import { Button, Field, Input, NativeSelect, Textarea } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
+import { api, ApiError, errorMessage } from '@/core/api/client';
 import { ageOf } from '@/pages/Patients';
 import { ConditionsPicker } from './Conditions';
 import { isUndone } from '@/components/undo';

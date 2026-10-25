@@ -56,8 +56,8 @@ import {
   toast,
   TR,
 } from '@platform/ui';
-import { api, ApiError, errorMessage } from '@/api/client';
-import { ME_KEY, useBranch, useCan, useMe, useModuleOn } from '@/state/auth';
+import { api, ApiError, errorMessage } from '@/core/api/client';
+import { ME_KEY, useBranch, useCan, useMe, useModuleOn } from '@/core/auth';
 import { BranchSettings } from '@/components/BranchSettings';
 import { BackupRestore } from '@/components/BackupRestore';
 import { AuditLog } from '@/components/AuditLog';

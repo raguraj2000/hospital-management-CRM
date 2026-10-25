@@ -3,12 +3,12 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useParams, useSearchParams } from 'react-router';
 import { receiptNo, type DayReport, type OpBill } from '@platform/shared';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { modeLabel } from '@/components/format';
 import { printDateTime, printDay, printMoney } from '@/components/printFormat';
 import { PrintFacts, PrintSheet, usePrintHeader } from '@/components/PrintSheet';
 import { useAutoPrint } from '@/components/useAutoPrint';
-import { useMe } from '@/state/auth';
+import { useMe } from '@/core/auth';
 
 function useAllowed(branch: string | undefined, ...permissions: string[]) {
   const { data: me } = useMe();

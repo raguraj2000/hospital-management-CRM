@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host --port 5173",
+    "dev": "vite --host",
     "build": "tsc -p . && vite build",
     "preview": "vite preview"
   },

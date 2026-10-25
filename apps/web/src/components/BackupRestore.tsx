@@ -2,7 +2,8 @@ import { useRef, useState } from 'react';
 import { DatabaseBackup, Download, TriangleAlert, Upload } from 'lucide-react';
 import type { ApiErrorBody } from '@platform/shared';
 import { Button, Card, CardHeader, ConfirmDelete, toast } from '@platform/ui';
-import { useCan } from '@/state/auth';
+import { useCan } from '@/core/auth';
+import { API_BASE_URL } from '@/core/api/client';
 
 /** These two calls carry a file, not JSON, so they do not go through the JSON api client. */
 async function errorOf(res: Response): Promise<string> {
@@ -27,7 +28,7 @@ export function BackupRestore({ branch }: { branch: string }) {
     setDownloading(true);
     setDownloadError(null);
     try {
-      const res = await fetch(`/api/b/${branch}/backup`, { credentials: 'include' });
+      const res = await fetch(`${API_BASE_URL}/api/b/${branch}/backup`, { credentials: 'include' });
       if (!res.ok) return setDownloadError(await errorOf(res));
       const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'hms-backup.db';
       const url = URL.createObjectURL(await res.blob());
@@ -50,7 +51,7 @@ export function BackupRestore({ branch }: { branch: string }) {
     setRestoring(true);
     setRestoreError(null);
     try {
-      const res = await fetch(`/api/b/${branch}/restore`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+      const res = await fetch(`${API_BASE_URL}/api/b/${branch}/restore`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
       if (!res.ok) return setRestoreError(await errorOf(res));
       toast.success('Backup restored', { description: 'Everyone is signed out. Sign in again with an account from the backup.', duration: 8000 });
       // The session ended with the restore: go to the sign-in page with a clean start.
@@ -77,7 +78,7 @@ export function BackupRestore({ branch }: { branch: string }) {
             Automatic: a copy is made every day in C:\HMS\backups (last 14 days), and on a pendrive with an HMS-Backup folder when plugged in.
           </p>
           {canLog && (
-            <a href={`/api/b/${branch}/logs`} className="inline-flex text-sm font-medium text-brand hover:underline">
+            <a href={`${API_BASE_URL}/api/b/${branch}/logs`} className="inline-flex text-sm font-medium text-brand hover:underline">
               Download the error log (for support)
             </a>
           )}

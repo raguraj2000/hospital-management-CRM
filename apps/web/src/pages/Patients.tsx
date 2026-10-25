@@ -5,8 +5,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { ChevronRight, Plus, Search, SearchX, Users, Wallet } from 'lucide-react';
 import type { Patient } from '@platform/shared';
 import { Avatar, Badge, Button, Card, Dialog, EmptyState, Input, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, toast, TR, NativeSelect } from '@platform/ui';
-import { api, errorMessage } from '@/api/client';
-import { useBranch, useCan } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useBranch, useCan } from '@/core/auth';
 import { PatientForm } from '@/components/PatientForm';
 import { withUndo } from '@/components/undo';
 

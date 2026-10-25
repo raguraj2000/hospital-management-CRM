@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
 import { billCharges, type BillPaymentMode, type VisitBillPrint as VisitBillData, ROUND_OFF_LINE } from '@platform/shared';
-import { api, errorMessage } from '@/api/client';
-import { useMe } from '@/state/auth';
+import { api, errorMessage } from '@/core/api/client';
+import { useMe } from '@/core/auth';
 import { PrintSheet, PrintSignature } from '@/components/PrintSheet';
 import { useAutoPrint } from '@/components/useAutoPrint';
 import { printDateTime, printDay, printMoney } from '@/components/printFormat';

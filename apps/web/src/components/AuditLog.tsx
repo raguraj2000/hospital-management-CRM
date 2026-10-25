@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { Badge, Card, CardHeader, Input, NativeSelect, Pager, Skeleton, Table, TBody, TD, TH, THead, TR } from '@platform/ui';
 import { formatRupees } from '@platform/shared';
-import { api, errorMessage } from '@/api/client';
+import { api, errorMessage } from '@/core/api/client';
 import { fmtDateTime } from './format';
 
 interface Entry {

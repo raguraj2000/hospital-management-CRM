@@ -1,1 +1,0 @@
-ALTER TABLE `pharmacy_sale` ADD `round_off_paise` integer DEFAULT 0 NOT NULL;

@@ -9,7 +9,7 @@ export default defineConfig({
   server: {
     // Dev: the browser talks to this port only; /api goes to the API server.
     // No changeOrigin, so the API's same-origin check sees matching Origin/Host.
-    proxy: { '/api': { target: 'http://localhost:4100' } },
+    proxy: { '/api': { target: 'http://localhost:8000' }},
   },
   build: { chunkSizeWarningLimit: 600 },
 });
