@@ -11,6 +11,7 @@ import {
   visitInputSchema,
   visitSendSchema,
   visitUpdateSchema,
+  type LeftOpenVisit,
   type OpVisitRow,
   type VisitCallNextResponse,
   type VisitLabSummary,
@@ -18,7 +19,7 @@ import {
   type VisitSendResponse,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requireAnyPermission, requireModule, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { labOrder, labTest, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
+import { labOrder, labTest, opBill, opVisit, patient, pharmacySale, prescriptionItem, user, visitCharge } from '../db/schema.js';
 import { balanceDueOf, settledAtCounter, withToken, assertPatientActive } from '../lib/clinic.js';
 import { feeSlots, visitFee } from './billing.js';
 import { testsToOrder } from './lab.js';
@@ -307,6 +308,62 @@ export function createVisitRoutes(db: Db) {
   });
 
   const NOT_OPEN: Partial<Record<OpVisitRow['status'], string>> = { completed: 'This visit is already completed', cancelled: 'This visit was cancelled' };
+
+  /** An earlier day's visit with nothing on it yet (no bill, sale, charge, lab test or medicine): it can move to today. */
+  async function untouched(d: Db | Tx, branchId: number, v: { id: number; lab: VisitLabSummary; medicineCount: number }) {
+    if (v.lab.ordered + v.lab.sampleCollected + v.lab.completed > 0 || v.medicineCount > 0) return false;
+    const [bill] = await d.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, branchId), eq(opBill.visitId, v.id))).limit(1);
+    const [sale] = await d.select({ id: pharmacySale.id }).from(pharmacySale).where(and(eq(pharmacySale.branchId, branchId), eq(pharmacySale.visitId, v.id))).limit(1);
+    const [charge] = await d.select({ id: visitCharge.id }).from(visitCharge).where(and(eq(visitCharge.branchId, branchId), eq(visitCharge.visitId, v.id), isNull(visitCharge.deletedAt))).limit(1);
+    return !bill && !sale && !charge;
+  }
+
+  const LEFT_OPEN = ['waiting', 'with_doctor', 'at_lab'] as const;
+
+  /**
+   * Visits of earlier days the doctor never finished (still waiting, inside or at the lab): they drop off the day's
+   * list at midnight, so they are listed here until someone brings them to today, finishes or closes them.
+   * (Visits at the counter are not here: Billing lists those of every day.)
+   */
+  app.get('/visits/left-open', requirePermission('patient.view'), async (c) => {
+    const b = c.get('branch');
+    const today = await localToday(db);
+    const rows = await withProgress(
+      db,
+      b.id,
+      await selectVisits()
+        .where(and(visitInBranch(b.id), sql`${opVisit.visitDate} < ${today}`, inArray(opVisit.status, [...LEFT_OPEN])))
+        .orderBy(desc(opVisit.visitDate), opVisit.id)
+        .limit(100),
+    );
+    const visits: LeftOpenVisit[] = [];
+    for (const v of rows) visits.push({ ...v, movable: await untouched(db, b.id, v) });
+    return c.json({ visits });
+  });
+
+  /** An earlier day's untouched visit becomes a new visit today (today's OP no. and token, at the end of the queue); the old one is closed. */
+  app.post('/visits/:visitId/bring-to-today', requirePermission('patient.create'), async (c) => {
+    const b = c.get('branch');
+    const u = c.get('user');
+    const old = await findVisit(b.id, Number(c.req.param('visitId')));
+    const today = await localToday(db);
+    if (old.visitDate >= today || !(LEFT_OPEN as readonly string[]).includes(old.status)) throw new AppError(409, 'bad_state', 'Only a visit left open on an earlier day can be brought to today');
+    await assertPatientActive(db, b.id, old.patientId);
+    const id = await db.transaction(async (tx) => {
+      if (!(await untouched(tx, b.id, old))) throw new AppError(409, 'has_work', 'This visit already has tests, medicines or a bill on it: open it and finish it instead.');
+      const opNo = await nextOpNo(tx, b.id, today);
+      const { doctorUserId, complaint, notes, pharmacyNote, labNote, referredBy, bpSystolic, bpDiastolic, pulse, temperatureF, spo2, weightKg, heightCm } = old;
+      const [row] = await tx
+        .insert(opVisit)
+        .values({ branchId: b.id, patientId: old.patientId, opNo, visitDate: today, createdBy: u.id, doctorUserId, complaint, notes, pharmacyNote, labNote, referredBy: referredBy ?? null, bpSystolic, bpDiastolic, pulse, temperatureF, spo2, weightKg, heightCm })
+        .returning({ id: opVisit.id });
+      await tx.update(opVisit).set({ status: 'cancelled', updatedAt: new Date().toISOString() }).where(and(visitInBranch(b.id), eq(opVisit.id, old.id)));
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: old.id, detail: { status: 'cancelled', broughtToToday: row!.id } });
+      await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'create', entity: 'op_visit', entityId: row!.id, detail: { opNo, patientId: old.patientId, from: old.id } });
+      return row!.id;
+    });
+    return c.json({ visit: await findVisit(b.id, id) }, 201);
+  });
 
   // Call the next patient in (or the one chosen with visitId). Same permission as changing a visit's status.
   app.post('/visits/call-next', requirePermission('patient.edit'), async (c) => {

@@ -34,6 +34,7 @@ const Treatments = lazy(() => import('./pages/Treatments').then((m) => ({ defaul
 const BookmarksPage = lazy(() => import('./pages/Bookmarks').then((m) => ({ default: m.BookmarksPage })));
 const Help = lazy(() => import('./pages/Help').then((m) => ({ default: m.Help })));
 const VisitBillPrint = lazy(() => import('./pages/VisitBillPrint').then((m) => ({ default: m.VisitBillPrint })));
+const PrescriptionPrint = lazy(() => import('./pages/PrescriptionPrint').then((m) => ({ default: m.PrescriptionPrint })));
 const Vendors = lazy(() => import('./pages/Vendors').then((m) => ({ default: m.Vendors })));
 const PurchaseBillPage = lazy(() => import('./pages/PurchaseBill').then((m) => ({ default: m.PurchaseBillPage })));
 const NewPurchaseBill = lazy(() => import('./pages/NewPurchaseBill').then((m) => ({ default: m.NewPurchaseBill })));
@@ -114,6 +115,7 @@ const router = createBrowserRouter([
   { path: '/:branch/billing/day-report/print', element: <Page><DayReportPrint /></Page> },
   { path: '/:branch/pharmacy/sales/:saleId/print', element: <Page><PharmacyBillPrint /></Page> },
   { path: '/:branch/visits/:visitId/bill/print', element: <Page><VisitBillPrint /></Page> },
+  { path: '/:branch/visits/:visitId/prescription/print', element: <Page><PrescriptionPrint /></Page> },
   {
     path: '/:branch',
     element: <AppShell />,
