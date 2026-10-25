@@ -19,3 +19,7 @@ __pycache__/
 .venv/
 *.egg-info/
 .agents/
+docs/
+AGENTS.md
+api_list_173_module_wise.txt
+api-redesign.md
