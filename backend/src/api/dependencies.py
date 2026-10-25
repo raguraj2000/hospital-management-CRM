@@ -1,7 +1,7 @@
 """FastAPI dependencies for authentication, context, and permissions."""
 
 from typing import Any, Callable, Optional
-from fastapi import Cookie, Depends, Header, HTTPException, Path, status
+from fastapi import Cookie, Depends, Header, HTTPException, Path, Query, status
 from pydantic import BaseModel
 from src.constants.application import COOKIE_SESSION_ID
 from src.constants.errors import ErrorCode
@@ -48,28 +48,50 @@ async def get_current_user(
 
 
 async def get_branch_context(
-    branch_slug: str = Path(..., description="Branch URL slug"),
+    branch_id: Optional[int] = Query(None, description="Branch ID"),
+    branch_slug: Optional[str] = Query(None, description="Branch URL slug"),
+    x_branch_id: Optional[str] = Header(None, alias="X-Branch-Id"),
+    x_branch_slug: Optional[str] = Header(None, alias="X-Branch-Slug"),
     current_user: User = Depends(get_current_user),
     org_repo: OrganizationRepository = Depends(),
 ) -> BranchContext:
     """
-    Resolves branch by slug and verifies tenant isolation (user belongs to branch's company).
+    Resolves branch by id or slug and verifies tenant isolation (user belongs to branch's company).
     If invalid or belongs to another company, raises 404 to prevent enumeration.
     """
+    resolved_id = branch_id
+    if resolved_id is None and x_branch_id and x_branch_id.isdigit():
+        resolved_id = int(x_branch_id)
+
+    resolved_slug = branch_slug or x_branch_slug
+
     memberships = await org_repo.user_repo.get_memberships_for_user(current_user.id)
     if not memberships:
         raise AppException("Branch not found.", code=ErrorCode.NOT_FOUND, status_code=404)
 
-    # Search among user's active tenant companies
     matched_branch: Optional[Branch] = None
     matched_company_id: Optional[int] = None
 
     for m in memberships:
-        b = await org_repo.get_branch_by_slug(m.company_id, branch_slug)
-        if b:
-            matched_branch = b
-            matched_company_id = m.company_id
-            break
+        if resolved_id is not None:
+            b = await org_repo.get_branch_by_id(m.company_id, resolved_id)
+            if b:
+                matched_branch = b
+                matched_company_id = m.company_id
+                break
+        elif resolved_slug:
+            b = await org_repo.get_branch_by_slug(m.company_id, resolved_slug)
+            if b:
+                matched_branch = b
+                matched_company_id = m.company_id
+                break
+        else:
+            # Default to first branch of user's company if neither provided
+            branches = await org_repo.list_branches_for_company(m.company_id)
+            if branches:
+                matched_branch = branches[0]
+                matched_company_id = m.company_id
+                break
 
     if not matched_branch or not matched_company_id:
         raise AppException("Branch not found.", code=ErrorCode.NOT_FOUND, status_code=404)

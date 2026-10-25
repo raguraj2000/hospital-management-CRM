@@ -23,10 +23,15 @@ class AppException(Exception):
         self.fields = fields or {}
 
     def to_dict(self) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"error": self.message, "code": str(self.code)}
-        if self.fields:
-            payload["fields"] = self.fields
-        return payload
+        return {
+            "status_code": self.status_code,
+            "message": self.message,
+            "data": None,
+            "error": {
+                "code": str(self.code),
+                "details": self.fields if self.fields else None,
+            },
+        }
 
 
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:

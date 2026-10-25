@@ -2,9 +2,9 @@
 
 from datetime import datetime, timezone
 from typing import Optional, Sequence
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.dal import execute_all, execute_one_or_none, save_entity
+from src.dal import execute_all, execute_dml, execute_one_or_none, save_entity
 from src.models.global_schema.users import OrganizationMembership, Session, User
 from src.repository.base import BaseRepository
 
@@ -75,3 +75,25 @@ class UserRepository(BaseRepository[User]):
             OrganizationMembership.is_active == True,
         )
         return await execute_all(stmt, session=session)
+
+    async def update_password(
+        self,
+        user_id: int,
+        password_hash: str,
+        session: AsyncSession,
+    ) -> None:
+        stmt = update(User).where(User.id == user_id).values(password_hash=password_hash)
+        await execute_dml(stmt, session=session)
+
+    async def revoke_user_sessions(
+        self,
+        user_id: int,
+        except_token_hash: Optional[str] = None,
+        session: Optional[AsyncSession] = None,
+    ) -> None:
+        stmt = delete(Session).where(Session.user_id == user_id)
+        if except_token_hash:
+            stmt = stmt.where(Session.id != except_token_hash)
+        if session:
+            await execute_dml(stmt, session=session)
+

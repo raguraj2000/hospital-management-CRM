@@ -63,18 +63,40 @@ class InvoiceTaxLine(Base):
     igst_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
 
-class InvoicePayment(Base, TimestampMixin):
+class InvoicePayment(Base):
     __tablename__ = "invoice_payments"
     __table_args__ = {"schema": "public"}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     company_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    branch_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     invoice_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    receipt_no: Mapped[str] = mapped_column(String(40), nullable=False)
+    receipt_no: Mapped[str] = mapped_column(String(60), nullable=False)
     amount_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    payment_method: Mapped[str] = mapped_column(String(30), nullable=False)
-    ref_no: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    reference: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     received_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+        nullable=False,
+    )
+
+    @property
+    def payment_method(self) -> str:
+        return self.mode
+
+    @payment_method.setter
+    def payment_method(self, value: str) -> None:
+        self.mode = value
+
+    @property
+    def ref_no(self) -> Optional[str]:
+        return self.reference
+
+    @ref_no.setter
+    def ref_no(self, value: Optional[str]) -> None:
+        self.reference = value
 
 
 class CreditDebitNote(Base, TimestampMixin):

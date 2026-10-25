@@ -50,6 +50,19 @@ class OrganizationRepository(BaseRepository[Organization]):
         )
         return await execute_one_or_none(stmt, session=session)
 
+    async def get_branch_by_id(
+        self,
+        company_id: int,
+        branch_id: int,
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[Branch]:
+        stmt = select(Branch).where(
+            Branch.company_id == company_id,
+            Branch.id == branch_id,
+            Branch.is_active == True,
+        )
+        return await execute_one_or_none(stmt, session=session)
+
     async def list_branches_for_company(
         self,
         company_id: int,

@@ -1,21 +1,22 @@
-"""Atomic combined OPD + Pharmacy checkout endpoint."""
+"""Atomic combined OPD + Pharmacy checkout router."""
 
+from typing import Any, Dict
 from fastapi import APIRouter, Depends
-from src.api.dependencies import BranchContext, require_permission
-from src.constants.permissions import Permission
+from src.api.dependencies import BranchContext, get_branch_context
 from src.schemas.checkout_schema import CheckoutRequest, CheckoutResponse
+from src.schemas.common import api_response
 from src.service.checkout_service import CheckoutService
 
-router = APIRouter(prefix="/b/{branch_slug}/checkout", tags=["Checkout"])
+router = APIRouter(prefix="/checkout", tags=["Atomic Checkout"])
 
 
-@router.post("", response_model=CheckoutResponse)
+@router.post("/process")
 async def process_checkout(
     payload: CheckoutRequest,
-    context: BranchContext = Depends(require_permission(Permission.BILLING_INVOICE_CREATE)),
+    context: BranchContext = Depends(get_branch_context),
     checkout_service: CheckoutService = Depends(),
-) -> CheckoutResponse:
-    return await checkout_service.execute_checkout(
+) -> Dict[str, Any]:
+    res = await checkout_service.execute_checkout(
         company_id=context.company_id,
         branch_id=context.branch_id,
         code_prefix=context.code_prefix,
@@ -23,4 +24,4 @@ async def process_checkout(
         request=payload,
         actor_id=context.user.id,
     )
-
+    return api_response(data=res.model_dump(), message="Checkout processed successfully")

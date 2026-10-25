@@ -24,6 +24,10 @@ class Patient(Base, TimestampMixin, SoftDeleteMixin):
     blood_group: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    @property
+    def is_active(self) -> bool:
+        return self.deleted_at is None
+
 
 class OpVisit(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "op_visits"

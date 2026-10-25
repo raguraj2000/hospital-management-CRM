@@ -43,3 +43,19 @@ class CurrentUserContext(BaseSchema):
     user: UserDTO
     memberships: List[MembershipDTO]
 
+
+class ChangePasswordRequest(BaseModel):
+    current_password: Optional[str] = None
+    currentPassword: Optional[str] = None
+    new_password: Optional[str] = None
+    newPassword: Optional[str] = None
+
+    @property
+    def old_pwd(self) -> str:
+        return (self.current_password or self.currentPassword or "").strip()
+
+    @property
+    def new_pwd(self) -> str:
+        return (self.new_password or self.newPassword or "").strip()
+
+

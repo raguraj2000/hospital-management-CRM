@@ -1,7 +1,8 @@
 """Organizational hierarchy models (Regions, Inventory Locations, Branches)."""
 
-from typing import Optional
-from sqlalchemy import BigInteger, Boolean, String, Text
+from datetime import datetime
+from typing import Any, List, Optional
+from sqlalchemy import BigInteger, Boolean, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from src.models.base import Base
@@ -82,12 +83,20 @@ class BranchCounter(Base):
     value: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
 
-class ClinicSetting(Base, TimestampMixin):
+class ClinicSetting(Base):
     __tablename__ = "clinic_settings"
     __table_args__ = {"schema": "public"}
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    branch_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    key: Mapped[str] = mapped_column(String(60), nullable=False)
-    value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    branch_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    consultation_fee_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    default_doctor_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    charge_presets: Mapped[List[Any]] = mapped_column(JSONB, default=list, nullable=False)
+    fee_slots: Mapped[List[Any]] = mapped_column(JSONB, default=list, nullable=False)
+    nav_counts: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
+    )
 

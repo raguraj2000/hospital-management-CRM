@@ -1,0 +1,1092 @@
+========================================================================================================================
+                                COMPLETE FRONTEND API INVENTORY - tes/hospital-management-CRM                          
+========================================================================================================================
+Total Endpoints Audited : 173
+Backend Architecture   : Node.js / TypeScript / Hono (with Drizzle ORM)
+Coverage Status        : 100% Fully Implemented (173 / 173 Developed)
+Generated Date         : 2026-10-25
+========================================================================================================================
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: AUTHENTICATION & SESSION (4 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[  1] POST    /auth/login
+      Purpose    : Authenticate user with credentials, issue httpOnly session cookie
+      Backend    : POST /api/auth/login (packages/core/src/auth.ts:163)
+      Caller     : apps/web/src/core/auth/hooks.ts:32
+      Status     : DEVELOPED
+
+[  2] POST    /auth/logout
+      Purpose    : Terminate active session and clear session cookie
+      Backend    : POST /api/auth/logout (packages/core/src/auth.ts:194)
+      Caller     : apps/web/src/core/auth/hooks.ts:40
+      Status     : DEVELOPED
+
+[  3] GET     /auth/me
+      Purpose    : Get currently authenticated user details, permissions and memberships
+      Backend    : GET /api/auth/me (packages/core/src/auth.ts:200)
+      Caller     : apps/web/src/core/auth/hooks.ts:18
+      Status     : DEVELOPED
+
+[  4] POST    /auth/password
+      Purpose    : Change password for currently authenticated user
+      Backend    : POST /api/auth/password (packages/core/src/auth.ts:203)
+      Caller     : apps/web/src/components/ChangePassword.tsx:31
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: PLATFORM ADMINISTRATION (MULTI-TENANT SUPERADMIN) (9 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[  5] GET     /platform/customers
+      Purpose    : List all tenant hospital organizations registered on platform
+      Backend    : GET /api/platform/customers (apps/api/src/routes/platform.ts:22)
+      Caller     : apps/web/src/pages/Platform.tsx:22
+      Status     : DEVELOPED
+
+[  6] POST    /platform/customers
+      Purpose    : Provision new tenant hospital customer organization
+      Backend    : POST /api/platform/customers (apps/api/src/routes/platform.ts:66)
+      Caller     : apps/web/src/pages/Platform.tsx:176
+      Status     : DEVELOPED
+
+[  7] PATCH   /platform/customers/:id
+      Purpose    : Update subscription plan or billing details of tenant
+      Backend    : PATCH /api/platform/customers/:id (apps/api/src/routes/platform.ts:90)
+      Caller     : apps/web/src/pages/Platform.tsx:336
+      Status     : DEVELOPED
+
+[  8] POST    /platform/customers/:id/${c.isActive 
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/platform/customers/:id/:action (apps/api/src/routes/platform.ts:205)
+      Caller     : apps/web/src/pages/Platform.tsx:24
+      Status     : DEVELOPED
+
+[  9] GET     /platform/customers/:id/owner
+      Purpose    : Retrieve tenant hospital owner profile
+      Backend    : GET /api/platform/customers/:id/owner (apps/api/src/routes/platform.ts:114)
+      Caller     : apps/web/src/pages/Platform.tsx:190
+      Status     : DEVELOPED
+
+[ 10] PUT     /platform/customers/:id/owner
+      Purpose    : Update tenant hospital owner account details
+      Backend    : PUT /api/platform/customers/:id/owner (apps/api/src/routes/platform.ts:145)
+      Caller     : apps/web/src/pages/Platform.tsx:208
+      Status     : DEVELOPED
+
+[ 11] POST    /platform/customers/:id/owner/password
+      Purpose    : Reset password for tenant hospital owner account
+      Backend    : POST /api/platform/customers/:id/owner/password (apps/api/src/routes/platform.ts:128)
+      Caller     : apps/web/src/pages/Platform.tsx:199
+      Status     : DEVELOPED
+
+[ 12] GET     /platform/customers/:id/payments
+      Purpose    : View subscription payment history of tenant hospital
+      Backend    : GET /api/platform/customers/:id/payments (apps/api/src/routes/platform.ts:167)
+      Caller     : apps/web/src/pages/Platform.tsx:330
+      Status     : DEVELOPED
+
+[ 13] POST    /platform/customers/:id/payments
+      Purpose    : Record subscription plan renewal payment for tenant
+      Backend    : POST /api/platform/customers/:id/payments (apps/api/src/routes/platform.ts:183)
+      Caller     : apps/web/src/pages/Platform.tsx:345
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: ORGANIZATION & BRANCH NETWORK MANAGEMENT (10 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[ 14] GET     /org/branches
+      Purpose    : List all physical hospital branches under organization
+      Backend    : GET /api/org/branches (packages/core/src/admin.ts:259)
+      Caller     : apps/web/src/pages/Settings.tsx:508
+      Status     : DEVELOPED
+
+[ 15] POST    /org/branches
+      Purpose    : Create a new branch facility under organization
+      Backend    : POST /api/org/branches (packages/core/src/admin.ts:279)
+      Caller     : apps/web/src/pages/Settings.tsx:589
+      Status     : DEVELOPED
+
+[ 16] PATCH   /org/branches/:branch
+      Purpose    : Execute domain API operation
+      Backend    : PATCH /api/org/branches/:id (packages/core/src/admin.ts:298)
+      Caller     : apps/web/src/pages/Settings.tsx:627
+      Status     : DEVELOPED
+
+[ 17] PATCH   /org/branches/:id
+      Purpose    : Update branch metadata (name, address, phone, allowed networks)
+      Backend    : PATCH /api/org/branches/:id (packages/core/src/admin.ts:298)
+      Caller     : apps/web/src/pages/Settings.tsx:602
+      Status     : DEVELOPED
+
+[ 18] GET     /org/branches/:param/roles
+      Purpose    : List branch-specific role definitions
+      Backend    : GET /api/org/branches/:id/roles (packages/core/src/admin.ts:338)
+      Caller     : apps/web/src/pages/Settings.tsx:754
+      Status     : DEVELOPED
+
+[ 19] PUT     /org/branches/:param/roles/:roleId/permissions
+      Purpose    : Update permissions for a specific branch role
+      Backend    : PUT /api/org/branches/:id/roles/:roleId/permissions (packages/core/src/admin.ts:349)
+      Caller     : apps/web/src/pages/Settings.tsx:771
+      Status     : DEVELOPED
+
+[ 20] GET     /org/my-network
+      Purpose    : Detect caller public IP & network CIDR for network restriction configuration
+      Backend    : GET /api/org/my-network (packages/core/src/admin.ts:274)
+      Caller     : apps/web/src/pages/Settings.tsx:620
+      Status     : DEVELOPED
+
+[ 21] PATCH   /org/owner
+      Purpose    : Update organization owner contact and profile settings
+      Backend    : PATCH /api/org/owner (packages/core/src/admin.ts:360)
+      Caller     : apps/web/src/pages/Settings.tsx:929
+      Status     : DEVELOPED
+
+[ 22] GET     /org/roles
+      Purpose    : List global organization role definitions
+      Backend    : GET /api/org/roles (packages/core/src/admin.ts:313)
+      Caller     : apps/web/src/pages/Settings.tsx:754
+      Status     : DEVELOPED
+
+[ 23] PUT     /org/roles/:roleId/permissions
+      Purpose    : Update global organization role permissions across all branches
+      Backend    : PUT /api/org/roles/:id/permissions (packages/core/src/admin.ts:316)
+      Caller     : apps/web/src/pages/Settings.tsx:771
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: BRANCH OPERATIONS & SETTINGS (11 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[ 24] GET     /b/:branch/audit
+      Purpose    : Query organization audit trail logs with filtering by user, date and action
+      Backend    : GET /api/b/:branch/audit (apps/api/src/app.ts:254)
+      Caller     : apps/web/src/components/AuditLog.tsx:55
+      Status     : DEVELOPED
+
+[ 25] GET     /b/:branch/backup
+      Purpose    : Export and download complete database snapshot backup
+      Backend    : GET /api/b/:branch/backup (apps/api/src/routes/backup.ts:45)
+      Caller     : apps/web/src/components/BackupRestore.tsx:31
+      Status     : DEVELOPED
+
+[ 26] GET     /b/:branch/changes
+      Purpose    : Lightweight poll endpoint returning revision token to synchronize UI caches
+      Backend    : GET /api/b/:branch/changes (apps/api/src/app.ts:86)
+      Caller     : apps/web/src/components/AppShell.tsx:84
+      Status     : DEVELOPED
+
+[ 27] GET     /b/:branch/charge-presets
+      Purpose    : List standardized pre-configured procedural charge presets
+      Backend    : GET /api/b/:branch/charge-presets (apps/api/src/routes/billing.ts:345)
+      Caller     : apps/web/src/components/Courses.tsx:90
+      Status     : DEVELOPED
+
+[ 28] GET     /b/:branch/dashboard
+      Purpose    : Fetch daily hospital KPI stats, patient counts, OPD volume, revenue & low stock
+      Backend    : GET /api/b/:branch/dashboard (apps/api/src/app.ts:88)
+      Caller     : apps/web/src/pages/Dashboard.tsx:55
+      Status     : DEVELOPED
+
+[ 29] GET     /b/:branch/doctor-settings
+      Purpose    : Fetch doctor roster, specialization and consultation fee configurations
+      Backend    : GET /api/b/:branch/doctor-settings (apps/api/src/routes/doctors.ts:84)
+      Caller     : apps/web/src/components/DoctorSettings.tsx:14
+      Status     : DEVELOPED
+
+[ 30] PUT     /b/:branch/doctor-settings
+      Purpose    : Update doctor roster and consultation settings
+      Backend    : PUT /api/b/:branch/doctor-settings (apps/api/src/routes/doctors.ts:87)
+      Caller     : apps/web/src/components/DoctorSettings.tsx:47
+      Status     : DEVELOPED
+
+[ 31] GET     /b/:branch/doctors
+      Purpose    : List active doctors practicing at the branch
+      Backend    : GET /api/b/:branch/doctors (apps/api/src/routes/doctors.ts:78)
+      Caller     : apps/web/src/components/Visits.tsx:70
+      Status     : DEVELOPED
+
+[ 32] GET     /b/:branch/print-header
+      Purpose    : Get customized branch letterhead and printing header metadata
+      Backend    : GET /api/b/:branch/print-header (packages/core/src/admin.ts:402)
+      Caller     : apps/web/src/components/BranchLogo.tsx:11
+      Status     : DEVELOPED
+
+[ 33] PUT     /b/:branch/print-header
+      Purpose    : Update branch letterhead and logo print header configuration
+      Backend    : PUT /api/b/:branch/print-header (packages/core/src/admin.ts:404)
+      Caller     : apps/web/src/components/BranchLogo.tsx:28
+      Status     : DEVELOPED
+
+[ 34] POST    /b/:branch/restore
+      Purpose    : Restore branch database snapshot from binary backup upload
+      Backend    : POST /api/b/:branch/restore (apps/api/src/routes/backup.ts:65)
+      Caller     : apps/web/src/components/BackupRestore.tsx:54
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: STAFF MANAGEMENT & ROLE-BASED ACCESS CONTROL (RBAC) (8 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[ 35] GET     /b/:branch/roles
+      Purpose    : Fetch role definitions and assigned permission matrix
+      Backend    : GET /api/b/:branch/roles (packages/core/src/admin.ts:131)
+      Caller     : apps/web/src/pages/Settings.tsx:198
+      Status     : DEVELOPED
+
+[ 36] PUT     /b/:branch/roles/:roleId/permissions
+      Purpose    : Update permission assignments for branch role
+      Backend    : PUT /api/b/:branch/roles/:roleId/permissions (packages/core/src/admin.ts:134)
+      Caller     : apps/web/src/pages/Settings.tsx:771
+      Status     : DEVELOPED
+
+[ 37] GET     /b/:branch/staff
+      Purpose    : List active staff members and assigned roles in branch
+      Backend    : GET /api/b/:branch/staff (packages/core/src/admin.ts:143)
+      Caller     : apps/web/src/pages/Settings.tsx:212
+      Status     : DEVELOPED
+
+[ 38] POST    /b/:branch/staff
+      Purpose    : Add and invite a new staff member to the branch
+      Backend    : POST /api/b/:branch/staff (packages/core/src/admin.ts:154)
+      Caller     : apps/web/src/pages/Settings.tsx:327
+      Status     : DEVELOPED
+
+[ 39] DELETE  /b/:branch/staff/:userId
+      Purpose    : Remove staff member from branch
+      Backend    : DELETE /api/b/:branch/staff/:userId (packages/core/src/admin.ts:233)
+      Caller     : apps/web/src/pages/Settings.tsx:226
+      Status     : DEVELOPED
+
+[ 40] PATCH   /b/:branch/staff/:userId
+      Purpose    : Modify assigned role for a staff member
+      Backend    : PATCH /api/b/:branch/staff/:userId (packages/core/src/admin.ts:176)
+      Caller     : apps/web/src/pages/Settings.tsx:342
+      Status     : DEVELOPED
+
+[ 41] POST    /b/:branch/staff/:userId/${active 
+      Purpose    : Add and invite a new staff member to the branch
+      Backend    : POST /api/b/:branch/staff/:userId/:action (packages/core/src/admin.ts:198)
+      Caller     : apps/web/src/pages/Settings.tsx:217
+      Status     : DEVELOPED
+
+[ 42] POST    /b/:branch/staff/:userId/reset-password
+      Purpose    : Administrative reset of staff password
+      Backend    : POST /api/b/:branch/staff/:userId/:action (packages/core/src/admin.ts:198)
+      Caller     : apps/web/src/pages/Settings.tsx:356
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: PATIENT MANAGEMENT (17 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[ 43] GET     /b/:branch/patients
+      Purpose    : Search and filter registered patient directory
+      Backend    : GET /api/b/:branch/patients/ (apps/api/src/routes/patients.ts:42)
+      Caller     : apps/web/src/components/DirectLab.tsx:72
+      Status     : DEVELOPED
+
+[ 44] POST    /b/:branch/patients
+      Purpose    : Register new patient with auto-generated UHID
+      Backend    : POST /api/b/:branch/patients/ (apps/api/src/routes/patients.ts:83)
+      Caller     : apps/web/src/components/DirectLab.tsx:178
+      Status     : DEVELOPED
+
+[ 45] GET     /b/:branch/patients/:id
+      Purpose    : Retrieve complete patient master record and profile
+      Backend    : GET /api/b/:branch/patients/:id (apps/api/src/routes/patients.ts:79)
+      Caller     : apps/web/src/pages/PatientDetail.tsx:83
+      Status     : DEVELOPED
+
+[ 46] PATCH   /b/:branch/patients/:id
+      Purpose    : Update patient demographics and contact information
+      Backend    : PATCH /api/b/:branch/patients/:id (apps/api/src/routes/patients.ts:104)
+      Caller     : apps/web/src/pages/PatientDetail.tsx:337
+      Status     : DEVELOPED
+
+[ 47] POST    /b/:branch/patients/:id/activate
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/patients/:id/activate (apps/api/src/routes/patients.ts:142)
+      Caller     : apps/web/src/pages/PatientDetail.tsx:90
+      Status     : DEVELOPED
+
+[ 48] GET     /b/:branch/patients/:id/bills
+      Purpose    : Retrieve complete invoice and billing history for patient
+      Backend    : GET /api/b/:branch/patients/:id/bills (apps/api/src/routes/billing.ts:521)
+      Caller     : apps/web/src/pages/PatientTabs.tsx:17
+      Status     : DEVELOPED
+
+[ 49] POST    /b/:branch/patients/:id/deactivate
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/patients/:id/deactivate (apps/api/src/routes/patients.ts:127)
+      Caller     : apps/web/src/pages/PatientDetail.tsx:90
+      Status     : DEVELOPED
+
+[ 50] POST    /b/:branch/patients/:id/direct-bill
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/patients/:id/direct-bill (apps/api/src/routes/visits.ts:271)
+      Caller     : apps/web/src/components/DirectLab.tsx:93
+      Status     : DEVELOPED
+
+[ 51] POST    /b/:branch/patients/:id/direct-lab
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/patients/:id/direct-lab (apps/api/src/routes/visits.ts:242)
+      Caller     : apps/web/src/components/DirectLab.tsx:94
+      Status     : DEVELOPED
+
+[ 52] GET     /b/:branch/patients/:id/lab-orders
+      Purpose    : List all diagnostic lab orders associated with patient
+      Backend    : GET /api/b/:branch/patients/:id/lab-orders (apps/api/src/routes/lab.ts:311)
+      Caller     : apps/web/src/pages/PatientTabs.tsx:20
+      Status     : DEVELOPED
+
+[ 53] GET     /b/:branch/patients/:id/last-purchase
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/patients/:id/last-purchase (apps/api/src/routes/pharmacy.ts:725)
+      Caller     : apps/web/src/pages/Pharmacy.tsx:276
+      Status     : DEVELOPED
+
+[ 54] GET     /b/:branch/patients/:id/visits
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/patients/:id/visits (apps/api/src/routes/visits.ts:199)
+      Caller     : apps/web/src/pages/PatientDetail.tsx:75
+      Status     : DEVELOPED
+
+[ 55] GET     /b/:branch/patients/:patientId/bills
+      Purpose    : Retrieve complete invoice and billing history for patient
+      Backend    : GET /api/b/:branch/patients/:id/bills (apps/api/src/routes/billing.ts:521)
+      Caller     : apps/web/src/components/RxStepper.tsx:204
+      Status     : DEVELOPED
+
+[ 56] GET     /b/:branch/patients/:patientId/courses
+      Purpose    : List multi-sitting treatment courses prescribed for patient
+      Backend    : GET /api/b/:branch/patients/:id/courses (apps/api/src/routes/courses.ts:302)
+      Caller     : apps/web/src/components/Courses.tsx:44
+      Status     : DEVELOPED
+
+[ 57] POST    /b/:branch/patients/:patientId/pay-dues
+      Purpose    : Record bulk payment clearing outstanding patient dues
+      Backend    : POST /api/b/:branch/patients/:id/pay-dues (apps/api/src/routes/billing.ts:490)
+      Caller     : apps/web/src/components/PayDues.tsx:19
+      Status     : DEVELOPED
+
+[ 58] GET     /b/:branch/patients/:patientId/visits
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/patients/:id/visits (apps/api/src/routes/visits.ts:199)
+      Caller     : apps/web/src/components/Visits.tsx:238
+      Status     : DEVELOPED
+
+[ 59] POST    /b/:branch/patients/:patientId/visits
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/patients/:id/visits (apps/api/src/routes/visits.ts:207)
+      Caller     : apps/web/src/components/Visits.tsx:244
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: OPD VISITS & CONSULTATIONS (31 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[ 60] GET     /b/:branch/visits
+      Purpose    : Fetch OPD queue and appointments list for selected date/doctor
+      Backend    : GET /api/b/:branch/visits (apps/api/src/routes/visits.ts:294)
+      Caller     : apps/web/src/components/Visits.tsx:363
+      Status     : DEVELOPED
+
+[ 61] PATCH   /b/:branch/visits/:id
+      Purpose    : Update visit counter notes or appointment details
+      Backend    : PATCH /api/b/:branch/visits/:visitId (apps/api/src/routes/visits.ts:375)
+      Caller     : apps/web/src/components/CounterNote.tsx:19
+      Status     : DEVELOPED
+
+[ 62] DELETE  /b/:branch/visits/:id
+      Purpose    : Execute domain API operation
+      Backend    : DELETE /api/b/:branch/visits/:visitId (apps/api/src/routes/visits.ts:409)
+      Caller     : apps/web/src/components/Visits.tsx:148
+      Status     : DEVELOPED
+
+[ 63] GET     /b/:branch/visits/:id/bills
+      Purpose    : List all invoices generated under visit
+      Backend    : GET /api/b/:branch/visits/:visitId/bills (apps/api/src/routes/billing.ts:302)
+      Caller     : apps/web/src/pages/VisitDetail.tsx:263
+      Status     : DEVELOPED
+
+[ 64] GET     /b/:branch/visits/:id/charges
+      Purpose    : List billable consultation and service charges for visit
+      Backend    : GET /api/b/:branch/visits/:visitId/charges (apps/api/src/routes/billing.ts:347)
+      Caller     : apps/web/src/components/RxStepper.tsx:29
+      Status     : DEVELOPED
+
+[ 65] PUT     /b/:branch/visits/:id/consultation-fee
+      Purpose    : Execute domain API operation
+      Backend    : PUT /api/b/:branch/visits/:visitId/consultation-fee (apps/api/src/routes/billing.ts:442)
+      Caller     : apps/web/src/components/Visits.tsx:246
+      Status     : DEVELOPED
+
+[ 66] POST    /b/:branch/visits/:id/courses
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/visits/:visitId/courses (apps/api/src/routes/courses.ts:219)
+      Caller     : apps/web/src/components/Courses.tsx:307
+      Status     : DEVELOPED
+
+[ 67] POST    /b/:branch/visits/:id/lab-orders
+      Purpose    : Order diagnostic tests for patient under visit
+      Backend    : POST /api/b/:branch/visits/:visitId/lab-orders (apps/api/src/routes/lab.ts:293)
+      Caller     : apps/web/src/components/VisitLab.tsx:33
+      Status     : DEVELOPED
+
+[ 68] GET     /b/:branch/visits/:id/prescription
+      Purpose    : Retrieve printable Rx prescription note for visit
+      Backend    : GET /api/b/:branch/visits/:visitId/prescription (apps/api/src/routes/pharmacy.ts:459)
+      Caller     : apps/web/src/components/Prescription.tsx:35
+      Status     : DEVELOPED
+
+[ 69] PUT     /b/:branch/visits/:id/prescription/order
+      Purpose    : Execute domain API operation
+      Backend    : PUT /api/b/:branch/visits/:visitId/prescription/order (apps/api/src/routes/pharmacy.ts:467)
+      Caller     : apps/web/src/components/Prescription.tsx:44
+      Status     : DEVELOPED
+
+[ 70] POST    /b/:branch/visits/:id/send
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/visits/:visitId/send (apps/api/src/routes/visits.ts:335)
+      Caller     : apps/web/src/components/VisitNext.tsx:30
+      Status     : DEVELOPED
+
+[ 71] GET     /b/:branch/visits/:visitId/bills
+      Purpose    : List all invoices generated under visit
+      Backend    : GET /api/b/:branch/visits/:visitId/bills (apps/api/src/routes/billing.ts:302)
+      Caller     : apps/web/src/components/VisitBill.tsx:19
+      Status     : DEVELOPED
+
+[ 72] POST    /b/:branch/visits/:visitId/bills
+      Purpose    : List all invoices generated under visit
+      Backend    : POST /api/b/:branch/visits/:visitId/bills (apps/api/src/routes/billing.ts:427)
+      Caller     : apps/web/src/components/VisitBill.tsx:22
+      Status     : DEVELOPED
+
+[ 73] POST    /b/:branch/visits/:visitId/bookmarks/:id/apply
+      Purpose    : Apply prescription template bundle to visit
+      Backend    : POST /api/b/:branch/visits/:visitId/bookmarks/:id/apply (apps/api/src/routes/bookmarks.ts:124)
+      Caller     : apps/web/src/components/Bookmarks.tsx:194
+      Status     : DEVELOPED
+
+[ 74] GET     /b/:branch/visits/:visitId/charges
+      Purpose    : List billable consultation and service charges for visit
+      Backend    : GET /api/b/:branch/visits/:visitId/charges (apps/api/src/routes/billing.ts:347)
+      Caller     : apps/web/src/components/VisitCharges.tsx:20
+      Status     : DEVELOPED
+
+[ 75] POST    /b/:branch/visits/:visitId/charges
+      Purpose    : Add procedural or miscellaneous service charge to visit
+      Backend    : POST /api/b/:branch/visits/:visitId/charges (apps/api/src/routes/billing.ts:354)
+      Caller     : apps/web/src/components/VisitCharges.tsx:34
+      Status     : DEVELOPED
+
+[ 76] PUT     /b/:branch/visits/:visitId/charges/:param
+      Purpose    : Execute domain API operation
+      Backend    : PUT /api/b/:branch/visits/:visitId/charges/:key (apps/api/src/routes/billing.ts:377)
+      Caller     : apps/web/src/components/VisitCharges.tsx:45
+      Status     : DEVELOPED
+
+[ 77] DELETE  /b/:branch/visits/:visitId/charges/:param
+      Purpose    : Remove billable charge item from visit
+      Backend    : DELETE /api/b/:branch/visits/:visitId/charges/:key (apps/api/src/routes/billing.ts:401)
+      Caller     : apps/web/src/components/VisitCharges.tsx:63
+      Status     : DEVELOPED
+
+[ 78] GET     /b/:branch/visits/:visitId/checkout
+      Purpose    : Calculate real-time visit bill breakdown for settlement
+      Backend    : GET /api/b/:branch/visits/:visitId/checkout (apps/api/src/routes/checkout.ts:86)
+      Caller     : apps/web/src/components/Checkout.tsx:169
+      Status     : DEVELOPED
+
+[ 79] POST    /b/:branch/visits/:visitId/checkout
+      Purpose    : Atomically finalize visit bill, collect payment and close OPD
+      Backend    : POST /api/b/:branch/visits/:visitId/checkout (apps/api/src/routes/checkout.ts:144)
+      Caller     : apps/web/src/components/Checkout.tsx:340
+      Status     : DEVELOPED
+
+[ 80] GET     /b/:branch/visits/:visitId/combined-bill
+      Purpose    : Fetch consolidated invoice data covering consultation, pharmacy and lab
+      Backend    : GET /api/b/:branch/visits/:visitId/combined-bill (apps/api/src/routes/checkout.ts:286)
+      Caller     : apps/web/src/pages/VisitBillPrint.tsx:22
+      Status     : DEVELOPED
+
+[ 81] PUT     /b/:branch/visits/:visitId/consultation-fee
+      Purpose    : Execute domain API operation
+      Backend    : PUT /api/b/:branch/visits/:visitId/consultation-fee (apps/api/src/routes/billing.ts:442)
+      Caller     : apps/web/src/components/VisitFee.tsx:25
+      Status     : DEVELOPED
+
+[ 82] GET     /b/:branch/visits/:visitId/instructions
+      Purpose    : Fetch nursing/lifestyle instructions prescribed for visit
+      Backend    : GET /api/b/:branch/visits/:visitId/instructions (apps/api/src/routes/bookmarks.ts:188)
+      Caller     : apps/web/src/components/Bookmarks.tsx:492
+      Status     : DEVELOPED
+
+[ 83] GET     /b/:branch/visits/:visitId/lab-orders
+      Purpose    : Order diagnostic tests for patient under visit
+      Backend    : GET /api/b/:branch/visits/:visitId/lab-orders (apps/api/src/routes/lab.ts:281)
+      Caller     : apps/web/src/components/VisitLab.tsx:17
+      Status     : DEVELOPED
+
+[ 84] POST    /b/:branch/visits/:visitId/lab-release
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/visits/:visitId/lab-release (apps/api/src/routes/billing.ts:772)
+      Caller     : apps/web/src/pages/LabReportPrint.tsx:283
+      Status     : DEVELOPED
+
+[ 85] GET     /b/:branch/visits/:visitId/lab-report
+      Purpose    : Fetch structured laboratory report printout for visit orders
+      Backend    : GET /api/b/:branch/visits/:visitId/lab-report (apps/api/src/routes/lab.ts:465)
+      Caller     : apps/web/src/components/VisitLab.tsx:161
+      Status     : DEVELOPED
+
+[ 86] PUT     /b/:branch/visits/:visitId/pharmacy-note
+      Purpose    : Save internal dispensing pharmacist instructions on visit
+      Backend    : PUT /api/b/:branch/visits/:visitId/pharmacy-note (apps/api/src/routes/billing.ts:319)
+      Caller     : apps/web/src/components/Checkout.tsx:600
+      Status     : DEVELOPED
+
+[ 87] GET     /b/:branch/visits/:visitId/prescription
+      Purpose    : Retrieve printable Rx prescription note for visit
+      Backend    : GET /api/b/:branch/visits/:visitId/prescription (apps/api/src/routes/pharmacy.ts:459)
+      Caller     : apps/web/src/components/Checkout.tsx:664
+      Status     : DEVELOPED
+
+[ 88] POST    /b/:branch/visits/:visitId/prescription
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/visits/:visitId/prescription (apps/api/src/routes/pharmacy.ts:536)
+      Caller     : apps/web/src/components/Prescription.tsx:384
+      Status     : DEVELOPED
+
+[ 89] POST    /b/:branch/visits/:visitId/prescription-notes
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/visits/:visitId/prescription-notes (apps/api/src/routes/pharmacy.ts:500)
+      Caller     : apps/web/src/components/PrescriptionNotes.tsx:104
+      Status     : DEVELOPED
+
+[ 90] POST    /b/:branch/visits/call-next
+      Purpose    : Call patient into doctor consultation room
+      Backend    : POST /api/b/:branch/visits/call-next (apps/api/src/routes/visits.ts:312)
+      Caller     : apps/web/src/components/Visits.tsx:113
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: CLINICAL BOOKMARKS & PRESCRIPTIONS (12 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[ 91] GET     /b/:branch/bookmarks
+      Purpose    : List reusable prescription bookmarks / treatment templates
+      Backend    : GET /api/b/:branch/bookmarks (apps/api/src/routes/bookmarks.ts:76)
+      Caller     : apps/web/src/components/Bookmarks.tsx:13
+      Status     : DEVELOPED
+
+[ 92] POST    /b/:branch/bookmarks
+      Purpose    : Create new reusable prescription bookmark preset
+      Backend    : POST /api/b/:branch/bookmarks (apps/api/src/routes/bookmarks.ts:78)
+      Caller     : apps/web/src/components/Bookmarks.tsx:325
+      Status     : DEVELOPED
+
+[ 93] PUT     /b/:branch/bookmarks/:id
+      Purpose    : Update existing prescription bookmark template
+      Backend    : PUT /api/b/:branch/bookmarks/:id (apps/api/src/routes/bookmarks.ts:93)
+      Caller     : apps/web/src/components/Bookmarks.tsx:325
+      Status     : DEVELOPED
+
+[ 94] DELETE  /b/:branch/bookmarks/:id
+      Purpose    : Delete prescription bookmark template
+      Backend    : DELETE /api/b/:branch/bookmarks/:id (apps/api/src/routes/bookmarks.ts:109)
+      Caller     : apps/web/src/components/Bookmarks.tsx:334
+      Status     : DEVELOPED
+
+[ 95] DELETE  /b/:branch/prescription-items/:id
+      Purpose    : Execute domain API operation
+      Backend    : DELETE /api/b/:branch/prescription-items/:id (apps/api/src/routes/pharmacy.ts:605)
+      Caller     : apps/web/src/components/Prescription.tsx:75
+      Status     : DEVELOPED
+
+[ 96] PATCH   /b/:branch/prescription-items/:id
+      Purpose    : Update dosage or instructions for prescribed medicine
+      Backend    : PATCH /api/b/:branch/prescription-items/:id (apps/api/src/routes/pharmacy.ts:571)
+      Caller     : apps/web/src/components/Prescription.tsx:378
+      Status     : DEVELOPED
+
+[ 97] PATCH   /b/:branch/prescription-notes/:id
+      Purpose    : Execute domain API operation
+      Backend    : PATCH /api/b/:branch/prescription-notes/:id (apps/api/src/routes/pharmacy.ts:513)
+      Caller     : apps/web/src/components/PrescriptionNotes.tsx:48
+      Status     : DEVELOPED
+
+[ 98] DELETE  /b/:branch/prescription-notes/:id
+      Purpose    : Execute domain API operation
+      Backend    : DELETE /api/b/:branch/prescription-notes/:id (apps/api/src/routes/pharmacy.ts:526)
+      Caller     : apps/web/src/components/PrescriptionNotes.tsx:53
+      Status     : DEVELOPED
+
+[ 99] PATCH   /b/:branch/prescription-notes/:param
+      Purpose    : Execute domain API operation
+      Backend    : PATCH /api/b/:branch/prescription-notes/:id (apps/api/src/routes/pharmacy.ts:513)
+      Caller     : apps/web/src/components/PrescriptionNotes.tsx:161
+      Status     : DEVELOPED
+
+[100] GET     /b/:branch/prescription/suggestions
+      Purpose    : Retrieve auto-completion suggestions for dosages and frequencies
+      Backend    : GET /api/b/:branch/prescription/suggestions (apps/api/src/routes/pharmacy.ts:439)
+      Caller     : apps/web/src/components/Prescription.tsx:307
+      Status     : DEVELOPED
+
+[101] DELETE  /b/:branch/visit-instructions/:id
+      Purpose    : Delete instruction entry from visit
+      Backend    : DELETE /api/b/:branch/visit-instructions/:id (apps/api/src/routes/bookmarks.ts:212)
+      Caller     : apps/web/src/components/Bookmarks.tsx:495
+      Status     : DEVELOPED
+
+[102] POST    /b/:branch/visit-instructions/:id/:param
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/visit-instructions/:id/${action} (apps/api/src/routes/bookmarks.ts:196)
+      Caller     : apps/web/src/components/Bookmarks.tsx:495
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: TREATMENT COURSES, PROCEDURES & TEMPLATES (16 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[103] POST    /b/:branch/course-items/:id/given
+      Purpose    : Update administered status of item inside sitting
+      Backend    : POST /api/b/:branch/course-items/:id/given (apps/api/src/routes/courses.ts:448)
+      Caller     : apps/web/src/components/Courses.tsx:873
+      Status     : DEVELOPED
+
+[104] GET     /b/:branch/course-templates
+      Purpose    : List saved multi-session course templates
+      Backend    : GET /api/b/:branch/course-templates (apps/api/src/routes/courses.ts:556)
+      Caller     : apps/web/src/components/Courses.tsx:295
+      Status     : DEVELOPED
+
+[105] POST    /b/:branch/course-templates
+      Purpose    : Create standardized multi-session course template
+      Backend    : POST /api/b/:branch/course-templates (apps/api/src/routes/courses.ts:561)
+      Caller     : apps/web/src/components/Courses.tsx:794
+      Status     : DEVELOPED
+
+[106] DELETE  /b/:branch/course-templates/:id
+      Purpose    : Delete course template
+      Backend    : DELETE /api/b/:branch/course-templates/:id (apps/api/src/routes/courses.ts:584)
+      Caller     : apps/web/src/components/Courses.tsx:687
+      Status     : DEVELOPED
+
+[107] PUT     /b/:branch/course-templates/:id
+      Purpose    : Update existing course template structure
+      Backend    : PUT /api/b/:branch/course-templates/:id (apps/api/src/routes/courses.ts:572)
+      Caller     : apps/web/src/components/Courses.tsx:794
+      Status     : DEVELOPED
+
+[108] PATCH   /b/:branch/course-sittings/:id
+      Purpose    : Execute domain API operation
+      Backend    : PATCH /api/b/:branch/course-sittings/:id (apps/api/src/routes/courses.ts:515)
+      Caller     : apps/web/src/components/Courses.tsx:623
+      Status     : DEVELOPED
+
+[109] POST    /b/:branch/course-sittings/:id/cancel
+      Purpose    : Cancel scheduled treatment course sitting
+      Backend    : POST /api/b/:branch/course-sittings/:id/cancel (apps/api/src/routes/courses.ts:261)
+      Caller     : apps/web/src/components/Courses.tsx:431
+      Status     : DEVELOPED
+
+[110] POST    /b/:branch/course-sittings/:id/start
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/course-sittings/:id/start (apps/api/src/routes/courses.ts:402)
+      Caller     : apps/web/src/components/Courses.tsx:882
+      Status     : DEVELOPED
+
+[111] DELETE  /b/:branch/courses/:courseId
+      Purpose    : Execute domain API operation
+      Backend    : DELETE /api/b/:branch/courses/:id (apps/api/src/routes/courses.ts:286)
+      Caller     : apps/web/src/components/Courses.tsx:424
+      Status     : DEVELOPED
+
+[112] POST    /b/:branch/courses/:courseId/close
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/courses/:id/close (apps/api/src/routes/courses.ts:272)
+      Caller     : apps/web/src/components/Courses.tsx:415
+      Status     : DEVELOPED
+
+[113] POST    /b/:branch/courses/:courseId/now
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/courses/:id/now (apps/api/src/routes/courses.ts:485)
+      Caller     : apps/web/src/components/Courses.tsx:621
+      Status     : DEVELOPED
+
+[114] POST    /b/:branch/courses/:courseId/sittings
+      Purpose    : Schedule new treatment session / sitting date
+      Backend    : POST /api/b/:branch/courses/:id/sittings (apps/api/src/routes/courses.ts:243)
+      Caller     : apps/web/src/components/Courses.tsx:437
+      Status     : DEVELOPED
+
+[115] GET     /b/:branch/treatments
+      Purpose    : Fetch treatment procedure administration queue for today
+      Backend    : GET /api/b/:branch/treatments (apps/api/src/routes/treatments.ts:88)
+      Caller     : apps/web/src/pages/Treatments.tsx:61
+      Status     : DEVELOPED
+
+[116] POST    /b/:branch/treatments/:id/give
+      Purpose    : Record administration of medication dose or procedure sitting
+      Backend    : POST /api/b/:branch/treatments/:id/give (apps/api/src/routes/treatments.ts:103)
+      Caller     : apps/web/src/pages/Treatments.tsx:291
+      Status     : DEVELOPED
+
+[117] POST    /b/:branch/treatments/:id/undo
+      Purpose    : Rollback administration status of dose/procedure
+      Backend    : POST /api/b/:branch/treatments/:id/undo (apps/api/src/routes/treatments.ts:118)
+      Caller     : apps/web/src/pages/Treatments.tsx:71
+      Status     : DEVELOPED
+
+[118] GET     /b/:branch/treatments/due
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/treatments/due (apps/api/src/routes/courses.ts:324)
+      Caller     : apps/web/src/components/Courses.tsx:868
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: PHARMACY & INVENTORY MANAGEMENT (13 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[119] GET     /b/:branch/inventory/report
+      Purpose    : Generate inventory valuation and stock status report
+      Backend    : GET /api/b/:branch/inventory/report (apps/api/src/routes/pharmacy.ts:433)
+      Caller     : apps/web/src/pages/Inventory.tsx:489
+      Status     : DEVELOPED
+
+[120] GET     /b/:branch/medicines
+      Purpose    : Search medicine formulary catalog with current live stock count
+      Backend    : GET /api/b/:branch/medicines (apps/api/src/routes/pharmacy.ts:280)
+      Caller     : apps/web/src/components/Bookmarks.tsx:316
+      Status     : DEVELOPED
+
+[121] POST    /b/:branch/medicines
+      Purpose    : Add new drug/medicine into hospital formulary catalog
+      Backend    : POST /api/b/:branch/medicines (apps/api/src/routes/pharmacy.ts:288)
+      Caller     : apps/web/src/pages/Inventory.tsx:248
+      Status     : DEVELOPED
+
+[122] DELETE  /b/:branch/medicines/:id
+      Purpose    : Soft delete medicine from active formulary
+      Backend    : DELETE /api/b/:branch/medicines/:id (apps/api/src/routes/pharmacy.ts:321)
+      Caller     : apps/web/src/pages/Inventory.tsx:72
+      Status     : DEVELOPED
+
+[123] PATCH   /b/:branch/medicines/:id
+      Purpose    : Update medicine name, strength, form or pricing
+      Backend    : PATCH /api/b/:branch/medicines/:id (apps/api/src/routes/pharmacy.ts:310)
+      Caller     : apps/web/src/pages/Inventory.tsx:235
+      Status     : DEVELOPED
+
+[124] POST    /b/:branch/medicines/:id/batches
+      Purpose    : Add manual opening stock batch for medicine
+      Backend    : POST /api/b/:branch/medicines/:id/batches (apps/api/src/routes/pharmacy.ts:342)
+      Caller     : apps/web/src/pages/Inventory.tsx:261
+      Status     : DEVELOPED
+
+[125] GET     /b/:branch/medicines/:id/batches
+      Purpose    : View stock batches for medicine ordered by FEFO expiry
+      Backend    : GET /api/b/:branch/medicines/:id/batches (apps/api/src/routes/pharmacy.ts:330)
+      Caller     : apps/web/src/pages/Inventory.tsx:422
+      Status     : DEVELOPED
+
+[126] POST    /b/:branch/pharmacy/dispense
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/pharmacy/dispense (apps/api/src/routes/pharmacy.ts:659)
+      Caller     : apps/web/src/pages/Pharmacy.tsx:164
+      Status     : DEVELOPED
+
+[127] GET     /b/:branch/pharmacy/queue
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/pharmacy/queue (apps/api/src/routes/pharmacy.ts:628)
+      Caller     : apps/web/src/pages/Pharmacy.tsx:29
+      Status     : DEVELOPED
+
+[128] GET     /b/:branch/pharmacy/sales
+      Purpose    : List direct pharmacy sales invoices
+      Backend    : GET /api/b/:branch/pharmacy/sales (apps/api/src/routes/pharmacy.ts:751)
+      Caller     : apps/web/src/pages/Pharmacy.tsx:37
+      Status     : DEVELOPED
+
+[129] POST    /b/:branch/pharmacy/sales
+      Purpose    : Process direct over-the-counter pharmacy sale with FEFO allocation
+      Backend    : POST /api/b/:branch/pharmacy/sales (apps/api/src/routes/pharmacy.ts:677)
+      Caller     : apps/web/src/pages/Pharmacy.tsx:323
+      Status     : DEVELOPED
+
+[130] GET     /b/:branch/pharmacy/sales/:param
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/pharmacy/sales/:id (apps/api/src/routes/pharmacy.ts:718)
+      Caller     : apps/web/src/pages/PharmacyBillPrint.tsx:19
+      Status     : DEVELOPED
+
+[131] GET     /b/:branch/pharmacy/stock-report
+      Purpose    : Generate detailed stock expiry analysis (near-expiry, expired units, reorder)
+      Backend    : GET /api/b/:branch/pharmacy/stock-report (apps/api/src/routes/pharmacy.ts:434)
+      Caller     : apps/web/src/modules/reports/catalog.ts:106
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: DIAGNOSTIC LABORATORY & PATHOLOGY (16 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[132] GET     /b/:branch/lab/orders
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/lab/orders (apps/api/src/routes/lab.ts:424)
+      Caller     : apps/web/src/pages/Lab.tsx:83
+      Status     : DEVELOPED
+
+[133] PATCH   /b/:branch/lab/orders/:id
+      Purpose    : Execute domain API operation
+      Backend    : PATCH /api/b/:branch/lab/orders/:id (apps/api/src/routes/lab.ts:538)
+      Caller     : apps/web/src/components/VisitLab.tsx:46
+      Status     : DEVELOPED
+
+[134] PUT     /b/:branch/lab/orders/:orderId/results
+      Purpose    : Save measured test findings, flag out-of-range values and complete report
+      Backend    : PUT /api/b/:branch/lab/orders/:id/results (apps/api/src/routes/lab.ts:477)
+      Caller     : apps/web/src/pages/LabResults.tsx:149
+      Status     : DEVELOPED
+
+[135] GET     /b/:branch/lab/packages
+      Purpose    : List bundled lab investigation packages
+      Backend    : GET /api/b/:branch/lab/packages (apps/api/src/routes/lab.ts:347)
+      Caller     : apps/web/src/components/LabPackages.tsx:11
+      Status     : DEVELOPED
+
+[136] POST    /b/:branch/lab/packages
+      Purpose    : Create bundled test package with discounted price
+      Backend    : POST /api/b/:branch/lab/packages (apps/api/src/routes/lab.ts:349)
+      Caller     : apps/web/src/components/LabPackages.tsx:123
+      Status     : DEVELOPED
+
+[137] DELETE  /b/:branch/lab/packages/:id
+      Purpose    : Delete lab package
+      Backend    : DELETE /api/b/:branch/lab/packages/:id (apps/api/src/routes/lab.ts:374)
+      Caller     : apps/web/src/components/LabPackages.tsx:51
+      Status     : DEVELOPED
+
+[138] PUT     /b/:branch/lab/packages/:id
+      Purpose    : Update test package contents or pricing
+      Backend    : PUT /api/b/:branch/lab/packages/:id (apps/api/src/routes/lab.ts:360)
+      Caller     : apps/web/src/components/LabPackages.tsx:123
+      Status     : DEVELOPED
+
+[139] GET     /b/:branch/lab/report
+      Purpose    : Generate laboratory period summary report (workload volume, completed counts)
+      Backend    : GET /api/b/:branch/lab/report (apps/api/src/routes/lab.ts:388)
+      Caller     : apps/web/src/components/LabPeriodReport.tsx:22
+      Status     : DEVELOPED
+
+[140] GET     /b/:branch/lab/tests
+      Purpose    : List diagnostic laboratory test catalog with prices and normal ranges
+      Backend    : GET /api/b/:branch/lab/tests (apps/api/src/routes/lab.ts:136)
+      Caller     : apps/web/src/components/Courses.tsx:89
+      Status     : DEVELOPED
+
+[141] POST    /b/:branch/lab/tests
+      Purpose    : Add new test to diagnostic catalog with parameters
+      Backend    : POST /api/b/:branch/lab/tests (apps/api/src/routes/lab.ts:158)
+      Caller     : apps/web/src/components/LabTestForm.tsx:79
+      Status     : DEVELOPED
+
+[142] DELETE  /b/:branch/lab/tests/:id
+      Purpose    : Remove test from active diagnostic catalog
+      Backend    : DELETE /api/b/:branch/lab/tests/:id (apps/api/src/routes/lab.ts:270)
+      Caller     : apps/web/src/pages/Lab.tsx:292
+      Status     : DEVELOPED
+
+[143] GET     /b/:branch/lab/tests/:testId
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/lab/tests/:id (apps/api/src/routes/lab.ts:257)
+      Caller     : apps/web/src/components/LabTestForm.tsx:32
+      Status     : DEVELOPED
+
+[144] PATCH   /b/:branch/lab/tests/:testId
+      Purpose    : Execute domain API operation
+      Backend    : PATCH /api/b/:branch/lab/tests/:id (apps/api/src/routes/lab.ts:228)
+      Caller     : apps/web/src/components/LabTestForm.tsx:78
+      Status     : DEVELOPED
+
+[145] POST    /b/:branch/lab/tests/load-standard
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/lab/tests/load-standard (apps/api/src/routes/lab.ts:176)
+      Caller     : apps/web/src/pages/Lab.tsx:284
+      Status     : DEVELOPED
+
+[146] PUT     /b/:branch/lab/tests/order
+      Purpose    : Execute domain API operation
+      Backend    : PUT /api/b/:branch/lab/tests/order (apps/api/src/routes/lab.ts:213)
+      Caller     : apps/web/src/pages/Lab.tsx:309
+      Status     : DEVELOPED
+
+[147] POST    /b/:branch/lab/visits/:visitId/back-to-doctor
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/lab/visits/:visitId/back-to-doctor (apps/api/src/routes/lab.ts:452)
+      Caller     : apps/web/src/pages/Lab.tsx:94
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: BILLING, INVOICING & FINANCIAL COLLECTIONS (11 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[148] GET     /b/:branch/billing/day-report
+      Purpose    : Generate daily cashier reconciliation & collections breakdown by mode
+      Backend    : GET /api/b/:branch/billing/day-report (apps/api/src/routes/billing.ts:701)
+      Caller     : apps/web/src/pages/Billing.tsx:450
+      Status     : DEVELOPED
+
+[149] GET     /b/:branch/billing/settings
+      Purpose    : Fetch billing parameters (consultation fee, fee slots, charge presets)
+      Backend    : GET /api/b/:branch/billing/settings (apps/api/src/routes/billing.ts:282)
+      Caller     : apps/web/src/components/BillingSettings.tsx:17
+      Status     : DEVELOPED
+
+[150] PUT     /b/:branch/billing/settings
+      Purpose    : Update consultation fees, charge presets or billing settings
+      Backend    : PUT /api/b/:branch/billing/settings (apps/api/src/routes/billing.ts:284)
+      Caller     : apps/web/src/components/BillingSettings.tsx:126
+      Status     : DEVELOPED
+
+[151] GET     /b/:branch/billing/to-bill
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/billing/to-bill (apps/api/src/routes/billing.ts:603)
+      Caller     : apps/web/src/pages/Billing.tsx:47
+      Status     : DEVELOPED
+
+[152] GET     /b/:branch/bills
+      Purpose    : Query master invoices registry with date and patient filters
+      Backend    : GET /api/b/:branch/bills (apps/api/src/routes/billing.ts:555)
+      Caller     : apps/web/src/pages/Billing.tsx:48
+      Status     : DEVELOPED
+
+[153] GET     /b/:branch/bills/:id
+      Purpose    : Retrieve complete invoice breakdown with line items and tax
+      Backend    : GET /api/b/:branch/bills/:id (apps/api/src/routes/billing.ts:462)
+      Caller     : apps/web/src/pages/Billing.tsx:349
+      Status     : DEVELOPED
+
+[154] POST    /b/:branch/bills/:id/payments
+      Purpose    : Record cash, UPI or card payment against invoice
+      Backend    : POST /api/b/:branch/bills/:id/payments (apps/api/src/routes/billing.ts:475)
+      Caller     : apps/web/src/pages/Billing.tsx:352
+      Status     : DEVELOPED
+
+[155] GET     /b/:branch/bills/:invoiceId
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/bills/:id (apps/api/src/routes/billing.ts:462)
+      Caller     : apps/web/src/pages/BillingPrints.tsx:38
+      Status     : DEVELOPED
+
+[156] PATCH   /b/:branch/bills/:invoiceId
+      Purpose    : Execute domain API operation
+      Backend    : PATCH /api/b/:branch/bills/:id (apps/api/src/routes/billing.ts:465)
+      Caller     : apps/web/src/pages/BillPage.tsx:50
+      Status     : DEVELOPED
+
+[157] POST    /b/:branch/bills/:invoiceId/payments
+      Purpose    : Execute domain API operation
+      Backend    : POST /api/b/:branch/bills/:id/payments (apps/api/src/routes/billing.ts:475)
+      Caller     : apps/web/src/pages/BillPage.tsx:62
+      Status     : DEVELOPED
+
+[158] GET     /b/:branch/reports/period
+      Purpose    : Generate revenue performance report across departments and doctors
+      Backend    : GET /api/b/:branch/reports/period (apps/api/src/routes/billing.ts:635)
+      Caller     : apps/web/src/components/PeriodReport.tsx:99
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: ATOMIC CHECKOUT (1 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[159] GET     /b/:branch/checkout-queue
+      Purpose    : View patient queue awaiting final discharge billing and payment
+      Backend    : GET /api/b/:branch/checkout-queue (apps/api/src/routes/checkout.ts:246)
+      Caller     : apps/web/src/components/Checkout.tsx:40
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: VENDORS & PURCHASE BILLS (13 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[160] GET     /b/:branch/expenses
+      Purpose    : List non-inventory operational expenses (rent, utilities, equipment)
+      Backend    : GET /api/b/:branch/expenses (apps/api/src/routes/vendors.ts:184)
+      Caller     : apps/web/src/components/Expenses.tsx:22
+      Status     : DEVELOPED
+
+[161] POST    /b/:branch/expenses
+      Purpose    : Record hospital operational expenditure
+      Backend    : POST /api/b/:branch/expenses (apps/api/src/routes/vendors.ts:194)
+      Caller     : apps/web/src/components/Expenses.tsx:44
+      Status     : DEVELOPED
+
+[162] DELETE  /b/:branch/expenses/:id
+      Purpose    : Delete operational expenditure record
+      Backend    : DELETE /api/b/:branch/expenses/:id (apps/api/src/routes/vendors.ts:224)
+      Caller     : apps/web/src/components/Expenses.tsx:64
+      Status     : DEVELOPED
+
+[163] POST    /b/:branch/purchases
+      Purpose    : Record supplier purchase invoice and intake stock into inventory
+      Backend    : POST /api/b/:branch/purchases (apps/api/src/routes/vendors.ts:294)
+      Caller     : apps/web/src/pages/NewPurchaseBill.tsx:170
+      Status     : DEVELOPED
+
+[164] GET     /b/:branch/purchases
+      Purpose    : List supplier purchase bills and delivery invoices
+      Backend    : GET /api/b/:branch/purchases (apps/api/src/routes/vendors.ts:237)
+      Caller     : apps/web/src/pages/Vendors.tsx:60
+      Status     : DEVELOPED
+
+[165] GET     /b/:branch/purchases/:id
+      Purpose    : Retrieve supplier purchase bill lines, batch numbers and costs
+      Backend    : GET /api/b/:branch/purchases/profit (apps/api/src/routes/vendors.ts:250)
+      Caller     : apps/web/src/pages/PurchaseBill.tsx:26
+      Status     : DEVELOPED
+
+[166] POST    /b/:branch/purchases/:id/cancel
+      Purpose    : Cancel purchase bill and pull untouched batches from inventory
+      Backend    : POST /api/b/:branch/purchases/:id/cancel (apps/api/src/routes/vendors.ts:366)
+      Caller     : apps/web/src/pages/PurchaseBill.tsx:45
+      Status     : DEVELOPED
+
+[167] POST    /b/:branch/purchases/:id/payments
+      Purpose    : Record accounts payable payment disbursement to supplier
+      Backend    : POST /api/b/:branch/purchases/:id/payments (apps/api/src/routes/vendors.ts:345)
+      Caller     : apps/web/src/pages/PurchaseBill.tsx:36
+      Status     : DEVELOPED
+
+[168] GET     /b/:branch/purchases/profit
+      Purpose    : Execute domain API operation
+      Backend    : GET /api/b/:branch/purchases/profit (apps/api/src/routes/vendors.ts:250)
+      Caller     : apps/web/src/pages/Inventory.tsx:677
+      Status     : DEVELOPED
+
+[169] GET     /b/:branch/vendors
+      Purpose    : List approved pharmaceutical suppliers and vendors
+      Backend    : GET /api/b/:branch/vendors (apps/api/src/routes/vendors.ts:119)
+      Caller     : apps/web/src/pages/NewPurchaseBill.tsx:79
+      Status     : DEVELOPED
+
+[170] POST    /b/:branch/vendors
+      Purpose    : Register new vendor with GSTIN and payment terms
+      Backend    : POST /api/b/:branch/vendors (apps/api/src/routes/vendors.ts:140)
+      Caller     : apps/web/src/pages/Vendors.tsx:263
+      Status     : DEVELOPED
+
+[171] DELETE  /b/:branch/vendors/:id
+      Purpose    : Delete vendor from supplier registry
+      Backend    : DELETE /api/b/:branch/vendors/:id (apps/api/src/routes/vendors.ts:161)
+      Caller     : apps/web/src/pages/Vendors.tsx:183
+      Status     : DEVELOPED
+
+[172] PATCH   /b/:branch/vendors/:id
+      Purpose    : Update vendor contact details or tax information
+      Backend    : PATCH /api/b/:branch/vendors/:id (apps/api/src/routes/vendors.ts:150)
+      Caller     : apps/web/src/pages/Vendors.tsx:264
+      Status     : DEVELOPED
+
+------------------------------------------------------------------------------------------------------------------------
+MODULE: SYSTEM DIAGNOSTICS & LOGGING (1 Endpoints)
+------------------------------------------------------------------------------------------------------------------------
+[173] POST    /client-error
+      Purpose    : Frontend client runtime error logging and telemetry endpoint
+      Backend    : POST /api/client-error (apps/api/src/app.ts:343)
+      Caller     : apps/web/src/main.tsx:51
+      Status     : DEVELOPED
+

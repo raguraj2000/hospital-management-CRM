@@ -27,6 +27,43 @@ class SuccessResponse(BaseSchema):
     message: Optional[str] = None
 
 
+class StandardResponse(BaseModel, Generic[T]):
+    status_code: int = 200
+    message: str = "Request completed successfully"
+    data: Optional[T] = None
+    error: Optional[Dict[str, Any]] = None
+
+
+def api_response(
+    data: Any = None,
+    message: str = "Request completed successfully",
+    status_code: int = 200,
+) -> Dict[str, Any]:
+    return {
+        "status_code": status_code,
+        "message": message,
+        "data": data,
+        "error": None,
+    }
+
+
+def api_error(
+    message: str,
+    code: str = "ERROR",
+    details: Any = None,
+    status_code: int = 400,
+) -> Dict[str, Any]:
+    return {
+        "status_code": status_code,
+        "message": message,
+        "data": None,
+        "error": {
+            "code": code,
+            "details": details,
+        },
+    }
+
+
 class ErrorEnvelope(BaseModel):
     error: str
     code: str

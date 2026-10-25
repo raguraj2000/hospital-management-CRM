@@ -5,7 +5,7 @@ from typing import Any, Optional, Tuple
 from src.constants.errors import ErrorCode
 from src.core.config import settings
 from src.core.exceptions import AppException
-from src.core.security import generate_session_token, hash_session_token, verify_password
+from src.core.security import generate_session_token, hash_password, hash_session_token, verify_password
 from src.dal import transaction
 from src.models.global_schema.users import OrganizationMembership, User
 from src.repository.user_repository import UserRepository
@@ -54,4 +54,26 @@ class AuthenticationService:
         if not sess:
             return None
         return await self.user_repo.get_by_id(sess.user_id)
+
+    async def change_password(
+        self,
+        user_id: int,
+        current_password: str,
+        new_password: str,
+        current_token: Optional[str] = None,
+    ) -> None:
+        user = await self.user_repo.get_by_id(user_id)
+        if not user or not user.is_active:
+            raise AppException("User not found or inactive.", code=ErrorCode.NOT_FOUND, status_code=404)
+
+        if not verify_password(current_password, user.password_hash):
+            raise AppException("Current password is wrong", code=ErrorCode.BAD_REQUEST, status_code=400)
+
+        new_hash = hash_password(new_password)
+        current_token_hash = hash_session_token(current_token) if current_token else None
+
+        async with transaction() as session:
+            await self.user_repo.update_password(user_id, new_hash, session=session)
+            await self.user_repo.revoke_user_sessions(user_id, except_token_hash=current_token_hash, session=session)
+
 

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AIAgentAccessSettings",
+  "version": "1.1.0",
+  "workspaceRoot": "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM",
+  "accessControl": {
+    "read": {
+      "scope": "COMPLETE",
+      "description": "Full read access across this project and external reference directories.",
+      "allowed": [
+        "**/*",
+        "C:\\Users\\smani\\OneDrive\\Desktop\\git\\tes\\hospital-management-CRM\\**"
+      ],
+      "denied": []
+    },
+    "write": {
+      "scope": "PROJECT_INTERNAL_ONLY",
+      "description": "Write access strictly confined to inside this project root.",
+      "allowed": [
+        "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM\\backend/**",
+        "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM\\frontend/**",
+        "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM\\db/**",
+        "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM\\docs/**"
+      ],
+      "denied": [
+        "outside:c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM",
+        "C:\\Users\\smani\\OneDrive\\Desktop\\git\\tes\\hospital-management-CRM\\**",
+        ".git/**",
+        "**/.env*",
+        "**/*.db",
+        "**/*.sqlite*",
+        "data/**",
+        "**/venv/**",
+        "**/node_modules/**",
+        "**/dist/**"
+      ]
+    },
+    "execution": {
+      "prohibitedCommands": [
+        "git commit*",
+        "git push*",
+        "git add*",
+        "git merge*",
+        "git rebase*"
+      ],
+      "allowedCommands": [
+        "npm *",
+        "node *",
+        "python *",
+        "pytest *",
+        "git status",
+        "git diff",
+        "git log*"
+      ]
+    }
+  },
+  "domainPolicies": {
+    "multiTenancy": "strict_branch_scoping",
+    "monetaryUnit": "integer_paise",
+    "softDeletes": true,
+    "auditLogging": true,
+    "offlineFirst": true,
+    "errorEnvelope": {
+      "error": "string",
+      "code": "string",
+      "fields": "object"
+    }
+  }
+}
