@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://hms_admin:Admin@123@localhost:5432/hospital_management_system"
+    DATABASE_URL: str = "postgresql+asyncpg://hms_admin:Admin%40123@127.0.0.1:5432/hospital_management_system"
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
     DATABASE_POOL_TIMEOUT: int = 30

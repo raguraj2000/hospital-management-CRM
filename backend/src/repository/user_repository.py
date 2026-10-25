@@ -1,6 +1,6 @@
 """User and Session repository."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Sequence
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,8 @@ class UserRepository(BaseRepository[User]):
         email: str,
         session: Optional[AsyncSession] = None,
     ) -> Optional[User]:
-        stmt = select(User).where(User.email == email.strip().lower(), User.deleted_at.is_(None))
+        clean = email.strip().lower()
+        stmt = select(User).where(User.username == clean, User.is_active == True)
         return await execute_one_or_none(stmt, session=session)
 
     async def get_by_identifier(
@@ -26,10 +27,10 @@ class UserRepository(BaseRepository[User]):
         identifier: str,
         session: Optional[AsyncSession] = None,
     ) -> Optional[User]:
-        clean = identifier.strip().lower()
+        clean = identifier.strip()
         stmt = select(User).where(
-            (User.email == clean) | (User.phone == clean),
-            User.deleted_at.is_(None),
+            (User.username == clean.lower()) | (User.mobile == clean),
+            User.is_active == True,
         )
         return await execute_one_or_none(stmt, session=session)
 
@@ -39,8 +40,9 @@ class UserRepository(BaseRepository[User]):
         session: Optional[AsyncSession] = None,
     ) -> Optional[Session]:
         stmt = select(Session).where(
-            Session.token_hash == token_hash,
-            Session.expires_at > datetime.now(),
+            Session.id == token_hash,
+            Session.revoked_at.is_(None),
+            Session.expires_at > datetime.now(timezone.utc),
         )
         return await execute_one_or_none(stmt, session=session)
 
@@ -51,7 +53,7 @@ class UserRepository(BaseRepository[User]):
         expires_at: datetime,
         session: AsyncSession,
     ) -> Session:
-        sess = Session(user_id=user_id, token_hash=token_hash, expires_at=expires_at)
+        sess = Session(id=token_hash, user_id=user_id, expires_at=expires_at)
         return await save_entity(sess, session=session)
 
     async def delete_session(
@@ -59,7 +61,7 @@ class UserRepository(BaseRepository[User]):
         token_hash: str,
         session: AsyncSession,
     ) -> None:
-        stmt = delete(Session).where(Session.token_hash == token_hash)
+        stmt = delete(Session).where(Session.id == token_hash)
         from src.dal import execute_dml
         await execute_dml(stmt, session=session)
 
@@ -73,4 +75,3 @@ class UserRepository(BaseRepository[User]):
             OrganizationMembership.is_active == True,
         )
         return await execute_all(stmt, session=session)
-

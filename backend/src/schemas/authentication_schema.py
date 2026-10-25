@@ -17,10 +17,13 @@ class LoginRequest(BaseModel):
 
 class UserDTO(BaseSchema):
     id: int
-    email: Optional[str] = None
     name: str
+    username: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[str] = None
     phone: Optional[str] = None
     role: Optional[str] = None
+    is_platform_admin: bool = False
     is_active: bool
 
 
