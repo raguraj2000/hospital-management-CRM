@@ -25,7 +25,7 @@ export function Login() {
     formState: { errors },
   } = useForm<LoginInput>({ resolver: zodResolver(loginSchema) });
 
-  if (me) return <Navigate to={me.user.isPlatformAdmin ? '/platform' : target(me.branches[0]?.slug)} replace />;
+  if (me) return <Navigate to={(me.user?.isPlatformAdmin || (me.user as any)?.is_platform_admin) ? '/platform' : target(me.branches?.[0]?.slug ?? 'main')} replace />;
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
@@ -66,7 +66,18 @@ export function Login() {
           <form
             noValidate
             className="mt-8 flex flex-col gap-5"
-            onSubmit={handleSubmit((v) => login.mutate(v, { onSuccess: (m) => navigate(m.user.isPlatformAdmin ? '/platform' : target(m.branches[0]?.slug), { replace: true }) }))}
+            onSubmit={handleSubmit((v) =>
+              login.mutate(v, {
+                onSuccess: (m) =>
+                  m &&
+                  navigate(
+                    (m.user?.isPlatformAdmin || (m.user as any)?.is_platform_admin)
+                      ? '/platform'
+                      : target(m.branches?.[0]?.slug ?? 'main'),
+                    { replace: true },
+                  ),
+              }),
+            )}
           >
             <Field required label="Mobile number" htmlFor="mobile" error={errors.mobile?.message}>
               <Input id="mobile" type="tel" inputMode="tel" autoComplete="username" autoFocus placeholder="98765 43210" aria-invalid={!!errors.mobile} {...register('mobile')} />

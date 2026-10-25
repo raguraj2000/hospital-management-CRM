@@ -88,6 +88,7 @@ async def list_patients(
     gender: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
+    offset_val: Optional[int] = Query(None, alias="offset"),
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
     stmt = select(Patient).where(
@@ -104,7 +105,7 @@ async def list_patients(
     if gender:
         stmt = stmt.where(Patient.gender == gender.lower())
 
-    offset = (page - 1) * limit
+    offset = offset_val if offset_val is not None else (page - 1) * limit
     count_stmt = select(func.count(Patient.id)).where(
         Patient.branch_id == context.branch_id,
         Patient.deleted_at.is_(None),

@@ -28,7 +28,7 @@ export function BackupRestore({ branch }: { branch: string }) {
     setDownloading(true);
     setDownloadError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/b/${branch}/backup`, { credentials: 'include' });
+      const res = await fetch(`${API_BASE_URL}/api/branch/backup?branch_slug=${encodeURIComponent(branch)}`, { credentials: 'include', headers: { 'X-Branch-Slug': branch } });
       if (!res.ok) return setDownloadError(await errorOf(res));
       const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'hms-backup.db';
       const url = URL.createObjectURL(await res.blob());
@@ -51,7 +51,7 @@ export function BackupRestore({ branch }: { branch: string }) {
     setRestoring(true);
     setRestoreError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/b/${branch}/restore`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+      const res = await fetch(`${API_BASE_URL}/api/branch/restore?branch_slug=${encodeURIComponent(branch)}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream', 'X-Branch-Slug': branch }, body: file });
       if (!res.ok) return setRestoreError(await errorOf(res));
       toast.success('Backup restored', { description: 'Everyone is signed out. Sign in again with an account from the backup.', duration: 8000 });
       // The session ended with the restore: go to the sign-in page with a clean start.

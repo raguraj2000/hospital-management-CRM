@@ -7,7 +7,7 @@ import type { Permission } from '@platform/shared';
 import { Card, EmptyState, ErrorBoundary, PageHeader, Toaster } from '@platform/ui';
 import { initTheme, isDark, useTheme } from '@/core/theme';
 import './index.css';
-import { setUnauthenticatedHandler } from '@/core/api/client';
+import { api, setUnauthenticatedHandler } from '@/core/api/client';
 import { ME_KEY, useCan, useMe } from '@/core/auth';
 import { NAV } from '@/core/navigation';
 import { AppShell } from './components/AppShell';
@@ -48,7 +48,8 @@ function reportError(message: string, stack?: string) {
   const now = Date.now();
   if ((reported.get(message) ?? 0) > now - 60_000) return;
   reported.set(message, now);
-  void fetch('/api/client-error', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, stack, url: location.pathname }) }).catch(() => {});
+  if (!message || message.includes('client-error') || message.includes('Failed to fetch')) return;
+  void api.post('/client-error', { message, stack, url: location.pathname }).catch(() => {});
 }
 window.addEventListener('error', (e) => reportError(e.message, e.error?.stack));
 window.addEventListener('unhandledrejection', (e) => reportError(String(e.reason?.message ?? e.reason), e.reason?.stack));

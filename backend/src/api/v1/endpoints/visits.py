@@ -31,7 +31,7 @@ class VisitUpdatePayload(BaseModel):
 
 
 class VisitActionPayload(BaseModel):
-    visit_id: int = Field(..., alias="visitId")
+    visit_id: Optional[int] = Field(None, alias="visitId")
     branch_id: Optional[int] = Field(None, alias="branchId")
 
 
@@ -213,7 +213,15 @@ async def send_to_next(
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
     branch_id = payload.branch_id or context.branch_id
-    v = await execute_one_or_none(select(OpVisit).where(OpVisit.id == payload.visit_id, OpVisit.branch_id == branch_id))
+    if payload.visit_id:
+        v = await execute_one_or_none(select(OpVisit).where(OpVisit.id == payload.visit_id, OpVisit.branch_id == branch_id))
+    else:
+        v = await execute_one_or_none(
+            select(OpVisit)
+            .where(OpVisit.branch_id == branch_id, OpVisit.status.in_(["scheduled", "in_queue"]))
+            .order_by(OpVisit.id)
+            .limit(1)
+        )
     if not v:
         raise AppException("Visit not found", code=ErrorCode.NOT_FOUND, status_code=404)
 
@@ -222,7 +230,7 @@ async def send_to_next(
         stmt = update(OpVisit).where(OpVisit.id == v.id).values(status=next_status)
         await execute_dml(stmt, session=session)
 
-    return api_response(data={"ok": True, "status": next_status}, message="Visit advanced to next stage successfully")
+    return api_response(data={"ok": True, "status": next_status, "token_no": v.token_no, "visit_id": v.id}, message="Visit advanced to next stage successfully")
 
 
 @router.post("/call-patient")
@@ -231,7 +239,15 @@ async def call_patient(
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
     branch_id = payload.branch_id or context.branch_id
-    v = await execute_one_or_none(select(OpVisit).where(OpVisit.id == payload.visit_id, OpVisit.branch_id == branch_id))
+    if payload.visit_id:
+        v = await execute_one_or_none(select(OpVisit).where(OpVisit.id == payload.visit_id, OpVisit.branch_id == branch_id))
+    else:
+        v = await execute_one_or_none(
+            select(OpVisit)
+            .where(OpVisit.branch_id == branch_id, OpVisit.status.in_(["scheduled", "in_queue"]))
+            .order_by(OpVisit.id)
+            .limit(1)
+        )
     if not v:
         raise AppException("Visit not found", code=ErrorCode.NOT_FOUND, status_code=404)
 
@@ -239,7 +255,7 @@ async def call_patient(
         stmt = update(OpVisit).where(OpVisit.id == v.id).values(status="in_consultation")
         await execute_dml(stmt, session=session)
 
-    return api_response(data={"ok": True, "token_no": v.token_no}, message=f"Called token {v.token_no}")
+    return api_response(data={"ok": True, "token_no": v.token_no, "visit_id": v.id}, message=f"Called token {v.token_no}")
 
 
 @router.get("/get-by-id")

@@ -7,11 +7,87 @@ from src.constants.errors import ErrorCode
 from src.core.config import settings
 from src.core.exceptions import AppException
 from src.models.global_schema.users import User
+from src.repository.organization_repository import OrganizationRepository
 from src.schemas.authentication_schema import ChangePasswordRequest, CurrentUserContext, LoginRequest, LoginResponse, MembershipDTO, UserDTO
 from src.schemas.common import api_response
 from src.service.authentication_service import AuthenticationService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+ALL_PERMISSIONS = [
+    "users.manage", "settings.manage", "audit.view", "access.anywhere",
+    "dashboard.view", "patient.view", "patient.create", "patient.edit",
+    "patient.delete", "prescription.write", "lab.order", "billing.receive",
+    "lab.view", "lab.correct", "pharmacy.sell", "inventory.view",
+    "inventory.manage", "vendor.manage", "treatment.give", "reports.view", "undo.skip",
+]
+
+
+async def build_auth_payload(
+    user: User,
+    auth_service: AuthenticationService,
+    raw_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    memberships = await auth_service.user_repo.get_memberships_for_user(user.id)
+    primary_membership = memberships[0] if memberships else None
+
+    company_id = primary_membership.company_id if primary_membership else 1
+    is_owner = primary_membership.is_owner if primary_membership else False
+    is_platform_admin = getattr(user, "is_platform_admin", False)
+
+    org_repo = OrganizationRepository()
+    company_branches = await org_repo.list_branches_for_company(company_id)
+
+    branches = []
+    for b in company_branches:
+        branches.append({
+            "id": b.id,
+            "slug": b.slug,
+            "name": b.name,
+            "roleName": "Owner" if is_owner else "Staff",
+            "permissions": ALL_PERMISSIONS,
+        })
+
+    if not branches:
+        branches.append({
+            "id": 1,
+            "slug": "main",
+            "name": "Main Branch",
+            "roleName": "Owner" if is_owner else "Staff",
+            "permissions": ALL_PERMISSIONS,
+        })
+
+    org = await org_repo.get_by_id(company_id)
+    org_name = org.name if org else "Hospital Organization"
+
+    mem_dto = MembershipDTO.model_validate(primary_membership).model_dump() if primary_membership else None
+
+    return {
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "mobile": user.mobile or user.phone or "",
+            "isOwner": is_owner,
+            "is_owner": is_owner,
+            "isPlatformAdmin": is_platform_admin,
+            "is_platform_admin": is_platform_admin,
+            "role": user.role,
+        },
+        "organization": {
+            "id": company_id,
+            "name": org_name,
+            "modulesOff": [],
+            "maxBranches": 10,
+            "maxStaff": 50,
+            "plan": {
+                "paidUntil": None,
+                "graceDays": 7,
+            },
+        },
+        "branches": branches,
+        "membership": mem_dto,
+        "token": raw_token,
+    }
 
 
 def extract_token(auth_header: Optional[str] = None, sid: Optional[str] = None) -> Optional[str]:
@@ -42,13 +118,9 @@ async def login(
         path="/",
     )
 
-    mem_dto = MembershipDTO.model_validate(membership).model_dump() if membership else None
+    data = await build_auth_payload(user, auth_service, raw_token=raw_token)
     return api_response(
-        data={
-            "user": UserDTO.model_validate(user).model_dump(),
-            "membership": mem_dto,
-            "token": raw_token,
-        },
+        data=data,
         message="Logged in successfully",
     )
 
@@ -79,12 +151,9 @@ async def get_current_profile(
     user = await auth_service.verify_session(token)
     if not user or not user.is_active:
         raise AppException("Session expired or user inactive.", code=ErrorCode.UNAUTHORIZED, status_code=401)
-    memberships = await auth_service.user_repo.get_memberships_for_user(user.id)
+    data = await build_auth_payload(user, auth_service, raw_token=token)
     return api_response(
-        data={
-            "user": UserDTO.model_validate(user).model_dump(),
-            "memberships": [MembershipDTO.model_validate(m).model_dump() for m in memberships],
-        },
+        data=data,
         message="Current user retrieved successfully",
     )
 

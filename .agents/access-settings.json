@@ -1,57 +1,40 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AIAgentAccessSettings",
-  "version": "1.1.0",
-  "workspaceRoot": "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM",
+  "version": "2.0.0",
+  "allowedRoot": "C:\\Users\\smani\\OneDrive\\Desktop\\git",
   "accessControl": {
     "read": {
-      "scope": "COMPLETE",
-      "description": "Full read access across this project and external reference directories.",
+      "scope": "MAX_ACCESS_INSIDE_ROOT",
+      "description": "Full unprompted read access across C:\\Users\\smani\\OneDrive\\Desktop\\git and all subdirectories.",
       "allowed": [
-        "**/*",
-        "C:\\Users\\smani\\OneDrive\\Desktop\\git\\tes\\hospital-management-CRM\\**"
+        "C:\\Users\\smani\\OneDrive\\Desktop\\git\\**"
       ],
-      "denied": []
+      "requiresPermission": [
+        "outside:C:\\Users\\smani\\OneDrive\\Desktop\\git"
+      ]
     },
     "write": {
-      "scope": "PROJECT_INTERNAL_ONLY",
-      "description": "Write access strictly confined to inside this project root.",
+      "scope": "MAX_ACCESS_INSIDE_ROOT",
+      "description": "Full unprompted write access across C:\\Users\\smani\\OneDrive\\Desktop\\git and all subdirectories.",
       "allowed": [
-        "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM\\backend/**",
-        "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM\\frontend/**",
-        "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM\\db/**",
-        "c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM\\docs/**"
+        "C:\\Users\\smani\\OneDrive\\Desktop\\git\\**"
       ],
-      "denied": [
-        "outside:c:\\Users\\smani\\OneDrive\\Desktop\\git\\hospital-management-CRM",
-        "C:\\Users\\smani\\OneDrive\\Desktop\\git\\tes\\hospital-management-CRM\\**",
-        ".git/**",
-        "**/.env*",
-        "**/*.db",
-        "**/*.sqlite*",
-        "data/**",
-        "**/venv/**",
-        "**/node_modules/**",
-        "**/dist/**"
+      "requiresPermission": [
+        "outside:C:\\Users\\smani\\OneDrive\\Desktop\\git"
       ]
     },
     "execution": {
+      "autoApprove": true,
+      "defaultPolicy": "ALLOW_ALL_INSIDE_ROOT",
       "prohibitedCommands": [
         "git commit*",
-        "git push*",
-        "git add*",
-        "git merge*",
-        "git rebase*"
+        "git push*"
       ],
       "allowedCommands": [
-        "npm *",
-        "node *",
-        "python *",
-        "pytest *",
-        "git status",
-        "git diff",
-        "git log*"
-      ]
+        "*"
+      ],
+      "outsideRootRequiresPermission": true
     }
   },
   "domainPolicies": {

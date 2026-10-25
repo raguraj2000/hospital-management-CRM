@@ -21,7 +21,10 @@ class OrganizationRepository(BaseRepository[Organization]):
         slug: str,
         session: Optional[AsyncSession] = None,
     ) -> Optional[Organization]:
-        stmt = select(Organization).where(Organization.slug == slug)
+        # Organizations identify by code_prefix or name
+        stmt = select(Organization).where(
+            (Organization.code_prefix.ilike(slug)) | (Organization.name.ilike(slug))
+        )
         return await execute_one_or_none(stmt, session=session)
 
     async def get_membership(

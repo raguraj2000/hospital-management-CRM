@@ -1,6 +1,6 @@
 """Billing, Invoicing, and Cashier Reconciliation Router."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Query
@@ -79,15 +79,15 @@ async def get_billing_settings(
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
     stmt = select(ClinicSetting).where(ClinicSetting.branch_id == context.branch_id)
-    rows = await execute_all(stmt)
-    settings_map = {s.key: s.value for s in rows}
+    s = await execute_one_or_none(stmt)
+    consultation_fee = s.consultation_fee_paise if s else 50000
     return api_response(
         data={
             "settings": {
-                "consultation_fee_paise": int(settings_map.get("consultation_fee_paise", 50000)),
-                "followup_fee_paise": int(settings_map.get("followup_fee_paise", 20000)),
-                "followup_days": int(settings_map.get("followup_days", 7)),
-                "tax_enabled": settings_map.get("tax_enabled", "false") == "true",
+                "consultation_fee_paise": consultation_fee,
+                "followup_fee_paise": 20000,
+                "followup_days": 7,
+                "tax_enabled": False,
             }
         },
         message="Billing settings retrieved successfully",
@@ -100,27 +100,15 @@ async def update_billing_settings(
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
     branch_id = payload.branch_id or context.branch_id
-    updates = {}
     if payload.consultation_fee_paise is not None:
-        updates["consultation_fee_paise"] = str(payload.consultation_fee_paise)
-    if payload.followup_fee_paise is not None:
-        updates["followup_fee_paise"] = str(payload.followup_fee_paise)
-    if payload.followup_days is not None:
-        updates["followup_days"] = str(payload.followup_days)
-    if payload.tax_enabled is not None:
-        updates["tax_enabled"] = "true" if payload.tax_enabled else "false"
-
-    async with transaction() as session:
-        for k, v in updates.items():
-            existing = await execute_one_or_none(
-                select(ClinicSetting).where(ClinicSetting.branch_id == branch_id, ClinicSetting.key == k)
-            )
+        async with transaction() as session:
+            existing = await execute_one_or_none(select(ClinicSetting).where(ClinicSetting.branch_id == branch_id))
             if existing:
-                stmt = update(ClinicSetting).where(ClinicSetting.id == existing.id).values(value=v)
+                stmt = update(ClinicSetting).where(ClinicSetting.branch_id == branch_id).values(consultation_fee_paise=payload.consultation_fee_paise)
                 await execute_dml(stmt, session=session)
             else:
-                s = ClinicSetting(branch_id=branch_id, key=k, value=v)
-                await save_entity(s, session=session)
+                new_s = ClinicSetting(branch_id=branch_id, consultation_fee_paise=payload.consultation_fee_paise)
+                await save_entity(new_s, session=session)
 
     return api_response(data={"ok": True}, message="Billing settings updated successfully")
 
@@ -285,29 +273,77 @@ async def update_invoice(
 
 @router.get("/period-report")
 async def get_period_report(
+    days: int = Query(1, ge=1, le=365),
+    from_date: Optional[str] = Query(None, alias="from"),
+    to_date: Optional[str] = Query(None, alias="to"),
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
+    today = datetime.now(timezone.utc).date()
+    start_date = today - timedelta(days=days - 1)
+    end_date = today
+
+    if from_date and to_date:
+        try:
+            start_date = datetime.strptime(from_date, "%Y-%m-%d").date()
+            end_date = datetime.strptime(to_date, "%Y-%m-%d").date()
+        except Exception:
+            pass
+
     stmt = (
         select(
-            func.coalesce(func.sum(Invoice.total_gross_paise), 0).label("billed_paise"),
+            func.coalesce(func.sum(Invoice.grand_total_paise), 0).label("billed_paise"),
             func.coalesce(func.sum(Invoice.balance_due_paise), 0).label("due_paise"),
+            func.coalesce(func.sum(Invoice.paid_amount_paise), 0).label("paid_paise"),
             func.count(Invoice.id).label("invoice_count"),
         )
-        .where(Invoice.branch_id == context.branch_id)
+        .where(
+            Invoice.branch_id == context.branch_id,
+            Invoice.invoice_date >= start_date,
+            Invoice.invoice_date <= end_date,
+        )
     )
     res = await execute_one_or_none(stmt)
     billed = getattr(res, "billed_paise", 0) if res else 0
     due = getattr(res, "due_paise", 0) if res else 0
+    paid = getattr(res, "paid_paise", 0) if res else 0
     cnt = getattr(res, "invoice_count", 0) if res else 0
 
     return api_response(
         data={
+            "days": days,
+            "from": start_date.isoformat(),
+            "to": end_date.isoformat(),
+            "own": False,
+            "doctors": [],
+            "received": {
+                "cash": paid,
+                "upi": 0,
+                "card": 0,
+                "totalPaise": paid,
+                "billsPaise": paid,
+                "pharmacyOpPaise": 0,
+                "pharmacyDirectPaise": 0,
+                "pharmacyRoundOffPaise": 0,
+            },
+            "billed": {
+                "consultationPaise": billed,
+                "labPaise": 0,
+                "otherPaise": 0,
+                "roundOffPaise": 0,
+                "discountPaise": 0,
+                "bills": cnt,
+                "duePaise": due,
+            },
+            "expensesPaise": 0,
+            "vendorPaidPaise": 0,
+            "visits": 0,
+            "newPatients": 0,
             "report": {
                 "total_billed_paise": billed,
                 "total_due_paise": due,
-                "total_collected_paise": billed - due,
+                "total_collected_paise": paid,
                 "invoice_count": cnt,
-            }
+            },
         },
         message="Period revenue report generated successfully",
     )

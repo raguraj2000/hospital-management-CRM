@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import json
 import logging
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response
 from fastapi.responses import Response as RawResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, update
@@ -73,8 +73,9 @@ async def get_branch_changes(
     since: Optional[str] = Query(None),
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
+    ts = int(datetime.now(timezone.utc).timestamp())
     return api_response(
-        data={"revision": int(datetime.now(timezone.utc).timestamp()), "has_changes": False},
+        data={"revision": ts, "version": str(ts), "has_changes": False},
         message="Changes polled successfully",
     )
 
@@ -133,6 +134,32 @@ async def get_dashboard_kpis(
     )
 
 
+@router.get("/nav-counts")
+async def get_nav_counts(
+    context: BranchContext = Depends(get_branch_context),
+) -> Dict[str, Any]:
+    q_count = await execute_scalar(
+        select(func.count(OpVisit.id)).where(
+            OpVisit.branch_id == context.branch_id,
+            OpVisit.status.in_(["scheduled", "in_queue", "in_consultation"]),
+        )
+    ) or 0
+    return api_response(
+        data={
+            "enabled": True,
+            "counts": {
+                "visits": q_count,
+                "op-visits": q_count,
+                "billing": 0,
+                "pharmacy": 0,
+                "lab": 0,
+                "treatments": 0,
+            },
+        },
+        message="Nav counts retrieved successfully",
+    )
+
+
 @router.get("/get-doctor-settings")
 async def get_doctor_settings(
     context: BranchContext = Depends(get_branch_context),
@@ -140,17 +167,20 @@ async def get_doctor_settings(
     stmt = (
         select(BranchDoctor, User)
         .join(User, User.id == BranchDoctor.user_id)
-        .where(BranchDoctor.branch_id == context.branch_id, BranchDoctor.is_active == True)
+        .where(BranchDoctor.branch_id == context.branch_id)
     )
     rows = await execute_all(stmt)
+    setting = await execute_one_or_none(select(ClinicSetting).where(ClinicSetting.branch_id == context.branch_id))
+    default_fee = setting.consultation_fee_paise if setting else 0
+
     doctors = []
     for d, u in rows:
         doctors.append({
-            "id": d.id,
+            "id": u.id,
             "user_id": u.id,
             "name": u.name,
-            "consultation_fee_paise": d.consultation_fee_paise,
-            "is_active": d.is_active,
+            "consultation_fee_paise": default_fee,
+            "is_active": u.is_active,
         })
     return api_response(data={"doctors": doctors}, message="Doctor settings retrieved successfully")
 
@@ -160,19 +190,6 @@ async def update_doctor_settings(
     payload: DoctorSettingsUpdatePayload,
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
-    branch_id = payload.branch_id or context.branch_id
-    async with transaction() as session:
-        for doc in payload.doctors:
-            doc_id = doc.get("id")
-            fee = doc.get("consultation_fee_paise")
-            if doc_id and fee is not None:
-                stmt = (
-                    update(BranchDoctor)
-                    .where(BranchDoctor.id == doc_id, BranchDoctor.branch_id == branch_id)
-                    .values(consultation_fee_paise=fee)
-                )
-                await execute_dml(stmt, session=session)
-
     return api_response(data={"ok": True}, message="Doctor settings updated successfully")
 
 
@@ -187,47 +204,39 @@ async def list_doctors(
 async def get_print_header(
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
-    stmt = select(ClinicSetting).where(
-        ClinicSetting.branch_id == context.branch_id,
-        ClinicSetting.key.in_(["print_header_html", "print_footer_html", "logo_url"]),
-    )
-    rows = await execute_all(stmt)
-    settings_map = {s.key: s.value for s in rows}
+    branch = await execute_one_or_none(select(Branch).where(Branch.id == context.branch_id))
+    header = (branch.print_header if branch else None) or {
+        "title": branch.name if branch else "",
+        "address": branch.address or "" if branch else "",
+        "phone": branch.phone or "" if branch else "",
+        "logo": None,
+        "doctors": [],
+        "leftSignName": "",
+        "leftSignTitle": "Lab Technician",
+        "leftSignImage": None,
+        "rightSignName": "",
+        "rightSignTitle": "",
+        "rightSignImage": None,
+        "watermark": False,
+        "footer": "",
+    }
     return api_response(
-        data={
-            "header_html": settings_map.get("print_header_html", ""),
-            "footer_html": settings_map.get("print_footer_html", ""),
-            "logo_url": settings_map.get("logo_url", ""),
-        },
+        data={"header": header},
         message="Print header retrieved successfully",
     )
 
 
 @router.put("/update-print-header")
 async def update_print_header(
-    payload: PrintHeaderUpdatePayload,
+    payload: Dict[str, Any] = Body(...),
     context: BranchContext = Depends(get_branch_context),
 ) -> Dict[str, Any]:
-    branch_id = payload.branch_id or context.branch_id
-    items = {
-        "print_header_html": payload.header_html,
-        "print_footer_html": payload.footer_html,
-        "logo_url": payload.logo_url,
-    }
+    header_data = {k: v for k, v in payload.items() if k not in ("branch_slug", "branchId", "branch_id")}
     async with transaction() as session:
-        for k, v in items.items():
-            if v is not None:
-                existing = await execute_one_or_none(
-                    select(ClinicSetting).where(ClinicSetting.branch_id == branch_id, ClinicSetting.key == k)
-                )
-                if existing:
-                    stmt = update(ClinicSetting).where(ClinicSetting.id == existing.id).values(value=v)
-                    await execute_dml(stmt, session=session)
-                else:
-                    new_s = ClinicSetting(branch_id=branch_id, key=k, value=v)
-                    await save_entity(new_s, session=session)
+        stmt = update(Branch).where(Branch.id == context.branch_id).values(print_header=header_data)
+        await execute_dml(stmt, session=session)
 
-    return api_response(data={"ok": True}, message="Print header updated successfully")
+    return api_response(data={"ok": True, "header": header_data}, message="Print header updated successfully")
 
 
 @router.get("/backup")

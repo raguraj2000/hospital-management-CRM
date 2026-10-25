@@ -117,12 +117,12 @@ async def create_customer(
     if taken:
         raise AppException("This mobile number already has an account", code=ErrorCode.CONFLICT, status_code=409)
 
-    slug = (payload.id_prefix or payload.name).lower().replace(" ", "-")[:40]
+    code_prefix = (payload.id_prefix or payload.name)[:10].upper()
     async with transaction() as session:
         org = Organization(
             name=payload.name.strip(),
-            slug=slug,
-            billing_tier="starter",
+            code_prefix=code_prefix,
+            plan_name="starter",
             is_active=True,
         )
         saved_org = await save_entity(org, session=session)
@@ -175,7 +175,15 @@ async def update_customer(
     if payload.name:
         update_vals["name"] = payload.name
     if payload.plan_name:
-        update_vals["billing_tier"] = payload.plan_name
+        update_vals["plan_name"] = payload.plan_name
+    if payload.yearly_fee_paise is not None:
+        update_vals["yearly_fee_paise"] = payload.yearly_fee_paise
+    if payload.grace_days is not None:
+        update_vals["grace_days"] = payload.grace_days
+    if payload.max_branches is not None:
+        update_vals["max_branches"] = payload.max_branches
+    if payload.max_staff is not None:
+        update_vals["max_staff"] = payload.max_staff
 
     if update_vals:
         async with transaction() as session:
@@ -322,14 +330,23 @@ async def record_customer_payment(
     payload: PlatformPaymentCreateRequest,
     admin: User = Depends(require_platform_admin),
 ) -> Dict[str, Any]:
-    ref = payload.gateway_ref or f"PAY-{int(datetime.now(timezone.utc).timestamp())}"
+    today = datetime.now(timezone.utc).date()
+    paid_date = today
+    if payload.paid_on:
+        try:
+            paid_date = datetime.strptime(payload.paid_on, "%Y-%m-%d").date()
+        except Exception:
+            paid_date = today
+
     async with transaction() as session:
         payment = PlatformPayment(
             company_id=payload.customer_id,
             amount_paise=payload.amount_paise,
-            gateway_ref=ref,
-            status="completed",
-            notes=payload.note,
+            paid_on=paid_date,
+            period_from=paid_date,
+            period_to=paid_date,
+            note=payload.note,
+            created_by=admin.id,
         )
         saved = await save_entity(payment, session=session)
 

@@ -24,7 +24,12 @@ class OrganizationService:
         if existing:
             raise AppException(f"Organization slug '{valid_slug}' is already registered.", code=ErrorCode.CONFLICT)
 
-        org = Organization(name=name.strip(), slug=valid_slug, billing_tier=billing_tier, is_active=True)
+        org = Organization(
+            name=name.strip(),
+            code_prefix=valid_slug.upper()[:10],
+            plan_name=billing_tier,
+            is_active=True,
+        )
         async with transaction() as session:
             return await self.org_repo.save(org, session=session)
 

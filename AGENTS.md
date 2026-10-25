@@ -1,28 +1,33 @@
 # AI Agent Access Settings & Rules (`AGENTS.md`)
 
-This file defines the permissions and boundaries for AI agents operating within `c:\Users\smani\OneDrive\Desktop\git\hospital-management-CRM`.
+This file defines the permissions and boundaries for AI agents operating within `C:\Users\smani\OneDrive\Desktop\git`.
 
 ---
 
-## 1. Access Permissions
+## 1. Access & Execution Boundaries
 
-### 1.1 Read Access: **COMPLETE**
-The AI agent is granted **complete read access**:
-- Full read access across all files and folders in this project (`backend/`, `frontend/`, `db/`, `docs/`, scripts, configs).
-- Full read access to external reference directories (e.g., `C:\Users\smani\OneDrive\Desktop\git\tes\hospital-management-CRM`) to compare API contracts, schemas, and implementation parity.
+### 1.1 Primary Workspace Scope: `C:\Users\smani\OneDrive\Desktop\git`
+- **Maximum Access Allowed**: Full unprompted access is granted for all operations inside `C:\Users\smani\OneDrive\Desktop\git` and all its child repositories/projects (including `hospital-management-CRM`, `tes/`, and sister workspaces).
+- **Outside Scope Boundary**: Any action that attempts to read, write, or execute commands **outside** `C:\Users\smani\OneDrive\Desktop\git` requires explicit user permission.
 
-### 1.2 Write Access: **STRICTLY INSIDE THIS PROJECT ONLY**
-The AI agent is granted write access **strictly within the bounds of this project directory** (`c:\Users\smani\OneDrive\Desktop\git\hospital-management-CRM`):
-- **Allowed Project Scopes**:
-  - `backend/` — API routers, schemas, services, repositories, DAL queries, models, and tests.
-  - `frontend/` — Web application code (`apps/web/src/`), reusable UI components, and shared packages (`packages/shared`, `packages/ui`).
-  - `db/` — Database migration files, schema definitions, and seed data scripts.
-  - `docs/` — Documentation, API mappings, and milestone trackers.
-- **Strictly Forbidden (External & Protected Scopes)**:
-  - **NO WRITE OUTSIDE THIS PROJECT**: Never write or modify files outside `c:\Users\smani\OneDrive\Desktop\git\hospital-management-CRM` (e.g., external folders like `tes/` are strictly read-only).
-  - **NEVER COMMIT OR PUSH TO GIT**: Do NOT run `git commit`, `git push`, `git add`, or stage code changes. Git commits and merges are handled manually by the developer.
-  - **CRITICAL PROTECTED FILES**: Never overwrite live databases (`*.db`, `*.sqlite*`, `data/**`) or secret credentials (`.env*`).
-  - **MANAGED DIRECTORIES**: Never manually edit package manager directories (`venv/`, `node_modules/`, `dist/`).
+### 1.2 Unrestricted Operations Inside Scope (Auto-Approved)
+Inside `C:\Users\smani\OneDrive\Desktop\git`, the agent has standing auto-approval for all development activities:
+1. **File & Folder Operations**: Create, edit, rename, delete files and folders (`mkdir`, `New-Item`, writing/editing source files, configs, scripts, tests).
+2. **Command & Terminal Execution**: Full execution rights for all tools, compilers, package managers, and runtimes:
+   - Python: `python *`, `.\venv\Scripts\python.exe *`, `pytest *`
+   - Node: `npm *`, `pnpm *`, `npx *`, `node *`
+   - Servers: `uvicorn *`, dev servers, background processes
+   - Diagnostics: `netstat *`, `Get-NetTCPConnection *`, `Get-Process *`, `tasklist *`, `curl *`, `Test-NetConnection *`
+   - Search: `Select-String *`, `grep *`, `rg *`, `findstr *`, `Get-ChildItem *`
+   - Git Inspection: `git status`, `git diff`, `git log`, `git branch`, `git checkout`
+
+### 1.3 The ONLY Restrictions Inside Scope: Git Write Commands
+The ONLY prohibited actions inside `C:\Users\smani\OneDrive\Desktop\git` are **git write operations**:
+- **NEVER RUN AUTOMATICALLY**:
+  - `git commit`
+  - `git push`
+  - Any commands that stage or mutate remote Git history without explicit user instruction.
+- All code changes remain in working tree for user review and manual commit.
 
 ---
 

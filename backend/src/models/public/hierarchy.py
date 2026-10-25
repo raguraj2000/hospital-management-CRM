@@ -60,18 +60,22 @@ class Branch(Base, TimestampMixin):
     state_code: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    print_header: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    allowed_networks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
-class BranchDoctor(Base, TimestampMixin):
+class BranchDoctor(Base):
     __tablename__ = "branch_doctors"
     __table_args__ = {"schema": "public"}
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    branch_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    consultation_fee_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    branch_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+        nullable=False,
+    )
 
 
 class BranchCounter(Base):

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import BigInteger, DateTime
+from sqlalchemy import DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -11,8 +11,3 @@ class SoftDeleteMixin:
         DateTime(timezone=True),
         nullable=True,
     )
-    deleted_by: Mapped[Optional[int]] = mapped_column(
-        BigInteger,
-        nullable=True,
-    )
-

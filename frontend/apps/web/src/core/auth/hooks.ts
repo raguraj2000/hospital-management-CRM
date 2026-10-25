@@ -3,11 +3,55 @@
 // TanStack Query cache -- no token is ever stored in client storage.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router';
-import type { LoginInput, MeBranch, MeResponse, ModuleKey, Permission } from '@platform/shared';
+import { ALL_PERMISSIONS, type LoginInput, type MeBranch, type MeResponse, type ModuleKey, type Permission } from '@platform/shared';
 import { api, ApiError } from '@/core/api/client';
 import { clearAllDrafts } from '@/components/drafts';
 
 export const ME_KEY = ['me'] as const;
+
+export function normalizeMeResponse(raw: any): MeResponse {
+  const data = raw && typeof raw === 'object' ? raw : {};
+  const user = data.user || {};
+  const isPlatformAdmin = Boolean(user.isPlatformAdmin ?? user.is_platform_admin);
+  const isOwner = Boolean(user.isOwner ?? user.is_owner ?? data.membership?.is_owner);
+
+  const branches: MeBranch[] = Array.isArray(data.branches) && data.branches.length > 0
+    ? data.branches.map((b: any) => ({
+        slug: b.slug || 'main',
+        name: b.name || 'Main Branch',
+        roleName: b.roleName || (isOwner ? 'Owner' : 'Staff'),
+        permissions: (b.permissions ?? ALL_PERMISSIONS) as Permission[],
+      }))
+    : [
+        {
+          slug: 'main',
+          name: 'Main Branch',
+          roleName: isOwner ? 'Owner' : 'Staff',
+          permissions: ALL_PERMISSIONS as unknown as Permission[],
+        },
+      ];
+
+  const organization = data.organization || {
+    id: data.membership?.company_id ?? 1,
+    name: 'Hospital Organization',
+    modulesOff: [],
+    maxBranches: null,
+    maxStaff: null,
+    plan: { paidUntil: null, graceDays: 7 },
+  };
+
+  return {
+    user: {
+      id: user.id ?? 1,
+      name: user.name || '',
+      mobile: user.mobile || user.phone || '',
+      isOwner,
+      isPlatformAdmin,
+    },
+    organization,
+    branches,
+  };
+}
 
 export function useMe(options?: { enabled?: boolean }) {
   const isLoginPage = typeof window !== 'undefined' && (window.location.pathname === '/login' || window.location.pathname === '/');
@@ -15,7 +59,8 @@ export function useMe(options?: { enabled?: boolean }) {
     queryKey: ME_KEY,
     queryFn: async () => {
       try {
-        return await api.get<MeResponse>('/auth/me');
+        const raw = await api.get<MeResponse>('/auth/me');
+        return normalizeMeResponse(raw);
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) return null; // signed out
         throw err;
@@ -29,7 +74,10 @@ export function useMe(options?: { enabled?: boolean }) {
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: LoginInput) => api.post<MeResponse>('/auth/login', input),
+    mutationFn: async (input: LoginInput) => {
+      const raw = await api.post<MeResponse>('/auth/login', input);
+      return normalizeMeResponse(raw);
+    },
     onSuccess: (me) => qc.setQueryData(ME_KEY, me),
   });
 }
@@ -50,7 +98,7 @@ export function useLogout() {
 export function useBranch(): MeBranch | null {
   const { branch } = useParams();
   const { data } = useMe();
-  return data?.branches.find((b) => b.slug === branch) ?? null;
+  return data?.branches?.find((b) => b.slug === branch) ?? data?.branches?.[0] ?? null;
 }
 
 /** Check if a module is switched on for this hospital organization. */

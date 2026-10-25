@@ -2,10 +2,12 @@
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, Numeric, String, Text, func
+from typing import Any, Optional
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, Numeric, String, Text, func
+from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from src.models.base import Base
+from src.models.mixins.audit_fields import SoftDeleteMixin
 from src.models.mixins.timestamps import TimestampMixin
 
 
@@ -16,20 +18,69 @@ class Invoice(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     company_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     branch_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    patient_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    invoice_no: Mapped[str] = mapped_column(String(50), nullable=False)
     visit_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    invoice_no: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(30), default="posted", nullable=False)
-    subtotal_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    patient_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    patient_name_snapshot: Mapped[str] = mapped_column(String(150), default="", nullable=False)
+    patient_gstin: Mapped[Optional[str]] = mapped_column(String(15), nullable=True)
+    seller_gstin_snapshot: Mapped[Optional[str]] = mapped_column(String(15), nullable=True)
+    seller_state_code: Mapped[str] = mapped_column(String(10), default="33", nullable=False)
+    place_of_supply_state_code: Mapped[str] = mapped_column(String(10), default="33", nullable=False)
+    is_inter_state: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    invoice_date: Mapped[date] = mapped_column(Date, default=func.current_date, nullable=False)
+    taxable_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    cgst_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    sgst_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    igst_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    cess_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    total_tax_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     discount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    tax_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    round_off_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    total_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    paid_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    balance_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    is_cancelled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    cancelled_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    round_off_paise: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    grand_total_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    paid_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    balance_due_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
+    is_immutable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    posted_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    cancelled_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    cancel_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    @property
+    def invoice_number(self) -> str:
+        return self.invoice_no
+
+    @property
+    def total_gross_paise(self) -> int:
+        return self.grand_total_paise
+
+    @property
+    def total_paise(self) -> int:
+        return self.grand_total_paise
+
+    @property
+    def subtotal_paise(self) -> int:
+        return self.taxable_amount_paise
+
+    @property
+    def paid_paise(self) -> int:
+        return self.paid_amount_paise
+
+    @property
+    def balance_paise(self) -> int:
+        return self.balance_due_paise
+
+    @property
+    def tax_paise(self) -> int:
+        return self.total_tax_paise
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self.status == "cancelled"
+
+    @property
+    def cancelled_reason(self) -> Optional[str]:
+        return self.cancel_reason
 
 
 class InvoiceLine(Base):
@@ -38,14 +89,35 @@ class InvoiceLine(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     invoice_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    item_type: Mapped[str] = mapped_column(String(40), nullable=False)  # opd, medicine, lab, procedure
+    line_type: Mapped[str] = mapped_column(String(40), default="opd", nullable=False)
     reference_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     description: Mapped[str] = mapped_column(String(200), nullable=False)
-    quantity: Mapped[int] = mapped_column(default=1, nullable=False)
-    unit_price_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    taxable_amount_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    tax_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    total_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    hsn_sac_code: Mapped[str] = mapped_column(String(20), default="999312", nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), default=Decimal("1"), nullable=False)
+    unit_price_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    gross_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    discount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    taxable_value_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    gst_tax_code: Mapped[str] = mapped_column(String(20), default="EXEMPT", nullable=False)
+    gst_rate_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0.00"), nullable=False)
+    total_tax_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    net_line_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+
+    @property
+    def item_type(self) -> str:
+        return self.line_type
+
+    @property
+    def total_paise(self) -> int:
+        return self.net_line_amount_paise
+
+    @property
+    def taxable_amount_paise(self) -> int:
+        return self.taxable_value_paise
+
+    @property
+    def tax_amount_paise(self) -> int:
+        return self.total_tax_paise
 
 
 class InvoiceTaxLine(Base):
@@ -53,14 +125,14 @@ class InvoiceTaxLine(Base):
     __table_args__ = {"schema": "public"}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    line_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    hsn_sac_code: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
-    cgst_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0.00"), nullable=False)
-    cgst_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    sgst_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0.00"), nullable=False)
-    sgst_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    igst_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0.00"), nullable=False)
-    igst_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    invoice_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    gst_tax_code: Mapped[str] = mapped_column(String(20), nullable=False)
+    taxable_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    cgst_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    sgst_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    igst_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    cess_amount_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    total_tax_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
 
 class InvoicePayment(Base):
@@ -99,7 +171,7 @@ class InvoicePayment(Base):
         self.reference = value
 
 
-class CreditDebitNote(Base, TimestampMixin):
+class CreditDebitNote(Base):
     __tablename__ = "credit_debit_notes"
     __table_args__ = {"schema": "public"}
 
@@ -107,23 +179,44 @@ class CreditDebitNote(Base, TimestampMixin):
     company_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     branch_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     original_invoice_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    note_type: Mapped[str] = mapped_column(String(10), nullable=False)  # 'credit' or 'debit'
-    note_no: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
-    amount_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    note_no: Mapped[str] = mapped_column(String(50), nullable=False)
+    note_type: Mapped[str] = mapped_column(String(10), nullable=False)  # 'CREDIT' or 'DEBIT'
+    note_date: Mapped[date] = mapped_column(Date, default=func.current_date, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    taxable_adjustment_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    tax_adjustment_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    total_adjustment_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+        nullable=False,
+    )
+
+    @property
+    def amount_paise(self) -> int:
+        return self.total_adjustment_paise
 
 
-class VisitCharge(Base, TimestampMixin):
+class VisitCharge(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "visit_charges"
     __table_args__ = {"schema": "public"}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     branch_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     visit_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    charge_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    description: Mapped[str] = mapped_column(String(200), nullable=False)
     amount_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    is_billed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    invoice_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    created_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
+    @property
+    def is_billed(self) -> bool:
+        return self.invoice_id is not None
+
+    @property
+    def charge_type(self) -> str:
+        return self.description
 
 
 class AuditLog(Base):
@@ -135,12 +228,20 @@ class AuditLog(Base):
     branch_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     action: Mapped[str] = mapped_column(String(40), nullable=False)
-    entity_type: Mapped[str] = mapped_column(String(60), nullable=False)
-    entity_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    diff: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    entity: Mapped[str] = mapped_column(String(60), nullable=False)
+    entity_id: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    detail: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    client_ip: Mapped[Optional[str]] = mapped_column(INET, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.current_timestamp(),
         nullable=False,
     )
 
+    @property
+    def entity_type(self) -> str:
+        return self.entity
+
+    @property
+    def diff(self) -> Any:
+        return self.detail

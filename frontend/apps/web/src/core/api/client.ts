@@ -1,7 +1,9 @@
 // Centralized API client for the web application.
 // Cookie session (credentials: 'include'), typed errors, timeouts, GET retries,
-// AbortSignal support, and unauthenticated session expiry handling.
+// AbortSignal support, unauthenticated session expiry handling, and automatic
+// mapping to the canonical /api/{module}/{op} backend architecture.
 import type { ApiErrorBody } from '@platform/shared';
+import { transformRequest } from './adapter';
 
 export class ApiError extends Error {
   constructor(
@@ -38,9 +40,12 @@ async function request<T>(
   options?: RequestOptions,
   attempt = 0,
 ): Promise<T> {
+  // Transform legacy routes & payloads into canonical /api/{module}/{op} contract
+  const transformed = transformRequest(method, path, body, options?.headers);
+
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  
+
   // Combine user signal with timeout signal if provided
   let combinedSignal: AbortSignal = timeoutSignal;
   if (options?.signal) {
@@ -48,19 +53,19 @@ async function request<T>(
   }
 
   const headers: Record<string, string> = {
-    ...(options?.headers ?? {}),
+    ...transformed.headers,
   };
-  if (body !== undefined) {
+  if (transformed.body !== undefined) {
     headers['Content-Type'] = 'application/json';
   }
 
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}/api${path}`, {
-      method,
+    res = await fetch(`${API_BASE_URL}${transformed.path}`, {
+      method: transformed.method,
       credentials: 'include',
       headers: Object.keys(headers).length ? headers : undefined,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: transformed.body === undefined ? undefined : JSON.stringify(transformed.body),
       signal: combinedSignal,
     });
   } catch (err) {
@@ -70,7 +75,7 @@ async function request<T>(
     }
 
     // Network down / server restarting: retry GET reads once
-    if (method === 'GET' && attempt < 1) {
+    if (transformed.method === 'GET' && attempt < 1) {
       return request(method, path, body, options, attempt + 1);
     }
 
@@ -86,43 +91,92 @@ async function request<T>(
 
   const contentType = res.headers.get('content-type') ?? '';
   const isJson = contentType.includes('application/json');
-  const data = isJson ? await res.json().catch(() => null) : null;
+  const responseData = isJson ? await res.json().catch(() => null) : null;
 
   if (!res.ok) {
-    const e = (data ?? {}) as Partial<ApiErrorBody>;
-    if (res.status === 401 && !path.startsWith('/auth/login')) {
+    let code = 'error';
+    let message = `Request failed (${res.status})`;
+    let fields: Record<string, string[]> | undefined = undefined;
+
+    if (responseData && typeof responseData === 'object') {
+      const resp = responseData as Record<string, any>;
+      if (typeof resp.message === 'string' && resp.message) {
+        message = resp.message;
+      }
+      if (resp.error) {
+        if (typeof resp.error === 'string') {
+          message = resp.error;
+        } else if (typeof resp.error === 'object') {
+          if (typeof resp.error.code === 'string') {
+            code = resp.error.code;
+          }
+          if (typeof resp.error.message === 'string') {
+            message = resp.error.message;
+          }
+          if (resp.error.details) {
+            if (Array.isArray(resp.error.details)) {
+              // FastAPI validation errors: [{ field: 'name', message: '...' }]
+              fields = {};
+              for (const d of resp.error.details) {
+                const k = d.field || 'general';
+                if (!fields[k]) fields[k] = [];
+                fields[k].push(d.message || 'Invalid value');
+              }
+            } else if (typeof resp.error.details === 'object') {
+              fields = resp.error.details;
+            }
+          }
+        }
+      }
+      if (resp.code && typeof resp.code === 'string') {
+        code = resp.code;
+      }
+      if (resp.fields && typeof resp.fields === 'object') {
+        fields = resp.fields;
+      }
+    }
+
+    if (res.status === 401 && !transformed.path.includes('/auth/login')) {
       onUnauthenticated?.();
     }
-    if (res.status >= 500 && method === 'GET' && attempt < 1) {
+    if (res.status >= 500 && transformed.method === 'GET' && attempt < 1) {
       return request(method, path, body, options, attempt + 1);
     }
-    throw new ApiError(
-      res.status,
-      e.code ?? 'error',
-      e.error ?? `Request failed (${res.status})`,
-      e.fields,
-    );
+    throw new ApiError(res.status, code, message, fields);
   }
 
-  return data as T;
+  // Response OK: unwrap standardized response envelope { status_code, message, data, error }
+  if (
+    responseData !== null &&
+    typeof responseData === 'object' &&
+    'status_code' in responseData &&
+    'data' in responseData
+  ) {
+    return (responseData as { data: T }).data;
+  }
+
+  return responseData as T;
 }
 
 export const api = {
   get: <T>(path: string, options?: RequestOptions) => request<T>('GET', path, undefined, options),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>('POST', path, body ?? {}, options),
-  patch: <T>(path: string, body: unknown, options?: RequestOptions) => request<T>('PATCH', path, body, options),
-  put: <T>(path: string, body: unknown, options?: RequestOptions) => request<T>('PUT', path, body, options),
-  delete: <T>(path: string, options?: RequestOptions) => request<T>('DELETE', path, undefined, options),
-  
+  patch: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>('PATCH', path, body, options),
+  put: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>('PUT', path, body, options),
+  delete: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>('DELETE', path, body, options),
+
   /** Download binary data (e.g. CSV or PDF reports) */
   blob: async (path: string, options?: RequestOptions): Promise<{ blob: Blob; filename: string | null }> => {
+    const transformed = transformRequest('GET', path, undefined, options?.headers);
+
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = options?.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
 
-    const res = await fetch(`/api${path}`, {
+    const res = await fetch(`${API_BASE_URL}${transformed.path}`, {
       method: 'GET',
       credentials: 'include',
+      headers: Object.keys(transformed.headers).length ? transformed.headers : undefined,
       signal,
     });
 
@@ -133,7 +187,7 @@ export const api = {
       throw new ApiError(
         res.status,
         e.code ?? 'export_error',
-        e.error ?? `Failed to download file (${res.status})`,
+        e.error ?? (data as any)?.message ?? `Failed to download file (${res.status})`,
       );
     }
 
@@ -155,4 +209,3 @@ export function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return 'Something went wrong. Please try again.';
 }
-
