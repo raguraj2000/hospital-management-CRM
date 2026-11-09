@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
-import { billCharges, type BillPaymentMode, type VisitBillPrint as VisitBillData, ROUND_OFF_LINE } from '@platform/shared';
+import type { BillPaymentMode, VisitBillPrint as VisitBillData } from '@platform/shared';
 import { api, errorMessage } from '@/api/client';
 import { useMe } from '@/state/auth';
-import { PrintSheet, PrintSignature } from '@/components/PrintSheet';
+import { PrintFacts, PrintSheet, PrintSignature } from '@/components/PrintSheet';
+import { BillChargesTable } from '@/components/BillChargesTable';
 import { useAutoPrint } from '@/components/useAutoPrint';
 import { printDateTime, printDay, printMoney } from '@/components/printFormat';
 import { modeLabel } from '@/components/format';
@@ -36,18 +37,9 @@ export function VisitBillPrint() {
   if (!data) return <p className="p-8 text-sm text-red-700">{errorMessage(error)}</p>;
 
   const t = data.totals;
-  // Consultation & lab: every charge of every OP bill of the visit, in bill order.
-  const charges: [string, number][] = [];
-  for (const b of bills) {
-    if (b.consultationFeePaise > 0) charges.push(['Consultation fee', b.consultationFeePaise]); // no fee (lab only, bill only): no line
-    for (const l of b.lines) if (l.labOrderId != null) charges.push([`Lab: ${l.description}`, l.amountPaise]);
-    for (const x of billCharges(b)) if (x.description !== ROUND_OFF_LINE) charges.push([x.description, x.amountPaise]);
-  }
-  // The round off is not a charge: it prints on its own row, after the discount.
-  const roundOffPaise = bills.reduce((s, b) => s + billCharges(b).filter((x) => x.description === ROUND_OFF_LINE).reduce((t, x) => t + x.amountPaise, 0), 0);
-  const discountPaise = bills.reduce((s, b) => s + b.discountPaise, 0);
   const billNos = [...bills.map((b) => b.billNo), ...sales.map((s) => s.saleNo)];
   const medicineLines = sales.flatMap((s) => s.lines);
+  const medicineRoundOffPaise = sales.reduce((s, x) => s + x.roundOffPaise, 0);
   const paid = (Object.keys(modeLabel) as BillPaymentMode[]).filter((m) => t.paidByMode[m] > 0);
 
   return (
@@ -64,69 +56,20 @@ export function VisitBillPrint() {
         message: `Hello ${data.patient.name}, your bill ${billNos.join(', ')} from ${data.header.title || 'the hospital'}: total ₹${t.grandTotalPaise / 100}, paid ₹${t.paidPaise / 100}${t.balancePaise ? `, balance due ₹${t.balancePaise / 100}` : ''}. Thank you.`,
       }}
     >
-        <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border border-[#111] px-3 py-2">
-          <div>
-            <b>Patient:</b> {data.patient.name}
-          </div>
-          <div>
-            <b>Date &amp; time:</b> {printDateTime(billedAt) || printDay(data.visit.visitDate)}
-          </div>
-          <div>
-            <b>UHID:</b> {data.patient.uhid}
-          </div>
-          <div>
-            <b>Token · OP No.:</b> {data.visit.token != null ? `${data.visit.token} · ` : ''}
-            {data.visit.opNo}
-          </div>
-          <div>
-            <b>Doctor:</b> {data.visit.doctorName ?? '—'}
-          </div>
-          <div>
-            <b>Bill No.:</b> {billNos.join(', ') || '—'}
-          </div>
-        </div>
+        <PrintFacts
+          facts={[
+            ['Patient', data.patient.name],
+            ['Bill No.', billNos.join(', ') || '—'],
+            ['UHID', data.patient.uhid],
+            ['Date & time', printDateTime(billedAt) || printDay(data.visit.visitDate)],
+            ['OP No.', data.visit.token != null ? `Token ${data.visit.token} · ${data.visit.opNo}` : data.visit.opNo],
+            ...(data.visit.doctorName ? ([['Doctor', data.visit.doctorName]] as [string, string][]) : []),
+          ]}
+        />
 
         {!printable && <p className="py-10 text-center text-[#3f4a45]">Nothing has been billed for this visit yet.</p>}
 
-        {bills.length > 0 && (
-          <table className="mb-4 w-full border-collapse">
-            <thead>
-              <tr className="border-y border-[#111]">
-                <th className="w-10 py-1.5 text-left">#</th>
-                <th className="py-1.5 text-left">Consultation &amp; lab</th>
-                <th className="py-1.5 text-right">Amount (₹)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {charges.map(([d, a], i) => (
-                <tr key={i} className="border-b border-[#ccc]">
-                  <td className="py-1.5">{i + 1}</td>
-                  <td className="py-1.5">{d}</td>
-                  <td className="py-1.5 text-right tabular-nums">{printMoney(a)}</td>
-                </tr>
-              ))}
-              {discountPaise > 0 && (
-                <tr className="border-b border-[#ccc]">
-                  <td />
-                  <td className="py-1.5 text-right">Discount</td>
-                  <td className="py-1.5 text-right tabular-nums">− {printMoney(discountPaise)}</td>
-                </tr>
-              )}
-              {roundOffPaise > 0 && (
-                <tr className="border-b border-[#ccc]">
-                  <td />
-                  <td className="py-1.5 text-right">Round off</td>
-                  <td className="py-1.5 text-right tabular-nums">+ {printMoney(roundOffPaise)}</td>
-                </tr>
-              )}
-              <tr className="font-semibold">
-                <td />
-                <td className="py-1.5 text-right">Consultation &amp; lab total</td>
-                <td className="py-1.5 text-right tabular-nums">{printMoney(bills.reduce((s, b) => s + b.totalPaise, 0))}</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
+        {bills.length > 0 && <BillChargesTable bills={bills} totalLabel={medicineLines.length > 0 ? 'Hospital charges total' : 'Charges total'} />}
 
         {medicineLines.length > 0 && (
           <table className="mb-4 w-full border-collapse">
@@ -153,7 +96,15 @@ export function VisitBillPrint() {
                   <td className="py-1.5 text-right tabular-nums">{printMoney(l.amountPaise)}</td>
                 </tr>
               ))}
-              <tr className="font-semibold">
+              {medicineRoundOffPaise > 0 && (
+                <tr>
+                  <td colSpan={5} className="py-1.5 text-right">
+                    Round off
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums">+ {printMoney(medicineRoundOffPaise)}</td>
+                </tr>
+              )}
+              <tr className="border-t border-[#111] font-semibold">
                 <td colSpan={5} className="py-1.5 text-right">
                   Medicines total
                 </td>

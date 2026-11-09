@@ -53,13 +53,13 @@ export function useVisitInvalidate(branch: string) {
   };
 }
 
-/** "BP 130/85 · Pulse 78 · 99.4°F · SpO₂ 97% · 71.2 kg" -- only what was measured. */
+/** "Pulse 78 · SpO₂ 97% · 99.4°F · BP 130/85 · 71.2 kg" -- only what was measured, in the order of the form. */
 export function vitalsSummary(v: Pick<OpVisit, 'bpSystolic' | 'bpDiastolic' | 'pulse' | 'temperatureF' | 'spo2' | 'weightKg'> & { heightCm?: number | null }): string | null {
   const parts = [
-    v.bpSystolic != null && v.bpDiastolic != null ? `BP ${v.bpSystolic}/${v.bpDiastolic}` : null,
     v.pulse != null ? `Pulse ${v.pulse}` : null,
-    v.temperatureF != null ? `${v.temperatureF}°F` : null,
     v.spo2 != null ? `SpO₂ ${v.spo2}%` : null,
+    v.temperatureF != null ? `${v.temperatureF}°F` : null,
+    v.bpSystolic != null && v.bpDiastolic != null ? `BP ${v.bpSystolic}/${v.bpDiastolic}` : null,
     v.weightKg != null ? `${v.weightKg} kg` : null,
     v.heightCm != null ? `${v.heightCm} cm` : null,
   ].filter(Boolean);
@@ -291,8 +291,8 @@ const num = (v: unknown) => (v === '' || v == null ? null : Number(v));
 type VitalName = 'bpSystolic' | 'bpDiastolic' | 'pulse' | 'temperatureF' | 'spo2' | 'weightKg' | 'heightCm';
 const VITALS: { name: VitalName; label: string; placeholder: string; decimal?: boolean }[] = [
   { name: 'pulse', label: 'Pulse (/min)', placeholder: '72' },
-  { name: 'temperatureF', label: 'Temp (°F)', placeholder: '98.6', decimal: true },
   { name: 'spo2', label: 'SpO₂ (%)', placeholder: '98' },
+  { name: 'temperatureF', label: 'Temp (°F)', placeholder: '98.6', decimal: true },
   { name: 'bpSystolic', label: 'BP upper (mmHg)', placeholder: '120' },
   { name: 'bpDiastolic', label: 'BP lower (mmHg)', placeholder: '80' },
   { name: 'weightKg', label: 'Weight (kg)', placeholder: '62.5', decimal: true },

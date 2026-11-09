@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { ClipboardList, ClipboardPlus, DoorOpen, FlaskConical, Search, UserPlus } from 'lucide-react';
 import { DirectLab } from '@/components/DirectLab';
+import { LeftOpenVisits } from '@/components/LeftOpenVisits';
 import type { OpVisitRow, Patient, VisitQueue } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, cn, Dialog, EmptyState, Input, NativeSelect, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
@@ -101,6 +102,8 @@ export function OpVisits() {
 
       {/* Only today has a queue (the server sends none for another day). */}
       {data?.queue && <QueueBanner branch={branch!} queue={data.queue} doctorName={queueDoctor} />}
+      {/* Today only: earlier days' visits nobody finished. */}
+      {data?.queue && <LeftOpenVisits branch={branch!} />}
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <Tabs className="min-w-0 max-w-full" value={show} onValueChange={(t) => setParam('show', t === 'queue' ? '' : t)}>

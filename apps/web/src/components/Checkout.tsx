@@ -197,9 +197,11 @@ function CheckoutCard({ branch, entry, today, open, onToggle, onCollected }: { b
                   Lab advance · still with the doctor
                 </Badge>
               ) : (
-                sent && (
-                  <Badge tone="positive" dot className="text-sm">
-                    Sent by doctor
+                // The real sender, by name: "Sent by Dr" only when a doctor of the branch sent it.
+                sent &&
+                entry.sentBy && (
+                  <Badge tone={entry.sentBy.doctor ? 'positive' : 'warning'} dot className="text-sm">
+                    {entry.sentBy.doctor ? `Sent by Dr ${entry.sentBy.name.replace(/^Dr\.?\s*/i, '')}` : `Sent by ${entry.sentBy.name}${entry.sentBy.role ? ` (${entry.sentBy.role})` : ''}`}
                   </Badge>
                 )
               )}

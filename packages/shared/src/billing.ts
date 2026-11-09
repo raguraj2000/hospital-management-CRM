@@ -271,6 +271,8 @@ export interface BillListRow {
   paidPaise: number;
   status: OpBill['status'];
   createdAt: string;
+  /** The visit has medicines on its prescription (its prescription can be printed). */
+  hasPrescription: boolean;
 }
 
 /** A pharmacy sale on the patient's Bills tab. */
@@ -445,6 +447,8 @@ export interface CheckoutQueueEntry {
   courseLabel?: string | null;
   /** Still with the doctor or at the lab, sample taken: the lab (with the fee) is paid in advance; medicines come later. */
   labAdvance?: boolean;
+  /** Who sent the visit to the counter (a doctor or not); null when not known. */
+  sentBy?: { name: string; doctor: boolean; role: string | null } | null;
   /** Pending prescription lines and what they cost. */
   medicinesWaiting: number | null;
   medicinesPaise: number | null;

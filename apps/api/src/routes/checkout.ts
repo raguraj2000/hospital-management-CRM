@@ -21,11 +21,12 @@ import {
   DIRECT_LAB_COMPLAINT,
 } from '@platform/shared';
 import { AppError, forbidden, notFound, printHeaderOf, requireAnyPermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, user } from '../db/schema.js';
+import { branchMember, labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, role, user } from '../db/schema.js';
 import { sittingLabel } from './courses.js';
 import { localToday, settledAtCounter, visitsToCollect, withToken, assertPatientActive } from '../lib/clinic.js';
 import { billOf, consultationFee, createBill, pendingVisitCharges, visitFee, labPaymentState, payBill, unbilledLabOrders, updateBill } from './billing.js';
 import { dispenseItems, prescriptionLines, saleDetail } from './pharmacy.js';
+import { doctorsOf } from './doctors.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const doctor = alias(user, 'doctor');
@@ -276,6 +277,9 @@ export function createCheckoutRoutes(db: Db) {
       const { visitId, opNo, token, visitDate, status, patientId, patientName, patientUhid, patientPhone, doctorName } = v;
       queue.push({ visitId, opNo, token, visitDate, visitAt: v.visitAt, direct: v.complaint === DIRECT_LAB_COMPLAINT ? 'lab' : v.complaint === DIRECT_BILL_COMPLAINT ? 'bill' : v.courseName ? 'course' : null, courseLabel: v.courseName && v.courseCreatedAt && v.sittingDueAt ? `${v.courseName} course · ${sittingLabel(v.courseCreatedAt, v.sittingDueAt)}` : null, labAdvance: v.labAdvance, status, patientId, patientName, patientUhid, patientPhone, doctorName, medicinesWaiting, medicinesPaise, toBillPaise, balancePaise, grandTotalPaise, summary });
     }
+    // Who sent each visit to the counter: a doctor, or someone else (front desk, pharmacist) -- named, never assumed.
+    const senders = await sentToCounterBy(db, b.id, queue.filter((e) => e.status === 'at_counter' && !e.direct).map((e) => e.visitId));
+    for (const e of queue) e.sentBy = senders.get(e.visitId) ?? null;
     return c.json({ queue, today });
   });
 
@@ -312,4 +316,31 @@ export function createCheckoutRoutes(db: Db) {
   });
 
   return app;
+}
+
+/**
+ * The person who last sent each of these visits to the counter (from the history log, kept 30 days), and whether
+ * they are a doctor of the branch. A visit not found there (older, or put there another way) is left out.
+ */
+async function sentToCounterBy(db: Db, branchId: number, visitIds: number[]): Promise<Map<number, NonNullable<CheckoutQueueEntry['sentBy']>>> {
+  const out = new Map<number, NonNullable<CheckoutQueueEntry['sentBy']>>();
+  if (!visitIds.length) return out;
+  const ids = sql.join(visitIds.map((id) => sql`${String(id)}`), sql`, `);
+  const rows = await db.all<{ visitId: string; userId: number | null }>(sql`
+    select entity_id as visitId, user_id as userId, max(id) as last from audit_log
+    where branch_id = ${branchId} and entity = 'op_visit' and action = 'update' and entity_id in (${ids})
+      and json_extract(detail, '$.status') = 'at_counter'
+    group by entity_id`);
+  const doctors = new Set((await doctorsOf(db, branchId)).map((d) => d.userId));
+  for (const r of rows) {
+    if (r.userId == null) continue;
+    const [u] = await db
+      .select({ name: user.name, isOwner: user.isOwner, roleName: role.name })
+      .from(user)
+      .leftJoin(branchMember, and(eq(branchMember.userId, user.id), eq(branchMember.branchId, branchId)))
+      .leftJoin(role, eq(role.id, branchMember.roleId))
+      .where(eq(user.id, r.userId));
+    if (u) out.set(Number(r.visitId), { name: u.name, doctor: doctors.has(r.userId), role: u.roleName ?? (u.isOwner ? 'Owner' : null) });
+  }
+  return out;
 }

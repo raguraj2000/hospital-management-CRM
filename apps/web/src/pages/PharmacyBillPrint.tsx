@@ -3,7 +3,7 @@ import { Navigate, useParams } from 'react-router';
 import type { PharmacySaleDetail, PrintHeader } from '@platform/shared';
 import { api, errorMessage } from '@/api/client';
 import { useMe } from '@/state/auth';
-import { PrintSheet } from '@/components/PrintSheet';
+import { PrintFacts, PrintSheet } from '@/components/PrintSheet';
 import { useAutoPrint } from '@/components/useAutoPrint';
 import { modeLabel } from '@/components/format';
 import { printDateTime, printDay, printMoney } from '@/components/printFormat';
@@ -34,23 +34,15 @@ export function PharmacyBillPrint() {
       tabTitle={`Pharmacy Bill ${s.saleNo}`}
       share={{ phone: s.patient?.phone, subject: `Pharmacy bill ${s.saleNo}`, message: `Hello${s.patient ? ` ${s.patient.name}` : ''}, your pharmacy bill ${s.saleNo} from ${data.header.title || 'the hospital'}: ₹${s.totalPaise / 100}. Thank you.` }}
     >
-        <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border border-[#111] px-3 py-2">
-          <div>
-            <b>Patient:</b> {s.patient?.name ?? 'Walk-in customer'}
-          </div>
-          <div>
-            <b>Bill No.:</b> {s.saleNo}
-          </div>
-          <div>{s.patient && <><b>UHID:</b> {s.patient.uhid}</>}</div>
-          <div>
-            <b>Date &amp; time:</b> {printDateTime(s.createdAt)}
-          </div>
-          {s.opNo && (
-            <div>
-              <b>OP No.:</b> {s.opNo}
-            </div>
-          )}
-        </div>
+        <PrintFacts
+          facts={[
+            ['Patient', s.patient?.name ?? 'Walk-in customer'],
+            ['Pharmacy Bill No.', s.saleNo],
+            ...(s.patient ? ([['UHID', s.patient.uhid]] as [string, string][]) : []),
+            ['Date & time', printDateTime(s.createdAt)],
+            ...(s.opNo ? ([['OP No.', s.opNo]] as [string, string][]) : []),
+          ]}
+        />
         {s.lines.length === 0 ? (
           <p className="py-10 text-center text-[#3f4a45]">This bill has no medicines.</p>
         ) : (

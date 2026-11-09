@@ -102,6 +102,24 @@ describe('standard tests + results + report', () => {
     expect(await billNo()).toBe(`${first.billNo}, ${second.billNo}`);
   });
 
+  it('the report waits for the lab charges only: an unpaid consultation fee does not hold it back', async () => {
+    const owner = await t.as('owner');
+    const lab = await t.as('labtech');
+    await owner('/api/b/main/billing/settings', { method: 'PUT', body: { consultationFeePaise: 12000 } });
+    const { id: cbc } = await json(owner('/api/b/main/lab/tests', { method: 'POST', body: { name: 'CBC', pricePaise: 50000 } }));
+    const v = await visitFor(owner, 'Fee Unpaid');
+    await owner(`/api/b/main/visits/${v.id}/lab-orders`, { method: 'POST', body: { testIds: [cbc] } });
+    const bill = (await json(owner(`/api/b/main/visits/${v.id}/bills`, { method: 'POST' }))).bill;
+    expect(bill.totalPaise).toBe(62000);
+    const print = () => lab(`/api/b/main/visits/${v.id}/lab-report?print=1`);
+    const unpaid = await print();
+    expect(unpaid.status).toBe(402);
+    expect((await unpaid.json()).error).toContain('₹500.00'); // the lab's part, not the ₹620 bill
+    await owner(`/api/b/main/bills/${bill.id}/payments`, { method: 'POST', body: { amountPaise: 50000, mode: 'cash' } });
+    expect((await print()).status).toBe(200); // ₹120 consultation still due: the report prints
+    expect((await owner(`/api/b/east/visits/${v.id}/lab-report?print=1`)).status).toBe(404);
+  });
+
   it('a hand-added test gets one free-text result line', async () => {
     const owner = await t.as('owner');
     const { id } = await json(owner('/api/b/main/lab/tests', { method: 'POST', body: { name: 'Mantoux test', pricePaise: 15000 } }));

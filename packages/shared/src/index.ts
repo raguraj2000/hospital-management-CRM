@@ -1177,6 +1177,11 @@ export interface OpVisitRow extends OpVisit {
   patientConditions: string | null;
 }
 
+/** A visit of an earlier day left open (waiting, with the doctor or at the lab). movable: nothing on it yet, so it can be brought to today. */
+export interface LeftOpenVisit extends OpVisitRow {
+  movable: boolean;
+}
+
 /** Why a patient was called in: back from the lab with results, the next token, or picked by hand. */
 export type VisitCallReason = 'lab_ready' | 'next_token' | 'chosen';
 

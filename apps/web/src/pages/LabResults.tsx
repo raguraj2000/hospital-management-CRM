@@ -140,6 +140,7 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
   const [required, setRequired] = useState<Record<number, boolean>>(() => Object.fromEntries(test.parameters.map((p) => [p.id, !p.optional])));
   // Lines the test cannot be completed without (the others may stay empty, and an empty line does not print).
   const missing = test.parameters.filter((p) => required[p.id] && !(values[p.id] ?? '').trim());
+  const allRequired = test.parameters.every((p) => required[p.id]);
   const dirty = test.parameters.some((p) => (values[p.id] ?? '') !== p.value);
   const filled = test.parameters.filter((p) => (values[p.id] ?? '').trim()).length;
 
@@ -181,9 +182,17 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
         title={test.name}
         description={`${test.department}${test.kind === 'card' ? ' · card test' : ''} · ${filled}/${test.parameters.length} filled${test.correctedAt ? ` · corrected ${new Date(test.correctedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })}` : ''}`}
         action={
-          <Badge tone={labTone[test.status]} dot>
-            {statusLabel[test.status]}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {canEnter && test.status !== 'completed' && (
+              // One click for all lines: untick when only a few values will be typed, tick again to need them all.
+              <Button variant="outline" size="sm" onClick={() => setRequired(Object.fromEntries(test.parameters.map((p) => [p.id, !allRequired])))}>
+                {allRequired ? 'Untick all' : 'Tick all'}
+              </Button>
+            )}
+            <Badge tone={labTone[test.status]} dot>
+              {statusLabel[test.status]}
+            </Badge>
+          </div>
         }
       />
       <div className="divide-y divide-border">
@@ -296,7 +305,7 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
             disabled={saving}
             onClick={() => {
               // A report must be whole: every value entered before the test can be completed.
-              if (missing.length) return setShowMissing(true);
+              if (missing.length || filled === 0) return setShowMissing(true);
               setConfirming(true);
             }}
           >
@@ -307,6 +316,11 @@ function TestCard({ branch, visitId, test, othersPending }: { branch: string; vi
       {showMissing && missing.length > 0 && (
         <p role="alert" className="border-t border-border bg-critical-soft px-4 py-3 text-sm font-medium text-critical">
           Enter all the details before completing. Missing: {missing.map((p) => p.name).join(', ')}.
+        </p>
+      )}
+      {showMissing && missing.length === 0 && filled === 0 && (
+        <p role="alert" className="border-t border-border bg-critical-soft px-4 py-3 text-sm font-medium text-critical">
+          Type at least one value before completing.
         </p>
       )}
       <ConfirmDialog
