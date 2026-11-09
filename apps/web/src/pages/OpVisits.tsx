@@ -9,7 +9,7 @@ import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { ConditionBadges } from '@/components/Conditions';
 import { NewVisitForm, tokenName, useCallNext, useDoctors, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
-import { ageOf, formatPhone } from './Patients';
+import { ageOf, formatPhone } from '@/components/format';
 import { KeyHint } from '@/components/Shortcuts';
 import { NEW_OP_EVENT } from '@/components/QuickOp';
 import { ListSearch, textMatch } from '@/components/ListSearch';

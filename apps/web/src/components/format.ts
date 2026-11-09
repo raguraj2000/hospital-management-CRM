@@ -1,6 +1,6 @@
 // On-screen dates (India format) and the status colours / words used on more than one screen.
 // Printed papers use printFormat.ts (dd/mm/yyyy with the time).
-import type { LabOrder, OpBill } from '@platform/shared';
+import type { LabOrder, OpBill, Patient } from '@platform/shared';
 import type { Tone } from '@platform/ui';
 
 const DAY: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
@@ -26,3 +26,18 @@ export const labTone: Record<LabOrder['status'], Tone> = { ordered: 'warning', s
 export const labLabel: Record<LabOrder['status'], string> = { ordered: 'Ordered', sample_collected: 'Sample collected', completed: 'Result ready', cancelled: 'Cancelled' };
 
 export const modeLabel = { cash: 'Cash', upi: 'UPI', card: 'Card' } as const;
+
+/** "+919876543210" -> "+91 98765 43210"; no number -> "—". */
+export const formatPhone = (p: string | null) => (p ? p.replace(/^\+91(\d{5})(\d{5})$/, '+91 $1 $2') : '—');
+
+/** Age from date of birth (always current), else the age typed at registration. */
+export function ageOf(p: Pick<Patient, 'dob' | 'ageYears'>): number | null {
+  if (p.dob) {
+    const d = new Date(p.dob);
+    const now = new Date();
+    let age = now.getFullYear() - d.getFullYear();
+    if (now.getMonth() < d.getMonth() || (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())) age--;
+    return age;
+  }
+  return p.ageYears;
+}

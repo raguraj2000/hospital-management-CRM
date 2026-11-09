@@ -39,9 +39,8 @@ import { useCan, useMe } from '@/state/auth';
 import { ConditionBadges } from '@/components/Conditions';
 import { PatientForm } from '@/components/PatientForm';
 import { NewVisitForm, TokenBadge, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
-import { ageOf, formatPhone } from './Patients';
 import { billsInDays, DayRangeFilter, labInDays, PatientBillsTab, PatientLabTab, usePatientBills, usePatientLab } from './PatientTabs';
-import { fmtDate, inDays, istDay } from '@/components/format';
+import { ageOf, fmtDate, formatPhone, inDays, istDay } from '@/components/format';
 import { BookmarkSearch } from '@/components/Bookmarks';
 
 /** Free WhatsApp click-to-chat: opens WhatsApp with the message ready; staff press send. */

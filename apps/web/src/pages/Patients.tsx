@@ -9,10 +9,9 @@ import { api, errorMessage } from '@/api/client';
 import { useBranch, useCan } from '@/state/auth';
 import { PatientForm } from '@/components/PatientForm';
 import { withUndo } from '@/components/undo';
+import { ageOf, formatPhone } from '@/components/format';
 
 const PAGE_SIZE = 20;
-
-export const formatPhone = (p: string | null) => (p ? p.replace(/^\+91(\d{5})(\d{5})$/, '+91 $1 $2') : '—');
 
 const genderTone = { female: 'violet', male: 'brand', 'female child': 'violet', 'male child': 'brand', other: 'neutral' } as const;
 
@@ -216,14 +215,3 @@ export function Patients() {
   );
 }
 
-/** Age from date of birth (always current), else the age typed at registration. */
-export function ageOf(p: Pick<Patient, 'dob' | 'ageYears'>): number | null {
-  if (p.dob) {
-    const d = new Date(p.dob);
-    const now = new Date();
-    let age = now.getFullYear() - d.getFullYear();
-    if (now.getMonth() < d.getMonth() || (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())) age--;
-    return age;
-  }
-  return p.ageYears;
-}

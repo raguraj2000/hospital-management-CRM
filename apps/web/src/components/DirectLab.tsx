@@ -9,7 +9,7 @@ import { ArrowLeft, FlaskConical, ReceiptText, Search, UserPlus } from 'lucide-r
 import { formatRupees, type LabTest, type OpVisit, type Patient } from '@platform/shared';
 import { Avatar, Button, cn, Dialog, Field, Input, NativeSelect, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
-import { ageOf, formatPhone } from '@/pages/Patients';
+import { ageOf, formatPhone } from '@/components/format';
 import { useCan } from '@/state/auth';
 import { PatientForm } from './PatientForm';
 import { useDoctors } from './Visits';
