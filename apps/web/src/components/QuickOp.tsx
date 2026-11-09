@@ -6,7 +6,7 @@ import { ArrowLeft, Check, ClipboardPlus, Search, UserPlus } from 'lucide-react'
 import type { Patient } from '@platform/shared';
 import { Avatar, Button, cn, Dialog, Input, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
-import { ageOf, formatPhone } from '@/pages/Patients';
+import { ageOf, formatPhone } from '@/components/format';
 import { useCan } from '@/state/auth';
 import { ConditionBadges } from './Conditions';
 import { PatientForm } from './PatientForm';

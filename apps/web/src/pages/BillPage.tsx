@@ -6,13 +6,12 @@ import { billCharges, formatRupees, toPaise, type BillPaymentMode, type OpBill }
 import { Badge, Button, Card, CardHeader, Field, Input, Skeleton, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan, useMe } from '@/state/auth';
-import { PrintLink, printInPlace } from '@/components/print';
+import { PrintLink, printInPlace, receiptUrl } from '@/components/print';
 import { PrintFacts, PrintSheet, usePrintHeader } from '@/components/PrintSheet';
 import { useAutoPrint } from '@/components/useAutoPrint';
 import { printDateTime, printMoney } from '@/components/printFormat';
 import { visitLabel } from '@/components/Visits';
 import { billLabel, billTone, fmtDateTime, modeLabel } from '@/components/format';
-import { receiptUrl } from './Billing';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
 import { chargeRowsOf, ChargeRowsEditor, chargesOf, type ChargeRow } from '@/components/BillCharges';
 import { BillChargesTable } from '@/components/BillChargesTable';

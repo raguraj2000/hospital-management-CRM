@@ -8,7 +8,7 @@ import { BarChartSkeleton, MedicineRowsSkeleton, PatientRowsSkeleton } from '@/c
 import { useBranch, useCan, useMe } from '@/state/auth';
 import { DoctorsTable, PeriodPicker, usePeriodReport, type PeriodDays } from '@/components/PeriodReport';
 import { useState } from 'react';
-import { formatPhone } from './Patients';
+import { formatPhone } from '@/components/format';
 
 interface DashboardData {
   patients: number;

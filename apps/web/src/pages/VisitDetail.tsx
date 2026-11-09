@@ -16,8 +16,7 @@ import { BookmarkSearch, VisitInstructions } from '@/components/Bookmarks';
 import { useVisitLab, VisitLab } from '@/components/VisitLab';
 import { WhatNextBar } from '@/components/VisitNext';
 import { TokenBadge, VisitActions, VisitStatusBadge, vitalsSummary } from '@/components/Visits';
-import { ageOf } from './Patients';
-import { fmtDateTime, fmtDay } from '@/components/format';
+import { ageOf, fmtDateTime, fmtDay } from '@/components/format';
 
 const OPEN_KEY = 'hms-visit-profile-open';
 

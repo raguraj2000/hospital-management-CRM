@@ -9,9 +9,8 @@ import { useBranch, useCan } from '@/state/auth';
 import { PeriodPicker, PeriodSummary, type PeriodDays } from '@/components/PeriodReport';
 import { CheckoutList, useCheckoutQueue } from '@/components/Checkout';
 import { DirectLab } from '@/components/DirectLab';
-import { billLabel, billTone, fmtDate, fmtDay, fmtTime, modeLabel } from '@/components/format';
-import { PrintLink, printInPlace } from '@/components/print';
-import { formatPhone } from './Patients';
+import { billLabel, billTone, fmtDate, fmtDay, fmtTime, formatPhone, modeLabel } from '@/components/format';
+import { PrintLink, printInPlace, receiptUrl } from '@/components/print';
 import { PaymentModeSelect } from '@/components/PaymentModeSelect';
 import { ListSearch, textMatch } from '@/components/ListSearch';
 
@@ -150,9 +149,6 @@ function ToBillCard({ branch, data, today, loading }: { branch: string; data?: T
 }
 
 // ---------------------------------------------------------------- pending payments
-
-/** Where the receipt of one payment prints from. */
-export const receiptUrl = (branch: string, billId: number, paymentId: number) => `/${branch}/billing/${billId}/receipts/${paymentId}/print`;
 
 /** How long a bill has been waiting for its money, in whole days. */
 function dueSince(createdAt: string) {

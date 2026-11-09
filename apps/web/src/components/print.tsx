@@ -60,3 +60,6 @@ export function PrintLink({ href, onClick, ...props }: AnchorHTMLAttributes<HTML
     />
   );
 }
+
+/** Where the receipt of one payment prints from. */
+export const receiptUrl = (branch: string, billId: number, paymentId: number) => `/${branch}/billing/${billId}/receipts/${paymentId}/print`;
