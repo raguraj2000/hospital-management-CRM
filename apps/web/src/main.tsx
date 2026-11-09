@@ -1,4 +1,4 @@
-import { lazy, StrictMode, Suspense, type ReactNode } from 'react';
+import { lazy, StrictMode, Suspense, useEffect, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -13,31 +13,71 @@ import { NAV } from './nav';
 import { AppShell } from './components/AppShell';
 import { AppShellSkeleton, LoginSkeleton, PageSkeleton } from './components/Skeletons';
 import { Login } from './pages/Login';
-const Dashboard = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })));
-const Patients = lazy(() => import('./pages/Patients').then((m) => ({ default: m.Patients })));
-const PatientDetail = lazy(() => import('./pages/PatientDetail').then((m) => ({ default: m.PatientDetail })));
-const OpVisits = lazy(() => import('./pages/OpVisits').then((m) => ({ default: m.OpVisits })));
-const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
-const VisitDetail = lazy(() => import('./pages/VisitDetail').then((m) => ({ default: m.VisitDetail })));
-const Pharmacy = lazy(() => import('./pages/Pharmacy').then((m) => ({ default: m.Pharmacy })));
-const PharmacyBillPrint = lazy(() => import('./pages/PharmacyBillPrint').then((m) => ({ default: m.PharmacyBillPrint })));
-const Inventory = lazy(() => import('./pages/Inventory').then((m) => ({ default: m.Inventory })));
-const Lab = lazy(() => import('./pages/Lab').then((m) => ({ default: m.Lab })));
-const LabResults = lazy(() => import('./pages/LabResults').then((m) => ({ default: m.LabResults })));
-const LabReportPrint = lazy(() => import('./pages/LabReportPrint').then((m) => ({ default: m.LabReportPrint })));
-const Billing = lazy(() => import('./pages/Billing').then((m) => ({ default: m.Billing })));
-const BillPage = lazy(() => import('./pages/BillPage').then((m) => ({ default: m.BillPage })));
-const BillPrint = lazy(() => import('./pages/BillPage').then((m) => ({ default: m.BillPrint })));
-const DayReportPrint = lazy(() => import('./pages/BillingPrints').then((m) => ({ default: m.DayReportPrint })));
-const ReceiptPrint = lazy(() => import('./pages/BillingPrints').then((m) => ({ default: m.ReceiptPrint })));
-const Treatments = lazy(() => import('./pages/Treatments').then((m) => ({ default: m.Treatments })));
-const BookmarksPage = lazy(() => import('./pages/Bookmarks').then((m) => ({ default: m.BookmarksPage })));
-const Help = lazy(() => import('./pages/Help').then((m) => ({ default: m.Help })));
-const VisitBillPrint = lazy(() => import('./pages/VisitBillPrint').then((m) => ({ default: m.VisitBillPrint })));
-const Vendors = lazy(() => import('./pages/Vendors').then((m) => ({ default: m.Vendors })));
-const PurchaseBillPage = lazy(() => import('./pages/PurchaseBill').then((m) => ({ default: m.PurchaseBillPage })));
-const NewPurchaseBill = lazy(() => import('./pages/NewPurchaseBill').then((m) => ({ default: m.NewPurchaseBill })));
+// Hospital pages, each its own file downloaded when first opened (and early by prefetchPages below).
+const load = {
+  Dashboard: () => import('./pages/Dashboard'),
+  Patients: () => import('./pages/Patients'),
+  PatientDetail: () => import('./pages/PatientDetail'),
+  OpVisits: () => import('./pages/OpVisits'),
+  Settings: () => import('./pages/Settings'),
+  VisitDetail: () => import('./pages/VisitDetail'),
+  Pharmacy: () => import('./pages/Pharmacy'),
+  PharmacyBillPrint: () => import('./pages/PharmacyBillPrint'),
+  Inventory: () => import('./pages/Inventory'),
+  Lab: () => import('./pages/Lab'),
+  LabResults: () => import('./pages/LabResults'),
+  LabReportPrint: () => import('./pages/LabReportPrint'),
+  Billing: () => import('./pages/Billing'),
+  BillPage: () => import('./pages/BillPage'),
+  BillingPrints: () => import('./pages/BillingPrints'),
+  Treatments: () => import('./pages/Treatments'),
+  Bookmarks: () => import('./pages/Bookmarks'),
+  Help: () => import('./pages/Help'),
+  VisitBillPrint: () => import('./pages/VisitBillPrint'),
+  Vendors: () => import('./pages/Vendors'),
+  PurchaseBill: () => import('./pages/PurchaseBill'),
+  NewPurchaseBill: () => import('./pages/NewPurchaseBill'),
+};
+const Dashboard = lazy(() => load.Dashboard().then((m) => ({ default: m.Dashboard })));
+const Patients = lazy(() => load.Patients().then((m) => ({ default: m.Patients })));
+const PatientDetail = lazy(() => load.PatientDetail().then((m) => ({ default: m.PatientDetail })));
+const OpVisits = lazy(() => load.OpVisits().then((m) => ({ default: m.OpVisits })));
+const Settings = lazy(() => load.Settings().then((m) => ({ default: m.Settings })));
+const VisitDetail = lazy(() => load.VisitDetail().then((m) => ({ default: m.VisitDetail })));
+const Pharmacy = lazy(() => load.Pharmacy().then((m) => ({ default: m.Pharmacy })));
+const PharmacyBillPrint = lazy(() => load.PharmacyBillPrint().then((m) => ({ default: m.PharmacyBillPrint })));
+const Inventory = lazy(() => load.Inventory().then((m) => ({ default: m.Inventory })));
+const Lab = lazy(() => load.Lab().then((m) => ({ default: m.Lab })));
+const LabResults = lazy(() => load.LabResults().then((m) => ({ default: m.LabResults })));
+const LabReportPrint = lazy(() => load.LabReportPrint().then((m) => ({ default: m.LabReportPrint })));
+const Billing = lazy(() => load.Billing().then((m) => ({ default: m.Billing })));
+const BillPage = lazy(() => load.BillPage().then((m) => ({ default: m.BillPage })));
+const BillPrint = lazy(() => load.BillPage().then((m) => ({ default: m.BillPrint })));
+const DayReportPrint = lazy(() => load.BillingPrints().then((m) => ({ default: m.DayReportPrint })));
+const ReceiptPrint = lazy(() => load.BillingPrints().then((m) => ({ default: m.ReceiptPrint })));
+const Treatments = lazy(() => load.Treatments().then((m) => ({ default: m.Treatments })));
+const BookmarksPage = lazy(() => load.Bookmarks().then((m) => ({ default: m.BookmarksPage })));
+const Help = lazy(() => load.Help().then((m) => ({ default: m.Help })));
+const VisitBillPrint = lazy(() => load.VisitBillPrint().then((m) => ({ default: m.VisitBillPrint })));
+const Vendors = lazy(() => load.Vendors().then((m) => ({ default: m.Vendors })));
+const PurchaseBillPage = lazy(() => load.PurchaseBill().then((m) => ({ default: m.PurchaseBillPage })));
+const NewPurchaseBill = lazy(() => load.NewPurchaseBill().then((m) => ({ default: m.NewPurchaseBill })));
+// The platform console is for platform admins only: never prefetched.
 const Platform = lazy(() => import('./pages/Platform').then((m) => ({ default: m.Platform })));
+
+/**
+ * Once signed in, download every hospital page in the background so the first click on each is instant.
+ * Waits until the current page has settled, skips "data saver" connections, and ignores failures
+ * (the page then simply downloads when opened, as before).
+ */
+let prefetched = false;
+function prefetchPages() {
+  if (prefetched) return;
+  prefetched = true;
+  if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return;
+  const run = () => Object.values(load).forEach((l) => void l().catch(() => {}));
+  setTimeout(() => ('requestIdleCallback' in window ? requestIdleCallback(run, { timeout: 5_000 }) : run()), 2_000);
+}
 
 initTheme();
 
@@ -81,7 +121,10 @@ function ComingNext({ title }: { title: string }) {
 
 /** Waits for "who am I" once, so pages never flash the login screen. */
 function Boot({ children }: { children: ReactNode }) {
-  const { isLoading, error } = useMe();
+  const { data: me, isLoading, error } = useMe();
+  useEffect(() => {
+    if (me && !me.user.isPlatformAdmin) prefetchPages();
+  }, [me]);
   if (isLoading) {
     // Outside the router here, so read the address bar directly.
     const path = window.location.pathname;
