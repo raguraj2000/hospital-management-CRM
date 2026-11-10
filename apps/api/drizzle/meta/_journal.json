@@ -246,6 +246,20 @@
       "when": 1792465093848,
       "tag": "0034_yearly_fee",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1794319159839,
+      "tag": "0035_numerous_banshee",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1794320172768,
+      "tag": "0036_condemned_blob",
+      "breakpoints": true
     }
   ]
 }

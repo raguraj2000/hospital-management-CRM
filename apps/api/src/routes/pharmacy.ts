@@ -36,11 +36,32 @@ const nextBatch = alias(medicineBatch, 'nb');
 
 /** Stock report: batches expiring within this many days are listed as "expiring". */
 const EXPIRY_REPORT_DAYS = 90;
+/** YYYY-MM-DD `n` days after `day`. */
+const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * THE expiry rule, in one place: the earliest expiry date a batch may have to be given today for `days` days.
+ * A batch is never given on (or after) its expiry day, and it must still be in date after the last dose:
+ * doses today .. today+days-1, so the expiry must be today+days or later. Counter sales (no course) use 1 day.
+ */
+export const minExpiryFor = (today: string, days: number | null | undefined = 1) => addDays(today, Math.max(1, days ?? 1));
+
+/** Same rule inside SQL, for a prescription line's own days: date(today, '+N days'). */
+const minExpirySql = (today: string, days: typeof prescriptionItem.days) => sql`date(${today}, '+' || max(coalesce(${days}, 1), 1) || ' days')`;
+
+/** A medicine with no price is never sold: free giving is a discount on the bill, not a ₹0 medicine. */
+function assertPriced(items: { name: string; pricePaise: number }[]) {
+  const free = items.filter((i) => !(i.pricePaise > 0)).map((i) => i.name);
+  if (free.length) throw new AppError(409, 'no_price', `${free.join(', ')} has no price. Set its price in Inventory first.`);
+}
+
 /** Whole days from one YYYY-MM-DD to another (negative if `to` is earlier). */
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
 /** Medicines of this branch with their sellable stock, nearest expiry and the batch it is in. (The dashboard uses it too.) */
 export async function medicinesWithStock(db: Db, branchId: number, today: string, extra?: ReturnType<typeof and>): Promise<Medicine[]> {
+  // Stock that can be sold today (a batch expiring today is already out).
+  const from = minExpiryFor(today);
   return db
     .select({
       id: medicine.id,
@@ -52,10 +73,10 @@ export async function medicinesWithStock(db: Db, branchId: number, today: string
       defaultDose: medicine.defaultDose,
       defaultInstructions: medicine.defaultInstructions,
       defaultDays: medicine.defaultDays,
-      stock: sql<number>`coalesce(sum(case when ${medicineBatch.expiryDate} >= ${today} and ${medicineBatch.quantity} > 0 then ${medicineBatch.quantity} end), 0)`,
-      nextExpiry: sql<string | null>`min(case when ${medicineBatch.expiryDate} >= ${today} and ${medicineBatch.quantity} > 0 then ${medicineBatch.expiryDate} end)`,
+      stock: sql<number>`coalesce(sum(case when ${medicineBatch.expiryDate} >= ${from} and ${medicineBatch.quantity} > 0 then ${medicineBatch.quantity} end), 0)`,
+      nextExpiry: sql<string | null>`min(case when ${medicineBatch.expiryDate} >= ${from} and ${medicineBatch.quantity} > 0 then ${medicineBatch.expiryDate} end)`,
       // Same order as the sale itself (FEFO): earliest expiry, then oldest batch.
-      nextBatchNo: sql<string | null>`(select ${nextBatch.batchNo} from ${medicineBatch} nb where ${nextBatch.branchId} = ${branchId} and ${nextBatch.medicineId} = ${medicine.id} and ${nextBatch.expiryDate} >= ${today} and ${nextBatch.quantity} > 0 order by ${nextBatch.expiryDate}, ${nextBatch.id} limit 1)`,
+      nextBatchNo: sql<string | null>`(select ${nextBatch.batchNo} from ${medicineBatch} nb where ${nextBatch.branchId} = ${branchId} and ${nextBatch.medicineId} = ${medicine.id} and ${nextBatch.expiryDate} >= ${from} and ${nextBatch.quantity} > 0 order by ${nextBatch.expiryDate}, ${nextBatch.id} limit 1)`,
     })
     .from(medicine)
     .leftJoin(medicineBatch, eq(medicineBatch.medicineId, medicine.id))
@@ -64,18 +85,22 @@ export async function medicinesWithStock(db: Db, branchId: number, today: string
     .orderBy(asc(medicine.name));
 }
 
-/** Stock that can be sold today: unexpired batches with units left. */
-const sellable = (today: string) => and(gte(medicineBatch.expiryDate, today), gt(medicineBatch.quantity, 0));
+/** Batches with units left that are still in date on `minExpiry` (see minExpiryFor). */
+const sellable = (minExpiry: string) => and(gte(medicineBatch.expiryDate, minExpiry), gt(medicineBatch.quantity, 0));
 
-/** Plan each line first (FEFO: earliest expiry first). Lines short of sellable stock are named in `short`. */
-async function planFefo<T extends { medicineId: number; quantity: number; name: string }>(tx: Tx, branchId: number, today: string, items: T[]) {
+/**
+ * Plan each line first (FEFO: earliest expiry first). Lines short of sellable stock are named in `short`.
+ * `days`: how long the patient takes it (the prescribed days, even when fewer units are given); a batch must last
+ * past the last dose. Without it (counter sale): 1 day.
+ */
+async function planFefo<T extends { medicineId: number; quantity: number; name: string; days?: number | null }>(tx: Tx, branchId: number, today: string, items: T[]) {
   const plan: { item: T; takes: { batchId: number; qty: number }[] }[] = [];
   const short: string[] = [];
   for (const item of items) {
     const batches = await tx
       .select({ id: medicineBatch.id, quantity: medicineBatch.quantity })
       .from(medicineBatch)
-      .where(and(eq(medicineBatch.branchId, branchId), eq(medicineBatch.medicineId, item.medicineId), sellable(today)))
+      .where(and(eq(medicineBatch.branchId, branchId), eq(medicineBatch.medicineId, item.medicineId), sellable(minExpiryFor(today, item.days))))
       .orderBy(asc(medicineBatch.expiryDate), asc(medicineBatch.id));
     let need = item.quantity;
     const takes: { batchId: number; qty: number }[] = [];
@@ -85,7 +110,9 @@ async function planFefo<T extends { medicineId: number; quantity: number; name: 
       takes.push({ batchId: bt.id, qty });
       need -= qty;
     }
-    if (need > 0) short.push(`${item.name} (need ${item.quantity}, have ${item.quantity - need})`);
+    // Name the real reason: stock that expires before the course ends is not "missing", it is too old for this course.
+    const days = Math.max(1, item.days ?? 1);
+    if (need > 0) short.push(`${item.name} (need ${item.quantity}, only ${item.quantity - need} in date ${days > 1 ? `for the whole ${days}-day course` : 'after today'})`);
     plan.push({ item, takes });
   }
   return { plan, short };
@@ -116,14 +143,10 @@ async function sellTakes(tx: Tx, branchId: number, saleId: number, item: { medic
 
 /** Prescription lines of some visits, with medicine price and today's sellable stock. */
 export async function prescriptionLines(db: Db | Tx, branchId: number, today: string, where: ReturnType<typeof and>): Promise<CheckoutMedicine[]> {
+  // Stock and first batch for THIS line: batches still in date after its last dose (same rule as the sale, planFefo).
+  const inDateForLine = sql`${nextBatch.branchId} = ${branchId} and ${nextBatch.medicineId} = ${prescriptionItem.medicineId} and ${nextBatch.expiryDate} >= ${minExpirySql(today, prescriptionItem.days)} and ${nextBatch.quantity} > 0`;
   const nextBatchOf = (col: 'batch_no' | 'expiry_date') =>
-    sql<string | null>`(select ${sql.raw(col)} from ${medicineBatch} nb where ${nextBatch.branchId} = ${branchId} and ${nextBatch.medicineId} = ${prescriptionItem.medicineId} and ${nextBatch.expiryDate} >= ${today} and ${nextBatch.quantity} > 0 order by ${nextBatch.expiryDate}, ${nextBatch.id} limit 1)`;
-  const stock = db
-    .select({ medicineId: medicineBatch.medicineId, stock: sql<number>`sum(${medicineBatch.quantity})`.as('stock') })
-    .from(medicineBatch)
-    .where(and(eq(medicineBatch.branchId, branchId), sellable(today)))
-    .groupBy(medicineBatch.medicineId)
-    .as('stock');
+    sql<string | null>`(select ${sql.raw(col)} from ${medicineBatch} nb where ${inDateForLine} order by ${nextBatch.expiryDate}, ${nextBatch.id} limit 1)`;
   const rows = await db
     .select({
       id: prescriptionItem.id,
@@ -141,14 +164,13 @@ export async function prescriptionLines(db: Db | Tx, branchId: number, today: st
       givenHere: prescriptionItem.givenHere,
       dosesTotal: sql<number>`(select count(*) from ${treatmentDose} where ${treatmentDose.prescriptionItemId} = ${prescriptionItem.id})`,
       dosesGiven: sql<number>`(select count(*) from ${treatmentDose} where ${treatmentDose.prescriptionItemId} = ${prescriptionItem.id} and ${treatmentDose.givenAt} is not null)`,
-      stock: sql<number>`coalesce(${stock.stock}, 0)`,
+      stock: sql<number>`(select coalesce(sum(${nextBatch.quantity}), 0) from ${medicineBatch} nb where ${inDateForLine})`,
       // The batch the sale takes from first (FEFO), as on the medicine list.
       nextBatchNo: nextBatchOf('batch_no'),
       nextExpiry: nextBatchOf('expiry_date'),
     })
     .from(prescriptionItem)
     .innerJoin(medicine, eq(medicine.id, prescriptionItem.medicineId))
-    .leftJoin(stock, eq(stock.medicineId, prescriptionItem.medicineId))
     .where(and(eq(prescriptionItem.branchId, branchId), isNull(prescriptionItem.deletedAt), where))
     // The doctor's order: placed lines first (1, 2, 3...), then the ones never moved, as they were added.
     .orderBy(sql`case when ${prescriptionItem.sortOrder} = 0 then 1 else 0 end`, asc(prescriptionItem.sortOrder), asc(prescriptionItem.id));
@@ -173,7 +195,7 @@ export async function dispenseItems(
   quantities: Record<string, number> = {},
 ) {
   const pending = await tx
-    .select({ id: prescriptionItem.id, medicineId: prescriptionItem.medicineId, quantity: prescriptionItem.quantity, name: medicine.name, pricePaise: medicine.pricePaise })
+    .select({ id: prescriptionItem.id, medicineId: prescriptionItem.medicineId, quantity: prescriptionItem.quantity, days: prescriptionItem.days, name: medicine.name, pricePaise: medicine.pricePaise })
     .from(prescriptionItem)
     .innerJoin(medicine, eq(medicine.id, prescriptionItem.medicineId))
     .where(and(eq(prescriptionItem.branchId, branchId), eq(prescriptionItem.visitId, v.id), eq(prescriptionItem.status, 'pending'), isNull(prescriptionItem.deletedAt)));
@@ -187,6 +209,7 @@ export async function dispenseItems(
     return { ...p, quantity: given };
   });
 
+  assertPriced(chosen);
   // Plan every line first (FEFO); refuse the whole sale if anything is short.
   const { plan, short } = await planFefo(tx, branchId, today, chosen);
   if (short.length) throw new AppError(409, 'out_of_stock', `Not enough stock: ${short.join(', ')}. Untick it or add stock first.`);
@@ -345,8 +368,9 @@ export function createPharmacyRoutes(db: Db) {
     const b = c.get('branch');
     const u = c.get('user');
     const m = await medicineOfBranch(b.id, Number(c.req.param('id')));
-    if (parsed.data.expiryDate < (await localToday(db))) {
-      throw new AppError(400, 'validation', 'This batch has already expired', { expiryDate: ['This batch has already expired'] });
+    // Expiring today = already out (minExpiryFor): nothing of it could be sold.
+    if (parsed.data.expiryDate < minExpiryFor(await localToday(db))) {
+      throw new AppError(400, 'validation', 'This batch expires today or has already expired', { expiryDate: ['Expires today or already expired'] });
     }
     const [row] = await db
       .insert(medicineBatch)
@@ -404,7 +428,8 @@ export function createPharmacyRoutes(db: Db) {
     };
     for (const { pricePaise, unitCostPaise, ...bt } of batches) {
       const row: StockReportBatch = { ...bt, daysLeft: daysBetween(today, bt.expiryDate), valuePaise: bt.quantity * pricePaise };
-      if (row.daysLeft < 0) {
+      if (row.daysLeft <= 0) {
+        // On its expiry day a batch is already out (minExpiryFor).
         expired.unshift(row); // most recently expired first
         summary.expired++;
         summary.expiredValuePaise += row.valuePaise;
@@ -694,6 +719,7 @@ export function createPharmacyRoutes(db: Db) {
       // Another branch's (or a deleted) medicine answers like a missing one.
       if (meds.length !== items.length) throw notFound('Medicine not found');
       const chosen = items.map((i) => ({ ...meds.find((m) => m.medicineId === i.medicineId)!, quantity: i.quantity }));
+      assertPriced(chosen);
 
       const { plan, short } = await planFefo(tx, b.id, today, chosen);
       if (short.length) throw new AppError(409, 'out_of_stock', `Not enough stock: ${short.join(', ')}. Reduce the quantity or add stock first.`);

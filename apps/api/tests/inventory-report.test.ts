@@ -42,22 +42,23 @@ describe('inventory report', () => {
     });
   });
 
-  it('lists batches expiring from today to day 90, earliest first; counts each window', async () => {
+  it('lists batches expiring from tomorrow to day 90, earliest first; counts each window; expiring today is expired', async () => {
     const pharm = await t.as('pharm');
-    await medicine(pharm, 'main', { name: 'Cetirizine', reorderLevel: 0 }, [
+    const cet = await medicine(pharm, 'main', { name: 'Cetirizine', reorderLevel: 0 }, [
       { batchNo: 'D91', days: 91, quantity: 7 }, // one day past the report
       { batchNo: 'D90', days: 90, quantity: 6 }, // last day of the report
       { batchNo: 'D61', days: 61, quantity: 5 },
       { batchNo: 'D60', days: 60, quantity: 4 },
       { batchNo: 'D31', days: 31, quantity: 3 },
       { batchNo: 'D30', days: 30, quantity: 2 },
-      { batchNo: 'D0', days: 0, quantity: 1 }, // expires today: still sellable today
+      { batchNo: 'D1', days: 1, quantity: 1 },
     ]);
+    await rawBatch(t.main.id, cet, 'D0', 0, 1); // expires today: already out (the API refuses to add it)
     const r = await report(pharm);
-    expect(batchNos(r.expiring)).toEqual(['D0', 'D30', 'D31', 'D60', 'D61', 'D90']);
-    expect(r.expiring.map((b: any) => b.daysLeft)).toEqual([0, 30, 31, 60, 61, 90]);
-    expect(r.expired).toEqual([]);
-    expect(r.summary).toMatchObject({ expiring30: 2, expiring60: 4, expiring90: 6, expired: 0, sellableUnits: 28, sellableValuePaise: 28 * 200 });
+    expect(batchNos(r.expiring)).toEqual(['D1', 'D30', 'D31', 'D60', 'D61', 'D90']);
+    expect(r.expiring.map((b: any) => b.daysLeft)).toEqual([1, 30, 31, 60, 61, 90]);
+    expect(batchNos(r.expired)).toEqual(['D0']);
+    expect(r.summary).toMatchObject({ expiring30: 2, expiring60: 4, expiring90: 6, expired: 1, sellableUnits: 28, sellableValuePaise: 28 * 200 });
   });
 
   it('expired stock on the shelf is "expired", never "expiring"; empty batches are in neither', async () => {

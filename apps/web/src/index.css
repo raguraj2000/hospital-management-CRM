@@ -18,12 +18,13 @@
   --color-border: #e4e4e7;
   --color-ring: #a1a1aa;
 
-  --color-brand: #2563eb;
+  /* Deep blue (#1d4ed8): every button, links and the selected menu item. White text on it reads well (6.7:1). */
+  --color-brand: #1d4ed8;
   --color-brand-foreground: #ffffff;
-  --color-brand-soft: #eff6ff;
+  --color-brand-soft: #e8eefc;
 
-  --color-primary: #18181b; /* shadcn default (black) buttons */
-  --color-primary-foreground: #fafafa;
+  --color-primary: #1d4ed8; /* buttons: deep blue */
+  --color-primary-foreground: #ffffff;
 
   --color-positive: #16a34a;
   --color-positive-soft: #f0fdf4;
@@ -46,10 +47,10 @@
   --color-muted: #a1a1aa;
   --color-border: #27272a;
   --color-ring: #52525b;
-  --color-brand: #3b82f6;
-  --color-brand-soft: #172554;
-  --color-primary: #fafafa;
-  --color-primary-foreground: #18181b;
+  --color-brand: #6d8ff0; /* blue, lighter so text and links read on the dark page */
+  --color-brand-soft: #18224a;
+  --color-primary: #2f5ff0; /* buttons: deep blue, a touch brighter so outlines and text show on the dark page */
+  --color-primary-foreground: #ffffff;
   --color-positive: #22c55e;
   --color-positive-soft: #052e16;
   --color-warning: #f59e0b;

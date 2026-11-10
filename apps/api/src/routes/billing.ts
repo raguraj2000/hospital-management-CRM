@@ -138,7 +138,15 @@ export async function labPaymentState(db: Db | Tx, branchId: number, visitId: nu
     const otherPaise = b!.total - lab!.sum; // consultation + charges - discount + round off (below 0 with a big discount)
     duePaise += Math.min(lab!.sum, balance, Math.max(0, balance - otherPaise));
   }
-  return { paid: duePaise === 0, released: !!released, releaseReason: released?.reason ?? null, duePaise, printAllowed: duePaise === 0 || !!released };
+  // Pay-at-the-end hospitals: the owner / branch admin switched on "print before payment" for the whole branch.
+  const beforePayment = await labPrintBeforePaymentOn(db, branchId);
+  return { paid: duePaise === 0, released: !!released, releaseReason: released?.reason ?? null, duePaise, printAllowed: duePaise === 0 || !!released || beforePayment };
+}
+
+/** Lab reports may print before the lab is paid (branch setting; BUSINESS-RULES.md section 4). */
+export async function labPrintBeforePaymentOn(db: Db | Tx, branchId: number): Promise<boolean> {
+  const [s] = await db.select({ on: clinicSetting.labPrintBeforePayment }).from(clinicSetting).where(eq(clinicSetting.branchId, branchId));
+  return s?.on ?? false;
 }
 
 /** When a lab test is cancelled: drop it from its bill if that bill has no payments yet. */
@@ -178,7 +186,7 @@ export async function billOf(db: Db | Tx, branchId: number, id: number): Promise
     .leftJoin(doctor, eq(doctor.id, opVisit.doctorUserId))
     .where(and(eq(opBill.branchId, branchId), eq(opBill.id, id)));
   if (!b) throw notFound('Bill not found');
-  const lines = await db.select({ id: opBillLine.id, description: opBillLine.description, amountPaise: opBillLine.amountPaise, labOrderId: opBillLine.labOrderId }).from(opBillLine).where(eq(opBillLine.billId, id)).orderBy(asc(opBillLine.id));
+  const lines = await db.select({ id: opBillLine.id, description: opBillLine.description, amountPaise: opBillLine.amountPaise, labOrderId: opBillLine.labOrderId, saleId: opBillLine.saleId }).from(opBillLine).where(eq(opBillLine.billId, id)).orderBy(asc(opBillLine.id));
   const payments = await db
     .select({ id: billPayment.id, amountPaise: billPayment.amountPaise, mode: billPayment.mode, receivedAt: billPayment.receivedAt, receivedByName: user.name })
     .from(billPayment)
@@ -251,7 +259,9 @@ export async function updateBill(tx: Tx, branchId: number, u: Who, bill: OpBill,
   // A list of charges replaces every extra charge the bill has, also the single "other charges" of older bills.
   const { charges, ...fields } = data;
   const set: typeof fields = charges ? { ...fields, otherChargesPaise: 0, otherChargesLabel: null } : fields;
-  const lines: Pick<BillLine, 'amountPaise'>[] = [...bill.lines.filter((l) => !charges || l.labOrderId != null), ...(charges ?? []), ...unbilled.map((o) => ({ amountPaise: o.pricePaise }))];
+  // Lab lines and medicine lines (a sale put on the bill) always stay; only the extra charges are replaced.
+  const kept = (l: Pick<BillLine, 'labOrderId' | 'saleId'>) => l.labOrderId != null || l.saleId != null;
+  const lines: Pick<BillLine, 'amountPaise'>[] = [...bill.lines.filter((l) => !charges || kept(l)), ...(charges ?? []), ...unbilled.map((o) => ({ amountPaise: o.pricePaise }))];
   const subtotal = (set.consultationFeePaise ?? bill.consultationFeePaise) + (set.otherChargesPaise ?? bill.otherChargesPaise) + lines.reduce((s, l) => s + l.amountPaise, 0);
   if ((set.discountPaise ?? bill.discountPaise) > subtotal) {
     throw new AppError(400, 'validation', 'Discount is more than the bill', { discountPaise: ['Discount is more than the bill'] });
@@ -259,12 +269,38 @@ export async function updateBill(tx: Tx, branchId: number, u: Who, bill: OpBill,
   // An empty body is allowed: it just pulls in newly ordered lab tests.
   if (Object.keys(set).length) await tx.update(opBill).set(set).where(eq(opBill.id, bill.id));
   if (charges) {
-    await tx.delete(opBillLine).where(and(eq(opBillLine.billId, bill.id), isNull(opBillLine.labOrderId)));
+    await tx.delete(opBillLine).where(and(eq(opBillLine.billId, bill.id), isNull(opBillLine.labOrderId), isNull(opBillLine.saleId)));
     if (charges.length) await tx.insert(opBillLine).values(charges.map((c) => ({ branchId, billId: bill.id, labOrderId: null, description: c.description, amountPaise: c.amountPaise })));
   }
   if (unbilled.length) await tx.insert(opBillLine).values(labLines(branchId, bill.id, unbilled));
   await recomputeTotal(tx, bill.id);
   await writeAudit(tx, { organizationId: u.organizationId, branchId, userId: u.id, action: 'update', entity: 'op_bill', entityId: bill.id, detail: data });
+}
+
+/**
+ * Medicines not paid in full at the counter (BUSINESS-RULES.md: medicines on dues): the sale goes onto the visit's
+ * unpaid bill as one line -- or onto a new bill when every bill already has a payment -- so what is not paid stays
+ * a due of the patient like any bill (Pending payments, pay dues). The sale then counts as money only through that
+ * bill's payments. Returns the bill id.
+ */
+export async function putSaleOnBill(tx: Tx, branchId: number, u: Who, v: { id: number; patientId: number }, sale: { id: number; saleNo: string; totalPaise: number }, today: string) {
+  const ids = await tx.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, branchId), eq(opBill.visitId, v.id))).orderBy(asc(opBill.id));
+  let billId: number | undefined;
+  for (const r of ids) if ((await paidOf(tx, r.id)) === 0) billId = r.id;
+  if (billId == null) {
+    const n = await nextNumber(tx, branchId, `bill:${today}`);
+    const [bill] = await tx
+      .insert(opBill)
+      .values({ branchId, billNo: `BL-${dayStamp(today)}-${String(n).padStart(3, '0')}`, visitId: v.id, patientId: v.patientId, consultationFeePaise: 0, createdBy: u.id })
+      .returning({ id: opBill.id });
+    billId = bill!.id;
+    await writeAudit(tx, { organizationId: u.organizationId, branchId, userId: u.id, action: 'create', entity: 'op_bill', entityId: billId, detail: { visitId: v.id, forSale: sale.id } });
+  }
+  await tx.insert(opBillLine).values({ branchId, billId, labOrderId: null, saleId: sale.id, description: `Medicines (${sale.saleNo})`, amountPaise: sale.totalPaise });
+  await tx.update(pharmacySale).set({ billId }).where(and(eq(pharmacySale.branchId, branchId), eq(pharmacySale.id, sale.id)));
+  await recomputeTotal(tx, billId);
+  await writeAudit(tx, { organizationId: u.organizationId, branchId, userId: u.id, action: 'update', entity: 'op_bill', entityId: billId, detail: { medicinesOnBill: { saleId: sale.id, saleNo: sale.saleNo, amountPaise: sale.totalPaise } } });
+  return billId;
 }
 
 /** Take a payment on a bill: never more than its balance. */
@@ -284,7 +320,7 @@ export function createBillingRoutes(db: Db) {
 
   // ---------------------------------------------------------------- settings
 
-  app.get('/billing/settings', requireAnyPermission('billing.receive', 'settings.manage'), async (c) => c.json({ consultationFeePaise: await consultationFee(db, c.get('branch').id), feeSlots: await feeSlots(db, c.get('branch').id), chargePresets: await chargePresets(db, c.get('branch').id), navCounts: await navCountsOn(db, c.get('branch').id) }));
+  app.get('/billing/settings', requireAnyPermission('billing.receive', 'settings.manage'), async (c) => c.json({ consultationFeePaise: await consultationFee(db, c.get('branch').id), feeSlots: await feeSlots(db, c.get('branch').id), chargePresets: await chargePresets(db, c.get('branch').id), navCounts: await navCountsOn(db, c.get('branch').id), labPrintBeforePayment: await labPrintBeforePaymentOn(db, c.get('branch').id) }));
 
   app.put('/billing/settings', requirePermission('settings.manage'), async (c) => {
     const parsed = billingSettingsSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -294,10 +330,15 @@ export function createBillingRoutes(db: Db) {
     // Not sent = the list stays as it is.
     const presets = parsed.data.chargePresets === undefined ? undefined : JSON.stringify(parsed.data.chargePresets);
     const slots = parsed.data.feeSlots === undefined ? undefined : JSON.stringify(parsed.data.feeSlots);
+    // Switches: not sent = left as they are.
+    const switches = {
+      ...(parsed.data.navCounts === undefined ? {} : { navCounts: parsed.data.navCounts }),
+      ...(parsed.data.labPrintBeforePayment === undefined ? {} : { labPrintBeforePayment: parsed.data.labPrintBeforePayment }),
+    };
     await db
       .insert(clinicSetting)
-      .values({ branchId: b.id, consultationFeePaise: parsed.data.consultationFeePaise, chargePresets: presets, feeSlots: slots, ...(parsed.data.navCounts === undefined ? {} : { navCounts: parsed.data.navCounts }) })
-      .onConflictDoUpdate({ target: clinicSetting.branchId, set: { consultationFeePaise: parsed.data.consultationFeePaise, ...(presets === undefined ? {} : { chargePresets: presets }), ...(slots === undefined ? {} : { feeSlots: slots }), ...(parsed.data.navCounts === undefined ? {} : { navCounts: parsed.data.navCounts }), updatedAt: new Date().toISOString() } });
+      .values({ branchId: b.id, consultationFeePaise: parsed.data.consultationFeePaise, chargePresets: presets, feeSlots: slots, ...switches })
+      .onConflictDoUpdate({ target: clinicSetting.branchId, set: { consultationFeePaise: parsed.data.consultationFeePaise, ...(presets === undefined ? {} : { chargePresets: presets }), ...(slots === undefined ? {} : { feeSlots: slots }), ...switches, updatedAt: new Date().toISOString() } });
     await writeAudit(db, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'billing_settings', entityId: b.id, detail: parsed.data });
     return c.json({ ok: true });
   });
@@ -621,7 +662,8 @@ export function createBillingRoutes(db: Db) {
     const b = { id: branchId };
     const onDay = (col: AnyColumn) => sql`date(${col}, '+330 minutes') = ${day}`;
     const billRows = await db.select({ mode: billPayment.mode, sum: sql<number>`sum(${billPayment.amountPaise})` }).from(billPayment).where(and(eq(billPayment.branchId, b.id), onDay(billPayment.receivedAt))).groupBy(billPayment.mode);
-    const phRows = await db.select({ mode: pharmacySale.paymentMode, sum: sql<number>`sum(${pharmacySale.totalPaise})` }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt))).groupBy(pharmacySale.paymentMode);
+    // A sale put on a bill (not paid in full) is money only through that bill's payments, counted above.
+    const phRows = await db.select({ mode: pharmacySale.paymentMode, sum: sql<number>`sum(${pharmacySale.totalPaise})` }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), isNull(pharmacySale.billId), onDay(pharmacySale.createdAt))).groupBy(pharmacySale.paymentMode);
     const [vendorOut] = await db.select({ sum: sql<number>`coalesce(sum(${vendorPayment.amountPaise}), 0)` }).from(vendorPayment).where(and(eq(vendorPayment.branchId, b.id), onDay(vendorPayment.paidAt)));
     const byMode = (rows: { mode: string; sum: number }[]) => ({ cash: 0, upi: 0, card: 0, ...Object.fromEntries(rows.map((r) => [r.mode, r.sum])) });
     const bills = byMode(billRows);
@@ -654,7 +696,7 @@ export function createBillingRoutes(db: Db) {
         coalesce(sum((select sum(ob.consultation_fee_paise) from op_bill ob where ob.branch_id = ${b.id} and ob.visit_id = v.id and ${inRange('ob.created_at')})), 0) as consultationPaise,
         coalesce(sum((select sum(l.amount_paise) from op_bill_line l inner join op_bill ob on ob.id = l.bill_id where ob.branch_id = ${b.id} and ob.visit_id = v.id and l.lab_order_id is not null and ${inRange('ob.created_at')})), 0) as labPaise,
         coalesce(sum((select sum(ob.other_charges_paise) from op_bill ob where ob.branch_id = ${b.id} and ob.visit_id = v.id and ${inRange('ob.created_at')})), 0)
-          + coalesce(sum((select sum(l.amount_paise) from op_bill_line l inner join op_bill ob on ob.id = l.bill_id where ob.branch_id = ${b.id} and ob.visit_id = v.id and l.lab_order_id is null and l.description <> ${ROUND_OFF_LINE} and ${inRange('ob.created_at')})), 0) as otherPaise,
+          + coalesce(sum((select sum(l.amount_paise) from op_bill_line l inner join op_bill ob on ob.id = l.bill_id where ob.branch_id = ${b.id} and ob.visit_id = v.id and l.lab_order_id is null and l.sale_id is null and l.description <> ${ROUND_OFF_LINE} and ${inRange('ob.created_at')})), 0) as otherPaise,
         coalesce(sum((select sum(ob.discount_paise) from op_bill ob where ob.branch_id = ${b.id} and ob.visit_id = v.id and ${inRange('ob.created_at')})), 0) as discountPaise,
         coalesce(sum((select sum(ps.total_paise) from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.visit_id = v.id and ${inRange('ps.created_at')})), 0) as medicinesPaise
       from op_visit v left join user d on d.id = v.doctor_user_id
@@ -666,20 +708,21 @@ export function createBillingRoutes(db: Db) {
     const modes = await db.all<{ mode: 'cash' | 'upi' | 'card'; paise: number }>(sql`
       select mode, sum(paise) as paise from (
         select bp.mode as mode, bp.amount_paise as paise from bill_payment bp where bp.branch_id = ${b.id} and ${inRange('bp.created_at')}
-        union all select ps.payment_mode, ps.total_paise from pharmacy_sale ps where ps.branch_id = ${b.id} and ${inRange('ps.created_at')}
+        union all select ps.payment_mode, ps.total_paise from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.bill_id is null and ${inRange('ps.created_at')}
       ) group by mode`);
     const byMode = { cash: 0, upi: 0, card: 0 } as Record<'cash' | 'upi' | 'card', number>;
     for (const m of modes) byMode[m.mode] = m.paise;
     // Medicines are the medicine lines only; a direct sale's round off is counted with the round off below.
+    // Medicines put on a bill (not paid in full) come in as that bill's payments (billsPaise), not as a sale.
     const got = await one<{ billsPaise: number; pharmacyOpPaise: number; pharmacyDirectPaise: number; pharmacyRoundOffPaise: number }>(sql`select
       (select coalesce(sum(bp.amount_paise), 0) from bill_payment bp where bp.branch_id = ${b.id} and ${inRange('bp.created_at')}) as billsPaise,
-      (select coalesce(sum(ps.total_paise - ps.round_off_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.visit_id is not null and ${inRange('ps.created_at')}) as pharmacyOpPaise,
+      (select coalesce(sum(ps.total_paise - ps.round_off_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.visit_id is not null and ps.bill_id is null and ${inRange('ps.created_at')}) as pharmacyOpPaise,
       (select coalesce(sum(ps.total_paise - ps.round_off_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ps.visit_id is null and ${inRange('ps.created_at')}) as pharmacyDirectPaise,
       (select coalesce(sum(ps.round_off_paise), 0) from pharmacy_sale ps where ps.branch_id = ${b.id} and ${inRange('ps.created_at')}) as pharmacyRoundOffPaise`);
     const billed = await one<{ consultationPaise: number; labPaise: number; otherPaise: number; roundOffPaise: number; discountPaise: number; bills: number; duePaise: number }>(sql`select
       coalesce(sum(ob.consultation_fee_paise), 0) as consultationPaise,
       coalesce(sum((select sum(l.amount_paise) from op_bill_line l where l.bill_id = ob.id and l.lab_order_id is not null)), 0) as labPaise,
-      coalesce(sum(ob.other_charges_paise), 0) + coalesce(sum((select sum(l.amount_paise) from op_bill_line l where l.bill_id = ob.id and l.lab_order_id is null and l.description <> ${ROUND_OFF_LINE})), 0) as otherPaise,
+      coalesce(sum(ob.other_charges_paise), 0) + coalesce(sum((select sum(l.amount_paise) from op_bill_line l where l.bill_id = ob.id and l.lab_order_id is null and l.sale_id is null and l.description <> ${ROUND_OFF_LINE})), 0) as otherPaise,
       coalesce(sum((select sum(l.amount_paise) from op_bill_line l where l.bill_id = ob.id and l.lab_order_id is null and l.description = ${ROUND_OFF_LINE})), 0) as roundOffPaise,
       coalesce(sum(ob.discount_paise), 0) as discountPaise, count(*) as bills,
       coalesce(sum(max(0, ob.total_paise - coalesce((select sum(bp.amount_paise) from bill_payment bp where bp.bill_id = ob.id), 0))), 0) as duePaise
@@ -729,7 +772,7 @@ export function createBillingRoutes(db: Db) {
     const billsOfDay = and(eq(opBill.branchId, b.id), onDay(opBill.createdAt));
     const [heads] = await db.select({ consultation: sum(opBill.consultationFeePaise), other: sum(opBill.otherChargesPaise), discount: sum(opBill.discountPaise) }).from(opBill).where(billsOfDay);
     const [lab] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, sql`${opBillLine.labOrderId} is not null`));
-    const [charges] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, isNull(opBillLine.labOrderId), ne(opBillLine.description, ROUND_OFF_LINE)));
+    const [charges] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, isNull(opBillLine.labOrderId), isNull(opBillLine.saleId), ne(opBillLine.description, ROUND_OFF_LINE)));
     const [rounded] = await db.select({ sum: sum(opBillLine.amountPaise) }).from(opBillLine).innerJoin(opBill, eq(opBill.id, opBillLine.billId)).where(and(billsOfDay, isNull(opBillLine.labOrderId), eq(opBillLine.description, ROUND_OFF_LINE)));
     // Pharmacy = the medicine lines; a direct sale's round off is counted with the bills' round off.
     const [sold] = await db.select({ sum: sql<number>`coalesce(sum(${pharmacySale.totalPaise} - ${pharmacySale.roundOffPaise}), 0)`, rounded: sum(pharmacySale.roundOffPaise) }).from(pharmacySale).where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt)));
@@ -756,7 +799,8 @@ export function createBillingRoutes(db: Db) {
         .select({ saleId: pharmacySale.id, no: pharmacySale.saleNo, at: pharmacySale.createdAt, patientName: patient.name, amountPaise: pharmacySale.totalPaise, mode: pharmacySale.paymentMode })
         .from(pharmacySale)
         .leftJoin(patient, eq(patient.id, pharmacySale.patientId))
-        .where(and(eq(pharmacySale.branchId, b.id), onDay(pharmacySale.createdAt)));
+        // A sale put on a bill was not money at the counter: what was paid for it is among the bill receipts.
+        .where(and(eq(pharmacySale.branchId, b.id), isNull(pharmacySale.billId), onDay(pharmacySale.createdAt)));
       for (const s of sales) receipts.push({ kind: 'pharmacy', billId: null, paymentId: null, ...s });
     }
     receipts.sort((x, y) => x.at.localeCompare(y.at));

@@ -173,6 +173,11 @@ export function createCourseRoutes(db: Db) {
     const cat = await catalog(branchId, input);
     const userId = user.id;
     const dayOne = new Map<number, number>(); // medicine -> units to give on day one
+    // medicine -> days from today to its last sitting (India dates), counting both: the batch given on day one must
+    // still be in date at that sitting (pharmacy minExpiryFor).
+    const dayOneDays = new Map<number, number>();
+    const indiaDay = (ms: number) => new Date(ms + 330 * 60_000).toISOString().slice(0, 10);
+    const today = indiaDay(Date.now());
     const dayOneCharges = new Map<string, { count: number; amountPaise: number }>(); // "Lab: CBC" -> how many, how much
     const made: number[] = [];
     for (const s of input) {
@@ -188,7 +193,11 @@ export function createCourseRoutes(db: Db) {
       if (prepaid) {
         for (const i of items) {
           if (i.kind === 'note') continue;
-          if (i.kind === 'medicine') dayOne.set(i.medicineId!, (dayOne.get(i.medicineId!) ?? 0) + i.quantity);
+          if (i.kind === 'medicine') {
+            dayOne.set(i.medicineId!, (dayOne.get(i.medicineId!) ?? 0) + i.quantity);
+            const span = Math.round((Date.parse(`${indiaDay(Date.parse(s.dueAt))}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000) + 1;
+            dayOneDays.set(i.medicineId!, Math.max(dayOneDays.get(i.medicineId!) ?? 1, span, 1));
+          }
           // Tests and charges of later sittings: on today's bill, named with their sitting.
           else {
             const name = `${i.kind === 'test' ? 'Lab: ' : ''}${i.description}`;
@@ -202,7 +211,8 @@ export function createCourseRoutes(db: Db) {
     for (const [name, x] of dayOneCharges) await addChargeToVisit(tx, branchId, user, billVisitId, { description: `${name}${x.count > 1 ? ` ×${x.count}` : ''} (${course.name} course)`.slice(0, 60), amountPaise: x.amountPaise });
     // Day one: the medicines of all the sittings are given out (and paid) today, as one line each.
     for (const [medicineId, quantity] of dayOne) {
-      await tx.insert(prescriptionItem).values({ branchId, visitId: billVisitId, medicineId, dose: 'Course', days: 1, quantity, instructions: `${course.name} course: given in the hospital`, createdBy: userId });
+      // days = up to the last sitting that uses it, so the sale takes only a batch that lasts the whole course.
+      await tx.insert(prescriptionItem).values({ branchId, visitId: billVisitId, medicineId, dose: 'Course', days: Math.min(dayOneDays.get(medicineId) ?? 1, 365), quantity, instructions: `${course.name} course: given in the hospital`, createdBy: userId });
     }
     return made;
   }

@@ -1,0 +1,1 @@
+ALTER TABLE `clinic_setting` ADD `lab_print_before_payment` integer DEFAULT false NOT NULL;

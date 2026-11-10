@@ -2,7 +2,7 @@
 // chosen one on the right, so nobody has to read five boxes to change one price.
 import type { ComponentType } from 'react';
 import { useSearchParams } from 'react-router';
-import { BellDot, Image, IndianRupee, ReceiptText, Stethoscope } from 'lucide-react';
+import { BellDot, FlaskConical, Image, IndianRupee, ReceiptText, Stethoscope } from 'lucide-react';
 import { cn } from '@platform/ui';
 import { BranchLogoCard } from './BranchLogo';
 import { BillingSettings } from './BillingSettings';
@@ -13,6 +13,7 @@ const SECTIONS: { key: string; label: string; hint: string; icon: ComponentType<
   { key: 'charges', label: 'Ready-made charges', hint: 'IV set, dressing… with prices', icon: ReceiptText },
   { key: 'doctors', label: 'Doctors', hint: 'Who sees patients here', icon: Stethoscope },
   { key: 'logo', label: 'Logo & print', hint: 'On bills and lab reports', icon: Image },
+  { key: 'lab', label: 'Lab reports', hint: 'Print before payment', icon: FlaskConical },
   { key: 'counts', label: 'Menu counts', hint: 'Numbers on the side menu', icon: BellDot },
 ];
 
@@ -51,6 +52,7 @@ export function BranchSettings({ branch, branchName }: { branch: string; branchN
         {section === 'charges' && <BillingSettings branch={branch} part="charges" />}
         {section === 'doctors' && <DoctorSettings branch={branch} branchName={branchName} />}
         {section === 'logo' && <BranchLogoCard branch={branch} branchName={branchName} />}
+        {section === 'lab' && <BillingSettings branch={branch} part="lab" />}
         {section === 'counts' && <BillingSettings branch={branch} part="counts" />}
       </div>
     </div>

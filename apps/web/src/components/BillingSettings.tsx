@@ -11,10 +11,11 @@ const SHORT_LIST = 6;
 const USUAL = ['IM INJ', 'IVF', 'SV Set Inj', 'Dressing', 'Sutures', 'Venflon', 'Procedure (I & D)', 'Procedure (D & C)', 'USG', 'ECG'];
 
 /** Per-branch default consultation fee (front desk can still change it on a bill). */
-export function BillingSettings({ branch, part }: { branch: string; /** One card only, so the page can lay them out; not given = all three. */ part?: 'fee' | 'counts' | 'charges' }) {
-  const show = (p: 'fee' | 'counts' | 'charges') => !part || part === p;
+type Part = 'fee' | 'counts' | 'charges' | 'lab';
+export function BillingSettings({ branch, part }: { branch: string; /** One card only, so the page can lay them out; not given = all of them. */ part?: Part }) {
+  const show = (p: Part) => !part || part === p;
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ['billing-settings', branch], queryFn: () => api.get<{ consultationFeePaise: number; feeSlots?: FeeSlot[]; chargePresets?: ChargePreset[]; navCounts?: boolean }>(`/b/${branch}/billing/settings`) });
+  const { data } = useQuery({ queryKey: ['billing-settings', branch], queryFn: () => api.get<{ consultationFeePaise: number; feeSlots?: FeeSlot[]; chargePresets?: ChargePreset[]; navCounts?: boolean; labPrintBeforePayment?: boolean }>(`/b/${branch}/billing/settings`) });
   // The ready-made charges as typed (amount in rupees).
   const [presets, setPresets] = useState<{ name: string; amount: string }[]>([]);
   const [savingPresets, setSavingPresets] = useState(false);
@@ -138,6 +139,34 @@ export function BillingSettings({ branch, part }: { branch: string; /** One card
           {feesChanged && <span className="text-xs font-medium text-warning">Changes not saved yet</span>}
         </div>
       </div>
+    </Card>
+    )}
+    {show('lab') && (
+    <Card className="h-full">
+      <CardHeader title="Lab reports" description="For hospitals where the patient pays once at the end: the doctor needs the report before the bill." />
+      <label className="flex items-center gap-3 p-4 text-sm">
+        <input
+          type="checkbox"
+          className="size-5 accent-[var(--color-primary)]"
+          checked={data?.labPrintBeforePayment ?? false}
+          disabled={!data}
+          onChange={async (e) => {
+            const on = e.target.checked;
+            try {
+              await api.put(`/b/${branch}/billing/settings`, { consultationFeePaise: data!.consultationFeePaise, labPrintBeforePayment: on });
+              qc.invalidateQueries({ queryKey: ['billing-settings', branch] });
+              qc.invalidateQueries({ queryKey: ['lab', branch] });
+              toast.success(on ? 'Lab reports now print before payment' : 'Lab reports print only after payment again');
+            } catch (err) {
+              toast.error(errorMessage(err));
+            }
+          }}
+        />
+        <span>
+          <span className="font-medium">Print lab reports before payment</span>
+          <span className="block text-xs text-muted">On: anyone who prints lab reports can print them before the lab is paid. Off: printing waits for payment (or a release).</span>
+        </span>
+      </label>
     </Card>
     )}
     {show('counts') && (

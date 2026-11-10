@@ -16,6 +16,7 @@ import {
 import { AppError, notFound, requireAnyPermission, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
 import { medicine, medicineBatch, purchaseBill, purchaseLine, user, vendor, vendorPayment, expense } from '../db/schema.js';
 import { exclusively, localToday } from '../lib/clinic.js';
+import { minExpiryFor } from './pharmacy.js';
 
 const addDays = (iso: string, days: number) => {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -303,8 +304,9 @@ export function createVendorRoutes(db: Db) {
     const medIds = [...new Set(input.lines.map((l) => l.medicineId))];
     const meds = await db.select({ id: medicine.id }).from(medicine).where(and(eq(medicine.branchId, b.id), isNull(medicine.deletedAt), inArray(medicine.id, medIds)));
     if (meds.length !== medIds.length) throw new AppError(400, 'validation', 'Choose medicines from this branch');
-    const expired = input.lines.findIndex((l) => l.expiryDate < today);
-    if (expired >= 0) throw new AppError(400, 'validation', `Line ${expired + 1} has already expired`, { [`lines.${expired}.expiryDate`]: ['Already expired'] });
+    // Expiring today = already out (minExpiryFor): nothing of it could be sold.
+    const expired = input.lines.findIndex((l) => l.expiryDate < minExpiryFor(today));
+    if (expired >= 0) throw new AppError(400, 'validation', `Line ${expired + 1} expires today or has already expired`, { [`lines.${expired}.expiryDate`]: ['Expires today or already expired'] });
 
     const totalPaise = input.lines.reduce((s, l) => s + purchaseLineTotals(l).amountPaise, 0);
     const id = await db.transaction(async (tx) => {

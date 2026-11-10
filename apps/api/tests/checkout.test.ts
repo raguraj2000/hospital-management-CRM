@@ -181,7 +181,9 @@ describe('checkout: one payment for the whole visit', () => {
   it('pay later: medicines are paid in full, the rest stays as balance due; a wrong amount changes nothing', async () => {
     const w = await world();
     const v = await visit(w, 'Ravi Kumar', { sent: true });
-    for (const amountPaise of [10999, 69001]) {
+    // More than is due is wrong. (Less than the medicines is no longer wrong: they go on the bill as a due --
+    // BUSINESS-RULES.md "medicines on dues", tests/medicines-dues.test.ts.)
+    for (const amountPaise of [69001]) {
       const res = await checkout(w.pharm, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise });
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({ code: 'validation', fields: { amountPaise: [expect.any(String)] } });
@@ -227,7 +229,7 @@ describe('checkout: one payment for the whole visit', () => {
     await t.db.update(prescriptionItem).set({ quantity: 30 }).where(eq(prescriptionItem.id, v.items[0]!)); // 25 in stock
     const res = await checkout(w.pharm, v.id, { itemIds: v.items, paymentMode: 'cash', amountPaise: 58000 + 6000 + 9000 });
     expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ code: 'out_of_stock', error: expect.stringContaining('Paracetamol (need 30, have 25)') });
+    expect(await res.json()).toMatchObject({ code: 'out_of_stock', error: expect.stringContaining('Paracetamol (need 30, only 25 in date for the whole 5-day course)') });
     await expectUntouched(w, v, 'at_counter');
     expect((await queueOf(w.pharm)).map((q) => q.visitId)).toEqual([v.id]);
   });

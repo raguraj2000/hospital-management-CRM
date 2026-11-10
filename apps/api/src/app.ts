@@ -132,7 +132,8 @@ export function createApp(db: Db) {
       const saleRows = await db
         .select({ mode: pharmacySale.paymentMode, sum: sql<number>`sum(${pharmacySale.totalPaise})` })
         .from(pharmacySale)
-        .where(and(eq(pharmacySale.branchId, branchId), onToday(pharmacySale.createdAt)))
+        // A sale put on a bill (not paid in full) is money only through that bill's payments (billRows).
+        .where(and(eq(pharmacySale.branchId, branchId), isNull(pharmacySale.billId), onToday(pharmacySale.createdAt)))
         .groupBy(pharmacySale.paymentMode);
       const m = { cash: 0, upi: 0, card: 0 };
       for (const r of [...billRows, ...saleRows]) m[r.mode] += r.sum;
@@ -168,7 +169,7 @@ export function createApp(db: Db) {
         eq(medicine.branchId, branchId),
         isNull(medicine.deletedAt),
         gt(medicineBatch.quantity, 0),
-        gte(medicineBatch.expiryDate, today),
+        gt(medicineBatch.expiryDate, today), // on its expiry day a batch is already out (pharmacy minExpiryFor)
         lte(medicineBatch.expiryDate, sql`date(${today}, ${`+${NEAR_EXPIRY_DAYS} days`})`),
       );
       const [{ nearExpiryCount }] = await db
