@@ -273,6 +273,9 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
     }
   };
   const [confirmFree, setConfirmFree] = useState(false);
+  // Who can bill may leave anything unpaid as a due, medicines too (BUSINESS-RULES.md); a pharmacy-only role cannot.
+  const canLeaveDue = useCan('billing.receive');
+  const [confirmLeft, setConfirmLeft] = useState(false);
   // Amount received: null = the whole total.
   const [amount, setAmount] = useState<string | null>(null);
   const [mode, setMode] = useState<BillPaymentMode>('cash');
@@ -320,8 +323,8 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
       ? 'The discount is more than the consultation, lab and other charges.'
       : shortOnTicked
         ? 'A ticked drug is short of stock. Untick it or add stock first.'
-        : receivedPaise < medicinesPaise
-          ? `Drugs (${formatRupees(medicinesPaise)}) must be paid in full.`
+        : receivedPaise < medicinesPaise && !canLeaveDue
+          ? `Drugs (${formatRupees(medicinesPaise)}) must be paid in full here. The billing counter can leave the rest as a due.`
           : receivedPaise > totalPaise
             ? `Only ${formatRupees(totalPaise)} is due.`
             : null;
@@ -329,8 +332,9 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
   const nothingToDo = !editable && totalPaise === 0 && items.length === 0;
 
   const collect = useMutation({
-    mutationFn: () => {
-      const body: CheckoutInput = { paymentMode: mode, amountPaise: receivedPaise };
+    /** `left`: the patient went without paying -- nothing received, everything (medicines too) stays a due. */
+    mutationFn: (left?: boolean) => {
+      const body: CheckoutInput = { paymentMode: mode, amountPaise: left ? 0 : receivedPaise };
       if (data.medicines) {
         body.itemIds = chosen.map((i) => i.id);
         const less = chosen.filter((i) => giveQty(i) < i.quantity);
@@ -339,7 +343,8 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
       // What is on the screen is what gets billed.
       // (The extra charges are already saved on the visit or the bill: sending a copy could drop one added meanwhile.)
       if (editable) Object.assign(body, { consultationFeePaise: feePaise, discountPaise, roundOffPaise: roundOff });
-      return withUndo(`Collecting ${formatRupees(receivedPaise)} from ${data.patientName}`, () => api.post<CheckoutResult>(`/b/${branch}/visits/${data.visitId}/checkout`, body));
+      setConfirmLeft(false);
+      return withUndo(left ? `Putting ${formatRupees(totalPaise)} on ${data.patientName}'s dues` : `Collecting ${formatRupees(receivedPaise)} from ${data.patientName}`, () => api.post<CheckoutResult>(`/b/${branch}/visits/${data.visitId}/checkout`, body));
     },
     onSuccess: (r) => {
       const numbers = [...r.paidBills.map((b) => b.billNo), r.sale?.saleNo].filter(Boolean).join(' · ') || r.bill?.billNo || '';
@@ -561,16 +566,40 @@ function CheckoutForm({ branch, data, onCollected }: { branch: string; data: Vis
           </Button>
         </div>
         </div>
-        <label className="flex items-center gap-2 text-sm text-muted lg:col-span-2">
-          <input type="checkbox" className="size-4 accent-[var(--color-primary)]" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
-          Print the bill after collecting
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-2 lg:col-span-2">
+          <label className="flex items-center gap-2 text-sm text-muted">
+            <input type="checkbox" className="size-4 accent-[var(--color-primary)]" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
+            Print the bill after collecting
+          </label>
+          {/* The patient went without paying: the whole amount goes to their dues (Billing > Pending payments). */}
+          {canLeaveDue && totalPaise > 0 && (
+            <Button type="button" variant="outline" disabled={shortOnTicked || collect.isPending} onClick={() => setConfirmLeft(true)}>
+              Patient left – add {formatRupees(totalPaise)} to dues
+            </Button>
+          )}
+        </div>
         {(problem || balanceLeft > 0) && (
           <p role="status" className={`text-base font-medium lg:col-span-2 ${problem ? 'text-critical' : 'text-warning'}`}>
             {problem ?? `${formatRupees(balanceLeft)} will stay as balance due.`}
           </p>
         )}
       </form>
+
+      <Dialog
+        open={confirmLeft}
+        onOpenChange={setConfirmLeft}
+        title={`Put ${formatRupees(totalPaise)} on ${data.patientName}'s dues?`}
+        description={`Nothing is received now. ${chosen.length ? 'The ticked drugs are counted as given (untick what the patient did not take). ' : ''}The visit is closed and the amount shows in Billing → Pending payments, to collect on a later visit.`}
+      >
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" className="h-11 text-base" onClick={() => setConfirmLeft(false)}>
+            Go back
+          </Button>
+          <Button className="h-11 text-base" disabled={collect.isPending} onClick={() => collect.mutate(true)}>
+            Add to dues
+          </Button>
+        </div>
+      </Dialog>
 
       <Dialog open={confirmFree} onOpenChange={setConfirmFree} title="No charge for this visit?" description={`Consultation and lab (${formatRupees(chargesPaise)}) get a 100% discount: the patient pays nothing for them.${items.length ? ' Medicines are still charged.' : ''}`}>
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

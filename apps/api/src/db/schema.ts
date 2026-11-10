@@ -227,6 +227,12 @@ export const pharmacySale = sqliteTable(
     /** Direct sale: added so the customer pays a round figure; already inside totalPaise. 0 for prescription sales. */
     roundOffPaise: integer('round_off_paise').notNull().default(0),
     paymentMode: text('payment_mode', { enum: ['cash', 'upi', 'card'] }).notNull(),
+    /**
+     * Not paid in full at the counter: the medicines went onto this OP bill (one line, op_bill_line.sale_id), so the
+     * unpaid part is a due like any bill. Then the money is counted from that bill's payments, never from the sale.
+     * null = paid in full here (paymentMode).
+     */
+    billId: integer('bill_id').references(() => opBill.id),
     createdBy: integer('created_by').references(() => user.id),
     createdAt: timestamps.createdAt,
   },
@@ -487,10 +493,12 @@ export const opBillLine = sqliteTable(
       .notNull()
       .references(() => opBill.id),
     labOrderId: integer('lab_order_id').references(() => labOrder.id),
+    /** The medicines of this pharmacy sale, put on the bill because they were not paid in full (never an extra charge). */
+    saleId: integer('sale_id').references(() => pharmacySale.id),
     description: text('description').notNull(),
     amountPaise: integer('amount_paise').notNull(),
   },
-  (t) => [index('ix_bill_line_bill').on(t.billId), uniqueIndex('ux_bill_line_lab').on(t.labOrderId)],
+  (t) => [index('ix_bill_line_bill').on(t.billId), uniqueIndex('ux_bill_line_lab').on(t.labOrderId), uniqueIndex('ux_bill_line_sale').on(t.saleId)],
 );
 
 export const billPayment = sqliteTable(
@@ -539,6 +547,8 @@ export const clinicSetting = sqliteTable('clinic_setting', {
   feeSlots: text('fee_slots'),
   /** The numbers next to the side menu (how many are waiting on each page). Off = no computer asks for them. */
   navCounts: integer('nav_counts', { mode: 'boolean' }).notNull().default(true),
+  /** Lab reports print before the lab is paid (pay-at-the-end hospitals). Only the owner / branch admin switch it. */
+  labPrintBeforePayment: integer('lab_print_before_payment', { mode: 'boolean' }).notNull().default(false),
   updatedAt: timestamps.updatedAt,
 });
 

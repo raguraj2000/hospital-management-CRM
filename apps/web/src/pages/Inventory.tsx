@@ -433,7 +433,8 @@ function Batches({ branch, medicine }: { branch: string; medicine: Medicine }) {
       </THead>
       <TBody>
         {data.batches.map((b) => {
-          const expired = b.expiryDate < data.today;
+          // On its expiry day a batch is already out (the server's minExpiryFor rule).
+          const expired = b.expiryDate <= data.today;
           return (
             <TR key={b.id} className={expired || b.quantity === 0 ? 'opacity-60' : ''}>
               <TD className="font-mono text-xs">{b.batchNo}</TD>

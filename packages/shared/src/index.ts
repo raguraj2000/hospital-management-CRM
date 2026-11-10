@@ -292,7 +292,8 @@ export const medicineInputSchema = z.object({
   name: z.string().trim().min(2, 'Enter the medicine name').max(120),
   form: z.enum(MEDICINE_FORMS),
   strength: z.string().trim().max(40).transform((v) => (v === '' ? null : v)).nullable().optional(),
-  pricePaise: z.number({ error: 'Enter the price' }).int().min(0, 'Enter the price').max(10_000_000),
+  // Never ₹0: a medicine with no price would be sold free without anyone deciding it (give a discount instead).
+  pricePaise: z.number({ error: 'Enter the price' }).int().min(1, 'The price must be above ₹0').max(10_000_000),
   reorderLevel: z.number().int().min(0).max(100_000).optional(),
   /** The usual line when a doctor picks it: dose, instruction, days (all optional). */
   defaultDose: z.string().trim().max(40).transform((v) => (v === '' ? null : v)).nullable().optional(),
@@ -1084,6 +1085,18 @@ export const visitCallNextSchema = z.object({
 /** The doctor's "what next?" for the patient inside; callNext also calls that doctor's next patient in. */
 export const visitSendSchema = z.object({ to: z.enum(['lab', 'counter', 'waiting'], { error: 'Choose where the patient goes' }), callNext: z.boolean().optional() });
 export type VisitSendTo = z.infer<typeof visitSendSchema>['to'];
+
+/** Many OP visits at once (the doctor had to leave; the day is over): which ones. */
+const visitIdsSchema = z.array(z.number().int().positive()).min(1, 'Select at least one visit').max(500, 'At most 500 visits at a time');
+/** Move the selected visits to another doctor (null = not assigned). */
+export const visitsChangeDoctorSchema = z.object({ visitIds: visitIdsSchema, doctorUserId: z.number().int().positive().nullable() });
+/** Delete the selected visits: only those where nothing was done yet; the rest are skipped. */
+export const visitsDeleteSchema = z.object({ visitIds: visitIdsSchema });
+/** What a many-visits action did: the visits changed, and the ones left alone with the reason. */
+export interface VisitsBulkResult {
+  done: number[];
+  skipped: { id: number; opNo: string; patientName: string; reason: string }[];
+}
 export type VisitInput = z.output<typeof visitInputSchema>;
 export type VisitFormValues = z.input<typeof visitInputSchema>;
 

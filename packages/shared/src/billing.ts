@@ -67,7 +67,7 @@ export const purchaseLineSchema = z.object({
   /** Printed MRP per pack. */
   mrpPaise: paise('the MRP').nullable().optional(),
   /** Also set the medicine's selling price per unit to this (e.g. MRP ÷ pack size). Left out = price unchanged. */
-  sellingPricePaise: paise('the selling price').nullable().optional(),
+  sellingPricePaise: paise('the selling price').min(1, 'The selling price must be above ₹0').nullable().optional(),
 });
 
 /** What a purchase line comes to: the loose units into stock, what the vendor is owed, what one unit cost. */
@@ -202,7 +202,7 @@ export function feeSlotAt(slots: FeeSlot[], hhmm: string): FeeSlot | null {
   return slots.find((s) => (s.from < s.to ? hhmm >= s.from && hhmm < s.to : hhmm >= s.from || hhmm < s.to)) ?? null;
 }
 
-export const billingSettingsSchema = z.object({ consultationFeePaise: paise('the fee'), feeSlots: z.array(feeSlotSchema).max(6, 'At most 6 time slots').optional(), chargePresets: z.array(chargePresetSchema).max(40, 'At most 40 ready-made charges').optional(), /** The waiting numbers in the side menu: on or off for the whole branch. */ navCounts: z.boolean().optional() });
+export const billingSettingsSchema = z.object({ consultationFeePaise: paise('the fee'), feeSlots: z.array(feeSlotSchema).max(6, 'At most 6 time slots').optional(), chargePresets: z.array(chargePresetSchema).max(40, 'At most 40 ready-made charges').optional(), /** The waiting numbers in the side menu: on or off for the whole branch. */ navCounts: z.boolean().optional(), /** Lab reports print before the lab is paid (pay-at-the-end hospitals). */ labPrintBeforePayment: z.boolean().optional() });
 
 /** An extra charge of a visit as the visit page and the counter show it. `key`: what to send to remove it. */
 export interface VisitChargeRow extends BillCharge {
@@ -222,12 +222,17 @@ export interface BillLine {
   description: string;
   amountPaise: number;
   labOrderId: number | null;
+  /** The medicines of a pharmacy sale not paid in full at the counter (BUSINESS-RULES.md: medicines on dues). */
+  saleId?: number | null;
 }
 
-/** The extra charges of a bill: its charge lines (not lab tests), and the single "other charges" older bills carry. */
-export const billCharges = (b: { lines: Pick<BillLine, 'description' | 'amountPaise' | 'labOrderId'>[]; otherChargesPaise: number; otherChargesLabel: string | null }): BillCharge[] => [
+/**
+ * The extra charges of a bill: its charge lines (not lab tests, not medicines put on the bill), and the single
+ * "other charges" older bills carry.
+ */
+export const billCharges = (b: { lines: Pick<BillLine, 'description' | 'amountPaise' | 'labOrderId' | 'saleId'>[]; otherChargesPaise: number; otherChargesLabel: string | null }): BillCharge[] => [
   ...(b.otherChargesPaise > 0 ? [{ description: b.otherChargesLabel || 'Other charges', amountPaise: b.otherChargesPaise }] : []),
-  ...b.lines.filter((l) => l.labOrderId == null).map((l) => ({ description: l.description, amountPaise: l.amountPaise })),
+  ...b.lines.filter((l) => l.labOrderId == null && l.saleId == null).map((l) => ({ description: l.description, amountPaise: l.amountPaise })),
 ];
 
 export interface OpBill {

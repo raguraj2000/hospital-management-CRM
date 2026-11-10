@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { ClipboardList, ClipboardPlus, DoorOpen, FlaskConical, Search, UserPlus } from 'lucide-react';
 import { DirectLab } from '@/components/DirectLab';
 import { LeftOpenVisits } from '@/components/LeftOpenVisits';
+import { VisitsBulkBar } from '@/components/VisitsBulk';
 import type { OpVisitRow, Patient, VisitQueue } from '@platform/shared';
 import { Avatar, Badge, Button, buttonVariants, Card, cn, Dialog, EmptyState, Input, NativeSelect, PageHeader, Pager, Skeleton, Table, Tabs, TabsList, TabsTrigger, TBody, TD, TH, THead, TR, usePaged } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
@@ -60,6 +61,23 @@ export function OpVisits() {
   const [q, setQ] = useState('');
   const shown = visits.filter(SHOW.find((t) => t.key === show)!.has).filter((v) => textMatch(q, v.patientName, v.patientUhid, v.opNo, v.token, v.complaint));
   const { rows, pager } = usePaged(shown, `${show}|${data?.date}|${doctorId}|${q}`);
+  // Many at once (doctor had to leave, day is over): ticked visits of the list shown now. A new tab, day,
+  // doctor or search starts a new selection, so nothing hidden is ever changed by mistake.
+  const canMoveVisits = useCan('patient.edit');
+  const canDeleteVisits = useCan('patient.delete');
+  const canSelect = canMoveVisits || canDeleteVisits;
+  const listKey = `${show}|${data?.date}|${doctorId}|${q}`;
+  const [picked, setPicked] = useState<{ key: string; ids: Set<number> }>({ key: '', ids: new Set() });
+  const ids = picked.key === listKey ? picked.ids : new Set<number>();
+  const shownIds = shown.map((v) => v.id);
+  const allPicked = shownIds.length > 0 && shownIds.every((id) => ids.has(id));
+  const toggle = (id: number) => {
+    const next = new Set(ids);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPicked({ key: listKey, ids: next });
+  };
+  const toggleAll = () => setPicked({ key: listKey, ids: allPicked ? new Set() : new Set(shownIds) });
   const queueDoctor = data?.queue?.doctorUserId != null ? doctors.data?.doctors.find((d) => d.userId === data.queue!.doctorUserId)?.name : undefined;
 
   return (
@@ -118,6 +136,10 @@ export function OpVisits() {
         <ListSearch label="Search the visits" placeholder="Name, UHID, token or complaint…" value={q} onChange={setQ} />
       </div>
 
+      {canSelect && (
+        <VisitsBulkBar branch={branch!} selected={shownIds.filter((id) => ids.has(id))} doctors={doctors.data?.doctors ?? []} onClear={() => setPicked({ key: '', ids: new Set() })} />
+      )}
+
       <Card>
         {error ? (
           <p className="p-6 text-sm text-critical">{errorMessage(error)}</p>
@@ -131,6 +153,18 @@ export function OpVisits() {
           <Table>
             <THead>
               <tr>
+                {canSelect && (
+                  <TH className="w-10 pr-0">
+                    <input
+                      type="checkbox"
+                      className="size-5 accent-[var(--color-primary)]"
+                      aria-label={allPicked ? 'Unselect all' : `Select all ${shown.length} in this list`}
+                      title={allPicked ? 'Unselect all' : `Select all ${shown.length} in this list (every page)`}
+                      checked={allPicked}
+                      onChange={toggleAll}
+                    />
+                  </TH>
+                )}
                 <TH>Token</TH>
                 <TH>Patient</TH>
                 <TH className="hidden lg:table-cell">Doctor</TH>
@@ -147,6 +181,11 @@ export function OpVisits() {
                 const active = v.status === 'waiting' || inside || v.status === 'at_lab';
                 return (
                   <TR key={v.id} onOpen={() => navigate(`/${branch}/visits/${v.id}`)} className={cn(inside && 'bg-brand-soft [&>td]:bg-brand-soft')}>
+                    {canSelect && (
+                      <TD className="w-10 pr-0">
+                        <input type="checkbox" className="size-5 accent-[var(--color-primary)]" aria-label={`Select ${v.patientName}`} checked={ids.has(v.id)} onChange={() => toggle(v.id)} />
+                      </TD>
+                    )}
                     <TD className={cn('whitespace-nowrap', inside && 'border-l-4 border-brand')}>
                       {/* The row's real link: keyboard, screen readers, open in a new tab. */}
                       <Link to={`/${branch}/visits/${v.id}`} className="inline-block rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/40">

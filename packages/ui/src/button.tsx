@@ -7,10 +7,12 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
+        // Every button is blue (owner's choice): solid deep blue, or a thick blue outline / light blue fill for the
+        // second choice on a screen. Red stays for delete; ghost (icon-only menus, "Clear") stays quiet.
         default: 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
-        brand: 'bg-brand text-brand-foreground shadow-sm hover:bg-brand/90',
-        outline: 'border border-border bg-surface shadow-sm hover:bg-subtle',
-        secondary: 'bg-subtle text-ink hover:bg-border/60',
+        brand: 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
+        outline: 'border-2 border-brand bg-surface text-brand font-semibold shadow-sm hover:bg-brand-soft',
+        secondary: 'bg-brand-soft text-brand font-semibold hover:bg-brand-soft/70',
         ghost: 'text-ink hover:bg-subtle',
         danger: 'bg-critical text-white shadow-sm hover:bg-critical/90',
         link: 'text-brand underline-offset-4 hover:underline',

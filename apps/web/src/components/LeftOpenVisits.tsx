@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { CalendarClock } from 'lucide-react';
-import type { LeftOpenVisit } from '@platform/shared';
+import { CalendarClock, Trash2 } from 'lucide-react';
+import type { LeftOpenVisit, VisitsBulkResult } from '@platform/shared';
 import { Button, buttonVariants, Card, CardHeader, ConfirmDialog, toast } from '@platform/ui';
 import { api, errorMessage } from '@/api/client';
 import { useCan } from '@/state/auth';
@@ -30,6 +30,17 @@ export function LeftOpenVisits({ branch }: { branch: string }) {
     onSuccess: (_, v) => done(`${v.patientName} is in today's queue with a new token`),
     onError: (e) => toast.error(errorMessage(e)),
   });
+  // The day is over: every visit nobody saw goes in one step (only those with nothing done on them: `movable`).
+  const canDelete = useCan('patient.delete');
+  const [deletingAll, setDeletingAll] = useState(false);
+  const deleteAll = useMutation({
+    mutationFn: (ids: number[]) => api.post<VisitsBulkResult>(`/b/${branch}/visits/delete`, { visitIds: ids }),
+    onSuccess: (r) => {
+      setDeletingAll(false);
+      done(`${r.done.length} visit${r.done.length === 1 ? '' : 's'} deleted${r.skipped.length ? `; ${r.skipped.length} kept (work was done on them)` : ''}`);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
   const close = useMutation({
     mutationFn: (v: LeftOpenVisit) => api.patch(`/b/${branch}/visits/${v.id}`, { status: 'cancelled' }),
     onSuccess: (_, v) => done(`${v.patientName}'s visit of ${fmtDay(v.visitDate)} is closed`),
@@ -37,12 +48,20 @@ export function LeftOpenVisits({ branch }: { branch: string }) {
   });
 
   const visits = data?.visits ?? [];
+  const notSeen = visits.filter((v) => v.movable).map((v) => v.id);
   if (!visits.length) return null;
   return (
     <Card className="mb-4 border-warning">
       <CardHeader
         title={`Left open from earlier days (${visits.length})`}
         description="Not finished on their day. Bring to today gives a new token at the end of today's queue; close the visit if the patient went home without being seen."
+        action={
+          canDelete && notSeen.length > 0 ? (
+            <Button size="sm" variant="danger" onClick={() => setDeletingAll(true)}>
+              <Trash2 /> Delete all not seen ({notSeen.length})
+            </Button>
+          ) : undefined
+        }
       />
       <div className="divide-y divide-border">
         {visits.map((v) => (
@@ -85,6 +104,16 @@ export function LeftOpenVisits({ branch }: { branch: string }) {
         confirmLabel="Close the visit"
         pending={close.isPending}
         onConfirm={() => closing && close.mutate(closing)}
+      />
+      <ConfirmDialog
+        open={deletingAll}
+        onOpenChange={setDeletingAll}
+        title={`Delete ${notSeen.length} visit${notSeen.length === 1 ? '' : 's'} nobody saw?`}
+        description="Only visits with nothing done on them are deleted. Visits with tests or medicines stay here: open them and finish them, or move them to another doctor."
+        cancelLabel="Go back"
+        confirmLabel="Delete them"
+        pending={deleteAll.isPending}
+        onConfirm={() => deleteAll.mutate(notSeen)}
       />
     </Card>
   );

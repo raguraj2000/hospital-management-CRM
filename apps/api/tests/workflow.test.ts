@@ -103,7 +103,7 @@ describe('prescription -> pharmacy', () => {
     const { queue } = await json(pharm('/api/b/main/pharmacy/queue'));
     const res = await pharm('/api/b/main/pharmacy/dispense', { method: 'POST', body: { visitId: v.id, itemIds: [queue[0].items[0].id], paymentMode: 'cash' } });
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toContain('Paracetamol (need 9, have 4)');
+    expect((await res.json()).error).toContain('Paracetamol (need 9, only 4 in date for the whole 3-day course)');
     expect((await json(pharm(`/api/b/main/medicines/${para}/batches`))).batches[0].quantity).toBe(4);
     expect((await json(pharm('/api/b/main/pharmacy/queue'))).queue).toHaveLength(1);
   });

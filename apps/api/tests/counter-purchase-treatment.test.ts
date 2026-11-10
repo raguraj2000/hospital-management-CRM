@@ -58,7 +58,7 @@ describe("a purchase line as on the vendor's invoice", () => {
   it('turns packs + free packs into units, adds GST to what is owed, and sets the price only when asked', async () => {
     const w = await world();
     const { id: vendorId } = await json(w.pharm('/api/b/main/vendors', { method: 'POST', body: { name: 'City Medicals' } }));
-    const { id: syrup } = await json(w.pharm('/api/b/main/medicines', { method: 'POST', body: { name: 'Cough syrup', form: 'syrup', pricePaise: 0 } }));
+    const { id: syrup } = await json(w.pharm('/api/b/main/medicines', { method: 'POST', body: { name: 'Cough syrup', form: 'syrup', pricePaise: 4500 } }));
     const res = await w.pharm('/api/b/main/purchases', {
       method: 'POST',
       body: {
@@ -80,7 +80,7 @@ describe("a purchase line as on the vendor's invoice", () => {
     expect(bill.lines[1]).toMatchObject({ quantity: 3, amountPaise: 18000, unitCostPaise: 6000, packSize: 1, packQty: 3, freeQty: 0, ratePaise: 6000, mrpPaise: null, gstPercent: 0 });
     const meds = (await json(w.pharm('/api/b/main/medicines'))).medicines;
     expect(meds.find((m: any) => m.id === w.para)).toMatchObject({ stock: 270, pricePaise: 890 });
-    expect(meds.find((m: any) => m.id === syrup)).toMatchObject({ stock: 3, pricePaise: 0 });
+    expect(meds.find((m: any) => m.id === syrup)).toMatchObject({ stock: 3, pricePaise: 4500 }); // no selling price on the line: the price is left alone
     expect((await w.pharm('/api/b/main/purchases', { method: 'POST', body: { vendorId, billDate: day(), lines: [{ medicineId: w.para, batchNo: 'X', expiryDate: day(90), quantity: 1, unitCostPaise: 100, packSize: 0 }] } })).status).toBe(400);
   });
 });

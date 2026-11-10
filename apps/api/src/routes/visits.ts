@@ -11,6 +11,9 @@ import {
   visitInputSchema,
   visitSendSchema,
   visitUpdateSchema,
+  visitsChangeDoctorSchema,
+  visitsDeleteSchema,
+  type VisitsBulkResult,
   type LeftOpenVisit,
   type OpVisitRow,
   type VisitCallNextResponse,
@@ -19,7 +22,7 @@ import {
   type VisitSendResponse,
 } from '@platform/shared';
 import { AppError, nextNumber, notFound, requireAnyPermission, requireModule, requirePermission, validationError, writeAudit, type BranchEnv, type Db } from '@platform/core';
-import { labOrder, labTest, opBill, opVisit, patient, pharmacySale, prescriptionItem, user, visitCharge } from '../db/schema.js';
+import { labOrder, labTest, opBill, opVisit, patient, pharmacySale, prescriptionItem, treatmentCourse, user, visitCharge, visitInstruction } from '../db/schema.js';
 import { balanceDueOf, settledAtCounter, withToken, assertPatientActive } from '../lib/clinic.js';
 import { feeSlots, visitFee } from './billing.js';
 import { testsToOrder } from './lab.js';
@@ -315,7 +318,10 @@ export function createVisitRoutes(db: Db) {
     const [bill] = await d.select({ id: opBill.id }).from(opBill).where(and(eq(opBill.branchId, branchId), eq(opBill.visitId, v.id))).limit(1);
     const [sale] = await d.select({ id: pharmacySale.id }).from(pharmacySale).where(and(eq(pharmacySale.branchId, branchId), eq(pharmacySale.visitId, v.id))).limit(1);
     const [charge] = await d.select({ id: visitCharge.id }).from(visitCharge).where(and(eq(visitCharge.branchId, branchId), eq(visitCharge.visitId, v.id), isNull(visitCharge.deletedAt))).limit(1);
-    return !bill && !sale && !charge;
+    // A treatment course started on it, or a nursing instruction written on it, is work too.
+    const [course] = await d.select({ id: treatmentCourse.id }).from(treatmentCourse).where(and(eq(treatmentCourse.branchId, branchId), eq(treatmentCourse.visitId, v.id), isNull(treatmentCourse.deletedAt))).limit(1);
+    const [instruction] = await d.select({ id: visitInstruction.id }).from(visitInstruction).where(and(eq(visitInstruction.branchId, branchId), eq(visitInstruction.visitId, v.id), isNull(visitInstruction.deletedAt))).limit(1);
+    return !bill && !sale && !charge && !course && !instruction;
   }
 
   const LEFT_OPEN = ['waiting', 'with_doctor', 'at_lab'] as const;
@@ -386,6 +392,82 @@ export function createVisitRoutes(db: Db) {
     });
     const res: VisitCallNextResponse = { visit: await findVisit(b.id, done.id), previous: done.previousId != null ? await findVisit(b.id, done.previousId) : null, reason: done.reason };
     return c.json(res);
+  });
+
+  /**
+   * The selected visits (any day). An id of another branch, a deleted visit or an unknown id makes the whole
+   * request a 404, exactly like asking for that one visit.
+   */
+  async function selectedVisits(tx: Tx, branchId: number, ids: number[]) {
+    const unique = [...new Set(ids)];
+    const rows = await withProgress(tx, branchId, await selectVisits(tx).where(and(visitInBranch(branchId), inArray(opVisit.id, unique))).orderBy(opVisit.id));
+    if (rows.length !== unique.length) throw notFound('Visit not found');
+    return rows;
+  }
+  const skip = (v: OpVisitRow, reason: string): VisitsBulkResult['skipped'][number] => ({ id: v.id, opNo: v.opNo, patientName: v.patientName, reason });
+
+  /**
+   * The doctor had to leave: move the selected visits to another doctor in one step (BUSINESS-RULES.md, "Doctor
+   * absent"). Only patients the doctor has not finished: waiting, inside, or at the lab. A patient inside goes back
+   * to waiting for the new doctor, as when the doctor of one visit is changed.
+   */
+  app.post('/visits/change-doctor', requirePermission('patient.edit'), async (c) => {
+    const parsed = visitsChangeDoctorSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const to = parsed.data.doctorUserId;
+    await assertDoctor(b.id, to);
+    const result = await db.transaction(async (tx) => {
+      const out: VisitsBulkResult = { done: [], skipped: [] };
+      for (const v of await selectedVisits(tx, b.id, parsed.data.visitIds)) {
+        if (!(LEFT_OPEN as readonly string[]).includes(v.status)) {
+          out.skipped.push(skip(v, v.status === 'at_counter' ? 'The doctor already saw this patient' : v.status === 'completed' ? 'Already completed' : 'Cancelled'));
+          continue;
+        }
+        if (v.doctorUserId === to) {
+          out.skipped.push(skip(v, 'Already with this doctor'));
+          continue;
+        }
+        const status = v.status === 'with_doctor' ? 'waiting' : v.status;
+        await tx.update(opVisit).set({ doctorUserId: to, status, updatedAt: new Date().toISOString() }).where(and(visitInBranch(b.id), eq(opVisit.id, v.id)));
+        await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'update', entity: 'op_visit', entityId: v.id, detail: { doctorUserId: to, from: v.doctorUserId, many: true, ...(status !== v.status ? { status } : {}) } });
+        out.done.push(v.id);
+      }
+      return out;
+    });
+    return c.json(result);
+  });
+
+  /**
+   * Delete the selected visits in one step (doctor left; the day is over). Only visits where nothing was done yet
+   * (see `untouched`): a visit with work on it is never deleted -- it is moved to another doctor instead.
+   * Deleting is soft (deleted_at), like deleting one visit.
+   */
+  app.post('/visits/delete', requirePermission('patient.delete'), async (c) => {
+    const parsed = visitsDeleteSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) throw validationError(parsed.error);
+    const b = c.get('branch');
+    const u = c.get('user');
+    const result = await db.transaction(async (tx) => {
+      const out: VisitsBulkResult = { done: [], skipped: [] };
+      const now = new Date().toISOString();
+      for (const v of await selectedVisits(tx, b.id, parsed.data.visitIds)) {
+        if (v.status === 'completed') {
+          out.skipped.push(skip(v, 'Completed visits are kept'));
+          continue;
+        }
+        if (!(await untouched(tx, b.id, v))) {
+          out.skipped.push(skip(v, 'Work was done on it (tests, medicines, charges or a bill): move it to another doctor instead'));
+          continue;
+        }
+        await tx.update(opVisit).set({ deletedAt: now }).where(and(visitInBranch(b.id), eq(opVisit.id, v.id)));
+        await writeAudit(tx, { organizationId: u.organizationId, branchId: b.id, userId: u.id, action: 'delete', entity: 'op_visit', entityId: v.id, detail: { opNo: v.opNo, many: true } });
+        out.done.push(v.id);
+      }
+      return out;
+    });
+    return c.json(result);
   });
 
   // The doctor's "what next?": to the lab, to the pharmacy / billing counter, or back to waiting. callNext also calls that doctor's next patient in.

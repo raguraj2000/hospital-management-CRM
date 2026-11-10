@@ -108,7 +108,7 @@ describe('direct sale', () => {
     const syrup = await medicine(pharm, 'main', 'Cough syrup', 9000, [{ batchNo: 'S1', days: 100, quantity: 3 }]);
     const res = await sell(pharm, 'main', { items: [{ medicineId: para, quantity: 5 }, { medicineId: syrup, quantity: 4 }], paymentMode: 'cash' });
     expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ code: 'out_of_stock', error: expect.stringContaining('Cough syrup (need 4, have 3)') });
+    expect(await res.json()).toMatchObject({ code: 'out_of_stock', error: expect.stringContaining('Cough syrup (need 4, only 3 in date after today)') });
     expect(await batchesOf(pharm, para)).toEqual([['B1', 20]]);
     expect(await batchesOf(pharm, syrup)).toEqual([['S1', 3]]);
     expect(await t.db.select().from(pharmacySale)).toEqual([]);

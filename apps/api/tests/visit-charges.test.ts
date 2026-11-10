@@ -167,6 +167,6 @@ describe('visit charges', () => {
     expect((await json(owner('/api/b/east/billing/settings'))).chargePresets).toEqual([]);
     // Saving only the fee leaves the list alone.
     await owner('/api/b/main/billing/settings', { method: 'PUT', body: { consultationFeePaise: 25000 } });
-    expect(await json(owner('/api/b/main/billing/settings'))).toEqual({ consultationFeePaise: 25000, feeSlots: [], chargePresets: [{ name: 'Dressing', amountPaise: 15000 }], navCounts: true });
+    expect(await json(owner('/api/b/main/billing/settings'))).toEqual({ consultationFeePaise: 25000, feeSlots: [], chargePresets: [{ name: 'Dressing', amountPaise: 15000 }], navCounts: true, labPrintBeforePayment: false });
   });
 });

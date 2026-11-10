@@ -24,7 +24,7 @@ import { AppError, forbidden, notFound, printHeaderOf, requireAnyPermission, val
 import { branchMember, labOrder, opBill, opVisit, patient, pharmacySale, prescriptionItem, role, user } from '../db/schema.js';
 import { sittingLabel } from './courses.js';
 import { localToday, settledAtCounter, visitsToCollect, withToken, assertPatientActive } from '../lib/clinic.js';
-import { billOf, consultationFee, createBill, pendingVisitCharges, visitFee, labPaymentState, payBill, unbilledLabOrders, updateBill } from './billing.js';
+import { billOf, consultationFee, createBill, pendingVisitCharges, visitFee, labPaymentState, payBill, putSaleOnBill, unbilledLabOrders, updateBill } from './billing.js';
 import { dispenseItems, prescriptionLines, saleDetail } from './pharmacy.js';
 import { doctorsOf } from './doctors.js';
 
@@ -197,9 +197,16 @@ export function createCheckoutRoutes(db: Db) {
       const medicinesPaise = sale?.totalPaise ?? 0;
 
       // 3. The money: medicines in full, the rest on the bill(s), oldest first.
-      if (amountPaise < medicinesPaise) throw amountError(`Medicines (${formatRupees(medicinesPaise)}) must be paid in full`);
       if (amountPaise > billDuePaise + medicinesPaise) throw amountError(`Only ${formatRupees(billDuePaise + medicinesPaise)} is due`);
       let left = amountPaise - medicinesPaise;
+      // Not enough for the medicines (the patient cannot pay it all, or left): they go onto the visit's bill, so
+      // what is not paid stays a due of the patient like the rest of the bill (BUSINESS-RULES.md, medicines on dues).
+      if (sale && amountPaise < medicinesPaise) {
+        if (!canBill) throw amountError(`Medicines (${formatRupees(medicinesPaise)}) must be paid in full here. The billing counter can leave the rest as a due.`);
+        await putSaleOnBill(tx, b.id, u, v, sale, today);
+        bills = await billsOfVisit(tx, b.id, v.id);
+        left = amountPaise;
+      }
       const paidBills: CheckoutResult['paidBills'] = [];
       for (const bill of bills) {
         const pay = Math.min(left, bill.balancePaise);

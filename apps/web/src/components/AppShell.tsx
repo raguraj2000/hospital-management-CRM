@@ -202,6 +202,7 @@ export function AppShell() {
       </Menu>
     );
 
+  // On a computer the theme is in the side menu; the user menu keeps it only on a phone (no side menu there).
   const userMenu = (side: 'top' | 'bottom') => (
     <MenuContent
       side={side}
@@ -216,17 +217,21 @@ export function AppShell() {
         </div>
       </MenuLabel>
       <MenuSeparator />
-      <MenuLabel>Theme</MenuLabel>
-      {THEMES.map((t) => (
-        <MenuCheckItem
-          key={t.value}
-          checked={theme === t.value}
-          onSelect={() => setTheme(t.value)}
-        >
-          <t.icon className='size-4 text-muted' /> {t.label}
-        </MenuCheckItem>
-      ))}
-      <MenuSeparator />
+      {side === 'bottom' && (
+        <>
+          <MenuLabel>Theme</MenuLabel>
+          {THEMES.map((t) => (
+            <MenuCheckItem
+              key={t.value}
+              checked={theme === t.value}
+              onSelect={() => setTheme(t.value)}
+            >
+              <t.icon className='size-4 text-muted' /> {t.label}
+            </MenuCheckItem>
+          ))}
+          <MenuSeparator />
+        </>
+      )}
       <MenuItem onSelect={() => setShortcutHelp(true)}>
         <Keyboard /> Keyboard shortcuts
       </MenuItem>
@@ -311,6 +316,29 @@ export function AppShell() {
           </div>
         )}
         <div className='border-t border-border p-3'>
+          {/* Theme: three small icons in one line (Auto · Light · Dark), so it costs almost no space. */}
+          <div role='radiogroup' aria-label='Theme' className='mb-2 flex items-center justify-between px-1.5'>
+            <span className='text-xs text-muted'>Theme</span>
+            <span className='flex rounded-md border border-border bg-subtle p-0.5'>
+              {THEMES.map((t) => (
+                <button
+                  key={t.value}
+                  type='button'
+                  role='radio'
+                  aria-checked={theme === t.value}
+                  aria-label={t.label}
+                  title={t.label}
+                  onClick={() => setTheme(t.value)}
+                  className={cn(
+                    'flex h-6 w-7 items-center justify-center rounded transition-colors',
+                    theme === t.value ? 'bg-surface text-brand shadow-sm' : 'text-muted hover:text-ink',
+                  )}
+                >
+                  <t.icon className='size-3.5' />
+                </button>
+              ))}
+            </span>
+          </div>
           <Menu>
             <MenuTrigger asChild>
               <button className='flex w-full items-center gap-2.5 rounded-lg p-1.5 text-left transition-colors hover:bg-subtle data-[state=open]:bg-subtle'>
