@@ -172,7 +172,7 @@ VIEWS = {
     "kitchen":     {"label": "Kitchen", "eye": (34.2, 11.8, 5.2), "look": (37.5, 1.0, 3.0), "lens": 16},
     "store_room":  {"label": "Store Room (NE)", "eye": (7.8, 11.8, 5.2), "look": (1.5, 1.5, 3.5), "lens": 16},
     "store1":      {"label": "Store 1", "eye": (5.75, 37.0, 5.2), "look": (5.75, 21.5, 4.0), "lens": 16},
-    "store3":      {"label": "Store 3", "eye": (29.5, 37.0, 5.2), "look": (24.0, 22.0, 4.0), "lens": 16},
+    "store3":      {"label": "Store 3", "eye": (26.9, 37.3, 5.3), "look": (26.6, 21.5, 3.6), "lens": 16},
     "foot_path":   {"label": "West Foot Path", "eye": (38.8, 41.5, 5.2), "look": (0.0, 39.0, 4.0), "lens": 22},
     "street":      {"label": "Road side (outside)", "eye": (70.0, 75.0, GROUND + 5.5), "look": (22.0, 30.0, 6.0), "lens": 22},
     "aerial":      {"label": "Aerial cutaway", "eye": (75.0, 75.0, 55.0), "look": (22.0, 22.0, 0.0), "lens": 30,
