@@ -1,0 +1,16 @@
+{
+  "name": "floor-plan-3d",
+  "private": true,
+  "type": "module",
+  "description": "First Floor Plan v5 -> walkable 3D model (Blender build + Three.js viewer). Not part of the clinic app.",
+  "scripts": {
+    "build:viewer": "esbuild viewer/src/main.js --bundle --minify --format=esm --target=es2020 --outfile=viewer/app.js",
+    "serve": "node serve.mjs",
+    "shots": "node shots.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "three": "0.187.0",
+    "three-mesh-bvh": "^0.9.18"
+  }
+}
