@@ -2,3 +2,4 @@ build/
 *.blend
 *.blend1
 renders/web/
+__pycache__/
