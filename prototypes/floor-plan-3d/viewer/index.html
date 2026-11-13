@@ -40,6 +40,16 @@
   #loading .box { width: min(320px, 80vw); text-align: center; }
   #prog { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 10px; }
   #prog div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .side { left: 12px; padding: 10px 12px; display: grid; gap: 8px; max-width: min(300px, calc(100vw - 24px)); }
+  #layers { top: 124px; }
+  #editp { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 116px); }
+  #layerList { display: grid; gap: 4px; }
+  #layerList label { display: flex; gap: 8px; align-items: center; min-height: 30px; cursor: pointer; }
+  #layerList input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row button { min-height: 36px; padding: 6px 10px; }
+  button:disabled { opacity: .45; cursor: default; }
+  [hidden] { display: none !important; }
   #joy { position: fixed; width: 110px; height: 110px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35);
     background: rgba(255,255,255,.06); display: none; pointer-events: none; transform: translate(-50%, -50%); }
   #joy i { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
@@ -52,7 +62,6 @@
     #room { font-size: 15px; }
     button, select { padding: 6px 9px; min-height: 38px; font-size: 13px; }
     select { max-width: 112px; }
-    #bar { flex-wrap: nowrap; }
     #hud h1 { display: none; }
     #help { display: none; }
   }
@@ -73,7 +82,18 @@
   <button id="bWalk" aria-pressed="true">Walk</button>
   <button id="bOver" aria-pressed="false">Overview</button>
   <select id="goto" aria-label="Go to"></select>
-  <button id="bHQ" aria-pressed="true" title="Ambient occlusion + sun shadows">HQ</button>
+  <button id="bHQ" aria-pressed="true" title="Ambient occlusion, bloom and sun shadows">HQ</button>
+  <button id="bEdit" aria-pressed="false">Edit</button>
+  <button id="bLayers" aria-pressed="false">Layers</button>
+</div>
+<div id="layers" class="panel side" hidden>
+  <strong>Layers</strong>
+  <div id="layerList"></div>
+</div>
+<div id="editp" class="panel side" hidden>
+  <strong id="selName">Tap an object to select it</strong>
+  <div class="row"><button id="bRot">Rotate 90°</button><button id="bDel">Remove</button><button id="bHome">Put back</button></div>
+  <div class="row"><button id="bRestore">Restore all (<span id="nRemoved">0</span> removed)</button><button id="bCopy">Copy layout</button></div>
 </div>
 <div id="joy"><i></i></div>
 <div id="loading"><div class="box"><div>Loading 3D model…</div><div id="prog"><div></div></div></div></div>

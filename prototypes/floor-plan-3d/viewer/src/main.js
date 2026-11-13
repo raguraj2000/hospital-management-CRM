@@ -9,6 +9,8 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -19,6 +21,8 @@ const FT = 0.3048;
 const EYE = 1.6;          // eye height (m)
 const RADIUS = 0.22;      // body radius (m)
 const STEP = 0.45;        // max step-up (m)
+const LM_RANGE = 3.0;     // lightmaps store sRGB(irradiance / LM_RANGE)  (see build_blender.py)
+const STORE_KEY = 'firstfloor3d-v1';
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
 const $ = (id) => document.getElementById(id);
@@ -36,7 +40,7 @@ async function main() {
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.AgXToneMapping;
-  renderer.toneMappingExposure = 1.25;
+  renderer.toneMappingExposure = 1.45;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -51,7 +55,7 @@ async function main() {
   camera.rotation.order = 'YXZ';
 
   // ------------------------------------------------------------- lights ----
-  const hemi = new THREE.HemisphereLight(0xdfe8f2, 0x8a7a66, 0.55);
+  const hemi = new THREE.HemisphereLight(0xfff1e0, 0x9a8a78, 0.9);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff0dc, 2.6);
   // afternoon sun from the west-south-west (road side), same as the Blender stills
@@ -103,29 +107,75 @@ async function main() {
     });
   }
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
+  // baked global illumination: one atlas per group, sampled through the 2nd UV set
+  const lmTex = {};
+  await Promise.all(['WALL', 'FLOOR', 'CEIL'].map(async (g) => {
+    try {
+      const t = await new THREE.TextureLoader().loadAsync(`lm_${g}.jpg`);
+      t.flipY = false; t.channel = 1; t.colorSpace = THREE.SRGBColorSpace;
+      t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
+      lmTex[g] = t;
+    } catch { /* no bake available: fall back to realtime lighting */ }
+  }));
+  const baked = Object.keys(lmTex).length > 0;
+  const items = new Map();       // id -> { id, node, label, layer, home: {pos, rotY}, meshes: [] }
+  const shellMats = new Set();   // materials faded by the X-ray toggle
+  const itemOf = (o) => { for (let p = o; p; p = p.parent) if (p.name?.startsWith('ITEM__')) return p; return null; };
+  gltf.scene.traverse((o) => {
+    if (o.name?.startsWith('ITEM__') && !o.isMesh) {
+      const id = o.name.slice(6);
+      items.set(id, { id, node: o, label: o.userData.label || id, layer: o.userData.layer || 'furniture',
+        home: { pos: o.position.clone(), rotY: o.rotation.y }, meshes: [] });
+    }
+  });
   gltf.scene.traverse((o) => {
     if (!o.isMesh) return;
     const cat = (o.name || '').split('__')[0];
     const mname = o.material?.name || '';
+    const it = itemOf(o);
+    if (it) items.get(it.name.slice(6))?.meshes.push(o);
     meshes.push(o);
-    o.castShadow = !['FLOOR', 'SITE', 'LIGHT', 'DECO', 'GLASS'].includes(cat);
+    o.castShadow = !['FLOOR', 'SITE', 'LIGHT', 'DECO', 'GLASS', 'MEP', 'ELEC', 'FCEIL'].includes(cat);
     o.receiveShadow = cat !== 'LIGHT' && cat !== 'GLASS';
-    const m = o.material;
+    let m = o.material;
     for (const k of ['map', 'normalMap']) if (m[k]) m[k].anisotropy = maxAniso;
+    if (o.userData.lm && lmTex[o.userData.lm]) {
+      // shell surfaces: albedo x baked light (unlit), so the soft bounce light and downlight scallops come from Cycles
+      m = o.material = new THREE.MeshBasicMaterial({ name: mname, map: m.map, color: m.color,
+        lightMap: lmTex[o.userData.lm], lightMapIntensity: LM_RANGE * Math.PI });
+    }
     if (mname.startsWith('glass')) {
-      o.material = new THREE.MeshStandardMaterial({
+      m = o.material = new THREE.MeshStandardMaterial({
         color: mname === 'glass' ? 0xcfe3ea : 0xe8eef0, roughness: mname === 'glass' ? 0.05 : 0.4, metalness: 0,
         transparent: true, opacity: mname === 'glass' ? 0.16 : 0.65, depthWrite: false, envMapIntensity: 1.2,
       });
       o.castShadow = false;
     }
     if (mname === 'mirror') { m.metalness = 1; m.roughness = 0.02; m.envMapIntensity = 1.5; }
-    if (cat === 'LIGHT') { m.toneMapped = false; m.emissiveIntensity = Math.min(m.emissiveIntensity ?? 1, 1.6); }
+    if (cat === 'LIGHT') { m.emissiveIntensity = mname === 'cove' ? 2.2 : 2.6; }
     if (['WALL', 'FURN', 'DOOR', 'GLASS'].includes(cat)) colliders.push(o);
     if (['FLOOR', 'SITE'].includes(cat)) floors.push(o);
-    if (['CEIL', 'UPPER'].includes(cat)) hideInOverview.push(o);
+    if (['CEIL', 'UPPER'].includes(cat) && !it) hideInOverview.push(o);
+    if (['WALL', 'CEIL', 'FCEIL', 'DOOR'].includes(cat) || (cat === 'FLOOR' && !it)) shellMats.add(m);
     o.userData.cat = cat;
   });
+  // soft contact shadow under each piece of furniture (it moves with the piece)
+  const blob = blobTexture();
+  for (const it of items.values()) {
+    if (it.layer !== 'furniture') continue;
+    const box = new THREE.Box3().setFromObject(it.node);
+    const sz = box.getSize(new THREE.Vector3());
+    if (box.min.y > 0.25 || box.min.y < -0.2 || sz.y < 0.12) continue;
+    const q = new THREE.Mesh(new THREE.PlaneGeometry(sz.x + 0.3, sz.z + 0.3),
+      new THREE.MeshBasicMaterial({ map: blob, transparent: true, opacity: 0.55, depthWrite: false, color: 0x000000,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    q.rotation.x = -Math.PI / 2;
+    q.position.y = 0.012 - (box.min.y - 0.01);
+    q.position.y = 0.012;
+    q.renderOrder = 1;
+    q.userData.cat = 'SHADOW';
+    it.node.add(q);
+  }
   scene.add(gltf.scene);
   for (const o of [...colliders, ...floors]) o.geometry.computeBoundsTree();
   $('loading').style.display = 'none';
@@ -137,6 +187,8 @@ async function main() {
   gtao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.5, thickness: 1.2, scale: 1.0, samples: 12 });
   gtao.blendIntensity = 0.85;
   composer.addPass(gtao);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.22, 0.55, 0.92);
+  composer.addPass(bloom);
   composer.addPass(new OutputPass());
   let hq = params.has('hq') ? params.get('hq') !== '0' : !coarse;
   const setHQ = (on) => {
@@ -190,6 +242,8 @@ async function main() {
     $('bWalk').setAttribute('aria-pressed', String(m === 'walk'));
     $('bOver').setAttribute('aria-pressed', String(m === 'overview'));
     for (const o of hideInOverview) o.visible = m === 'walk';
+    for (const it of items.values()) if (it.layer === 'false_ceiling') it.node.visible = m === 'walk' && layerOn.false_ceiling && !(edits[it.id] || {}).hidden;
+    refreshColliders();
     orbit.enabled = m === 'overview';
     $('cross').style.display = m === 'walk' ? 'block' : 'none';
     $('labels').style.display = m === 'overview' ? 'block' : 'none';
@@ -218,11 +272,14 @@ async function main() {
     const y = floorAt(feet, force ? 3.5 : STEP + 0.05);
     if (y !== null) feet.y = y;
   }
+  let activeColliders = colliders;
+  const shown = (o) => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
+  function refreshColliders() { activeColliders = colliders.filter(shown); }
   function blocked(from, dir, dist) {
     for (const h of [0.35, 1.0, 1.5]) {
       ray.set(new THREE.Vector3(from.x, from.y + h, from.z), dir);
       ray.far = dist + RADIUS;
-      if (ray.intersectObjects(colliders, false).length) return true;
+      if (ray.intersectObjects(activeColliders, false).length) return true;
     }
     return false;
   }
@@ -251,7 +308,7 @@ async function main() {
   let joy = null;           // touch joystick {id, x0, y0, dx, dy}
   const joyEl = $('joy');
   canvas.addEventListener('click', () => {
-    if (mode === 'walk' && !coarse && !document.pointerLockElement && canvas.requestPointerLock) {
+    if (mode === 'walk' && !editMode && !coarse && !document.pointerLockElement && canvas.requestPointerLock) {
       try { canvas.requestPointerLock(); } catch { /* not allowed */ }
     }
   });
@@ -261,8 +318,10 @@ async function main() {
       pitch = THREE.MathUtils.clamp(pitch - e.movementY * 0.0023, -1.35, 1.35);
     }
   });
+  let tap = null;
   canvas.addEventListener('pointerdown', (e) => {
-    if (mode !== 'walk' || document.pointerLockElement) return;
+    tap = { x: e.clientX, y: e.clientY };
+    if (mode !== 'walk' || document.pointerLockElement || tc.dragging || tc.axis) return;
     if (e.pointerType === 'touch' && e.clientX < innerWidth * 0.45 && !joy) {
       joy = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 };
       Object.assign(joyEl.style, { display: 'block', left: `${e.clientX}px`, top: `${e.clientY}px` });
@@ -286,6 +345,8 @@ async function main() {
     }
   });
   const endPtr = (e) => {
+    if (editMode && tap && e.type === 'pointerup' && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 6 && !tc.dragging) pick(e);
+    tap = null;
     if (joy && e.pointerId === joy.id) { joy = null; joyEl.style.display = 'none'; joyEl.firstChild.style.transform = ''; }
     if (drag && e.pointerId === drag.id) drag = null;
   };
@@ -301,6 +362,90 @@ async function main() {
     const h = ray.intersectObjects(floors, false)[0];
     if (h) { feet.copy(h.point); setMode('walk'); }
   });
+
+  // ------------------------------------------------------------- layers + editing ---
+  const LAYERS = [['furniture', 'Furniture'], ['false_ceiling', 'False ceiling'], ['water', 'Water lines'],
+    ['electrical', 'Electric lines'], ['xray', 'X-ray walls']];
+  const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; } })();
+  const layerOn = Object.assign({ furniture: true, false_ceiling: true, water: false, electrical: false, xray: false }, saved.layers);
+  const edits = saved.edits || {};      // id -> { dx, dz, r, hidden }
+  const persist = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify({ layers: layerOn, edits })); } catch { /* private mode */ } };
+  let editMode = false, selected = null;
+  const tc = new TransformControls(camera, canvas);
+  tc.setMode('translate'); tc.showY = false; tc.setSize(0.9);
+  scene.add(tc.getHelper());
+  const selBox = new THREE.BoxHelper(new THREE.Object3D(), 0xe0a458);
+  selBox.visible = false;
+  scene.add(selBox);
+  tc.addEventListener('dragging-changed', (e) => {
+    orbit.enabled = mode === 'overview' && !e.value;
+    if (!e.value && selected) { recordEdit(selected); refreshColliders(); }
+  });
+
+  function applyState() {
+    for (const it of items.values()) {
+      const e = edits[it.id] || {};
+      it.node.position.set(it.home.pos.x + (e.dx || 0), it.home.pos.y, it.home.pos.z + (e.dz || 0));
+      it.node.rotation.y = it.home.rotY + (e.r || 0);
+      it.node.visible = !!layerOn[it.layer] && !e.hidden;
+    }
+    for (const m of shellMats) {
+      m.transparent = layerOn.xray; m.opacity = layerOn.xray ? 0.22 : 1; m.depthWrite = !layerOn.xray; m.needsUpdate = true;
+    }
+    for (const [k] of LAYERS) { const c = $('ly_' + k); if (c) c.checked = !!layerOn[k]; }
+    $('nRemoved').textContent = Object.values(edits).filter((e) => e.hidden).length;
+    refreshColliders();
+  }
+  function recordEdit(it) {
+    const e = edits[it.id] || (edits[it.id] = {});
+    e.dx = it.node.position.x - it.home.pos.x; e.dz = it.node.position.z - it.home.pos.z; e.r = it.node.rotation.y - it.home.rotY;
+    persist();
+  }
+  function select(it) {
+    selected = it;
+    if (it) { tc.attach(it.node); selBox.setFromObject(it.node); selBox.visible = true; $('selName').textContent = it.label; }
+    else { tc.detach(); selBox.visible = false; $('selName').textContent = 'Tap an object to select it'; }
+    for (const b of ['bRot', 'bDel', 'bHome']) $(b).disabled = !it;
+  }
+  function pick(e) {
+    const ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    ray.far = 200;
+    const pool = [];
+    for (const it of items.values()) if (it.node.visible) pool.push(...it.meshes);
+    const blockers = layerOn.xray ? [] : meshes.filter((m) => !itemOf(m) && shown(m) && ['WALL', 'CEIL', 'DOOR'].includes(m.userData.cat));
+    const h = ray.intersectObjects([...pool, ...blockers], false)[0];
+    const node = h && itemOf(h.object);
+    select(node ? items.get(node.name.slice(6)) : null);
+  }
+  function setEdit(on) {
+    editMode = on;
+    $('bEdit').setAttribute('aria-pressed', String(on));
+    $('editp').hidden = !on;
+    if (on && document.pointerLockElement) document.exitPointerLock();
+    if (!on) select(null);
+    setHelp();
+  }
+  $('bEdit').onclick = () => setEdit(!editMode);
+  $('bLayers').onclick = () => { $('layers').hidden = !$('layers').hidden; $('bLayers').setAttribute('aria-pressed', String(!$('layers').hidden)); };
+  $('layerList').innerHTML = LAYERS.map(([k, l]) => `<label><input type="checkbox" id="ly_${k}"> ${l}</label>`).join('');
+  for (const [k] of LAYERS) {
+    $('ly_' + k).onchange = (ev) => {
+      layerOn[k] = ev.target.checked;
+      if ((k === 'water' || k === 'electrical') && ev.target.checked) layerOn.xray = true;   // concealed services: see through the walls
+      if (selected && !layerOn[selected.layer]) select(null);
+      applyState(); persist();
+    };
+  }
+  $('bRot').onclick = () => { if (selected) { selected.node.rotation.y += Math.PI / 2; recordEdit(selected); refreshColliders(); } };
+  $('bDel').onclick = () => { if (selected) { (edits[selected.id] || (edits[selected.id] = {})).hidden = true; select(null); applyState(); persist(); } };
+  $('bHome').onclick = () => { if (selected) { delete edits[selected.id]; applyState(); persist(); selBox.setFromObject(selected.node); } };
+  $('bRestore').onclick = () => { for (const k of Object.keys(edits)) delete edits[k]; select(null); applyState(); persist(); };
+  $('bCopy').onclick = async () => {
+    const txt = JSON.stringify({ layers: layerOn, edits }, null, 1);
+    try { await navigator.clipboard.writeText(txt); $('bCopy').textContent = 'Copied'; } catch { $('bCopy').textContent = 'Copy failed'; }
+    setTimeout(() => { $('bCopy').textContent = 'Copy layout'; }, 1500);
+  };
 
   // ------------------------------------------------------------- UI --------
   $('bWalk').onclick = () => setMode('walk');
@@ -318,7 +463,9 @@ async function main() {
     sel.blur();
   };
   function setHelp() {
-    $('help').textContent = mode === 'walk'
+    $('help').textContent = editMode
+      ? 'Edit: tap an object to select it · drag the arrows to move · Rotate / Remove in the panel · changes are saved on this device'
+      : mode === 'walk'
       ? (coarse ? 'Left thumb: move · right side: look · tap the map to jump'
         : 'Click to look with the mouse · WASD / arrows to walk · Shift to run · Esc to free the mouse · O = overview')
       : 'Drag to orbit · scroll / pinch to zoom · double-click a floor or a label to walk there';
@@ -461,6 +608,7 @@ async function main() {
         l.el.style.left = '0'; l.el.style.top = '0';
       }
     }
+    if (selected) selBox.update();
     if (hq) composer.render(); else renderer.render(scene, camera);
     drawMap();
     updateHud();
@@ -474,15 +622,34 @@ async function main() {
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
     composer.setSize(innerWidth, innerHeight);
+    bloom.setSize(innerWidth, innerHeight);
   });
 
-  window.__viewer = { gotoView, gotoRoom, setMode, setHQ, feet, plan };
+  applyState();
+  select(null);
+  if (params.get('layers')) { for (const k of params.get('layers').split(',')) layerOn[k] = true; if (layerOn.water || layerOn.electrical) layerOn.xray = true; applyState(); }
+  window.__viewer = { gotoView, gotoRoom, setMode, setHQ, setEdit, select, items, feet, plan };
   if (params.get('mode') === 'overview') setMode('overview');
   else gotoView(params.get('view') || plan.spawn);
   if (params.get('room')) gotoRoom(params.get('room'));
   setHelp();
   tick();
   window.__ready = true;
+}
+
+function blobTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  // rounded-rectangle falloff: opaque in the middle, fading to the edges
+  const img = g.createImageData(128, 128);
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+    const dx = Math.max(0, Math.abs(x - 63.5) / 63.5 - 0.62) / 0.38, dy = Math.max(0, Math.abs(y - 63.5) / 63.5 - 0.62) / 0.38;
+    const a = Math.max(0, 1 - Math.hypot(dx, dy));
+    img.data.set([255, 255, 255, 255 * a * a], (y * 128 + x) * 4);
+  }
+  g.putImageData(img, 0, 0);
+  return new THREE.CanvasTexture(c);
 }
 
 function skyTexture() {

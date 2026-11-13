@@ -25,6 +25,8 @@ Then open `http://localhost:8090`. To host it, copy the `viewer/` folder to any 
   On a phone, use your left thumb as a joystick and drag on the right side to look.
 * **Overview**: a dollhouse view with the ceiling and upper floor hidden and labels showing each room's size. Click a label, or double-click a floor, to walk there.
 * **Minimap** (top right): drawn the same way as the PDF, with East at the top and North on the left. Tap it to jump to that spot.
+* **Edit**: tap any object (furniture, a false ceiling, a pipe run, a conduit circuit) to select it. Drag the arrows to move it, or use Rotate 90°, Remove and Put back. Restore all undoes everything. Changes are saved in the browser on that device, and Copy layout puts them on the clipboard as JSON.
+* **Layers**: turn Furniture, False ceiling, Water lines and Electric lines on or off. Turning on a services layer also turns on X-ray walls, because those lines are concealed.
 * **Go to…**: jumps to a named viewpoint or a room. **HQ** turns on ambient occlusion and sun shadows (on by default on desktop, off on phones).
 * URL options: `?view=kitchen`, `?room=store2`, `?mode=overview`, `?hq=0`.
 
@@ -41,7 +43,7 @@ python textures.py build/textures
 ```
 
 ```bash
-python build_blender.py --tex build/textures --glb viewer/model.glb --renders all --samples 64 --res 1280x720
+python build_blender.py --tex build/textures --glb viewer/model.glb --bake 72 --renders all --samples 64 --res 1280x720
 ```
 
 ```bash
@@ -55,6 +57,8 @@ npm install && npm run build:viewer
 ```bash
 node shots.mjs renders/web
 ```
+
+`--bake N` bakes the lighting of the fixed shell (walls, floors, ceilings, false ceilings) into `viewer/lm_WALL.jpg`, `lm_FLOOR.jpg` and `lm_CEIL.jpg` with Cycles, then denoises them. The viewer multiplies these onto the surfaces, which is where the soft bounce light, the cove glow and the downlight pools come from. Furniture is left out of the bake so it stays movable; it gets a soft contact shadow that moves with it.
 
 To change the building, edit `plan.py`, then rebuild. The viewer reads `plan.json` for room names, sizes and the minimap.
 
@@ -127,6 +131,32 @@ The drawing doesn't dimension opening positions. These were measured off the PDF
 9. **The common bath** at 3' × 5'6" fits a WC and a small wall basin only.
 10. **Store 3:** the left (north) half of the frontage is wall and the right half has a normal 3' door, as v5 states.
 11. **Furniture and finishes are illustrative.** They are sized to fit and to show that each room works. The stores and the store room get steel racks and cartons; the other rooms get residential finishes.
+
+## False ceiling, water lines and electric lines
+
+None of these are on the drawing. They are a proposal to discuss with the contractor, plumber and electrician, and each piece can be selected and removed in the viewer.
+
+**False ceiling** (gypsum):
+
+| Room | Type | Underside height |
+|---|---|---|
+| Main hall | 1'6" perimeter band with LED cove, 16 downlights, wood-finish centre | 9'3" (centre stays 10') |
+| Master bedroom | 1'6" perimeter band with LED cove, 9 downlights | 9'3" (centre stays 10') |
+| Kitchen | full flat board, 6 downlights | 9'1" |
+| Master bath, store room bath, common bath | full flat board, hides the pipes above | 8'6" |
+| Stores, store room | none (surface LED panels) | 10' |
+
+**Water lines** (blue = cold, red = hot, grey = drain):
+
+* The cold supply comes down from a terrace tank at the corner of the kitchen outside space. A main runs in the ceiling void along the hall's east wall, with a drop to each fixture.
+* Each of the two attached baths has a geyser with a short hot line to its shower. The master bath also has a hot line to the basin.
+* WCs and floor traps drain under the slab to vertical stacks: master bath and kitchen on the east face, store room bath on the north face, common bath beside the stair.
+
+**Electric lines** (orange conduit, white plates):
+
+* The distribution board is inside the main door. A trunk runs along the hall ceiling.
+* There is one circuit per room, running to the ceiling light points, then to a switchboard beside the door at 4'6", then to the sockets.
+* The stores have their own circuits, with switchboards beside the shutters.
 
 ## How the model was checked against the drawing
 
