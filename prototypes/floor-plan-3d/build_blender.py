@@ -12,6 +12,8 @@ Options:
     --renders LIST   comma list of camera names, or "all", or "none"
     --out DIR        render output folder (default renders/)
     --bake N         bake GI lightmaps (viewer/lm_*.jpg) with N samples; 0 = skip (default)
+    --panos LIST     render 360-degree equirect panoramas (ids from plan.PANOS, or "all") to viewer/pano/
+    --pano_res WxH   panorama size (default 4096x2048)   --pano_samples N (default 96)
     --samples N      Cycles samples (default 96)
     --res WxH        render size (default 1600x900)
 """
@@ -36,7 +38,8 @@ CEIL, SLAB = P.CEIL, P.SLAB
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
     a = {"tex": os.path.join(HERE, "build", "textures"), "glb": None, "blend": None, "renders": "none",
-         "out": os.path.join(HERE, "renders"), "samples": 96, "res": "1600x900", "bake": "0"}
+         "out": os.path.join(HERE, "renders"), "samples": 96, "res": "1600x900", "bake": "0",
+         "panos": "none", "pano_res": "4096x2048", "pano_samples": 96}
     i = 0
     while i < len(argv):
         k = argv[i].lstrip("-")
@@ -46,6 +49,8 @@ def parse_args():
         else:
             i += 1
     a["samples"] = int(a["samples"])
+    a["pano_samples"] = int(a["pano_samples"])
+    a["pano_res"] = tuple(int(x) for x in a["pano_res"].split("x"))
     a["res"] = tuple(int(x) for x in a["res"].split("x"))
     return a
 
@@ -1504,6 +1509,30 @@ def render_cam(name, out_dir, res):
     print("rendered", sc.render.filepath, flush=True)
 
 
+def render_pano(pid, eye, out_dir, res, samples):
+    """Path-traced equirectangular panorama. Image centre looks north (+Y), right of centre = east."""
+    sc = bpy.context.scene
+    cd = bpy.data.cameras.new("pano_" + pid)
+    cd.type = "PANO"
+    cd.panorama_type = "EQUIRECTANGULAR"
+    cd.clip_start = 0.02
+    co = bpy.data.objects.new("PANO_" + pid, cd)
+    sc.collection.objects.link(co)
+    co.location = W(*eye)
+    co.rotation_euler = (math.radians(90), 0, 0)
+    sc.camera = co
+    sc.cycles.samples = samples
+    sc.render.resolution_x, sc.render.resolution_y = res
+    sc.view_settings.exposure = 0.0
+    for o in bpy.data.objects:
+        o.hide_render = o.get("layer") in ("water", "electrical")
+    sc.render.image_settings.file_format = "JPEG"
+    sc.render.image_settings.quality = 92
+    sc.render.filepath = os.path.join(out_dir, pid + ".jpg")
+    bpy.ops.render.render(write_still=True)
+    print("pano", sc.render.filepath, flush=True)
+
+
 def main():
     clear_scene()
     sc = bpy.context.scene
@@ -1534,6 +1563,18 @@ def main():
         bake_lightmaps(os.path.dirname(ARGS["glb"]) if ARGS["glb"] else ARGS["out"], int(ARGS["bake"]))
     if ARGS["blend"]:
         bpy.ops.wm.save_as_mainfile(filepath=ARGS["blend"])
+    if ARGS["panos"] != "none":
+        pano_dir = os.path.join(HERE, "viewer", "pano")
+        os.makedirs(pano_dir, exist_ok=True)
+        setup_render(ARGS["res"], ARGS["samples"])
+        allp = {q["id"]: q["eye"] for q in getattr(P, "PANOS", [])}
+        ids = list(allp) if ARGS["panos"] == "all" else ARGS["panos"].split(",")
+        for pid in ids:
+            eye = allp.get(pid)
+            if eye is None and ":" in pid:      # ad-hoc "name:u:v:z"
+                pid, *xyz = pid.split(":")
+                eye = [float(x) for x in xyz]
+            render_pano(pid, eye, pano_dir if pid in allp else ARGS["out"], ARGS["pano_res"], ARGS["pano_samples"])
     if ARGS["renders"] != "none":
         os.makedirs(ARGS["out"], exist_ok=True)
         setup_render(ARGS["res"], ARGS["samples"])
