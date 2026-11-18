@@ -1318,7 +1318,7 @@ def clear_scene():
 
 
 LM_SIZE = {"WALL": 2048, "FLOOR": 2048, "CEIL": 1024}
-LM_RANGE = 3.0      # lightmaps are stored as sRGB(irradiance / LM_RANGE)
+LM_RANGE = 6.0      # lightmaps are stored as sRGB(irradiance / LM_RANGE)
 
 
 def pack_lightmaps():
@@ -1776,7 +1776,7 @@ def main():
         pano_dir = os.path.join(HERE, "viewer", "pano")
         os.makedirs(pano_dir, exist_ok=True)
         setup_render(ARGS["res"], ARGS["samples"])
-        allp = {q["id"]: q["eye"] for q in getattr(P, "PANOS", [])}
+        allp = {q["id"]: q["eye"] for q in P.panos_json()}
         ids = list(allp) if ARGS["panos"] == "all" else ARGS["panos"].split(",")
         for pid in ids:
             eye = allp.get(pid)
