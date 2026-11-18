@@ -9,7 +9,9 @@ textures.py       procedural textures (tiles, kota, wood, granite, fabric…) ma
 build_blender.py  Blender: geometry + materials + furniture + lights + cameras -> viewer/model.glb + renders/*.jpg
 compare.py        overlays the PDF's walls (red) on the top-down render -> renders/compare_plan.jpg
 viewer/           static web viewer (index.html, app.js bundle, model.glb, plan.json); host it anywhere
-viewer/src/       viewer source (Three.js + three-mesh-bvh, bundled with esbuild, no CDN)
+viewer/src/       viewer source (Three.js + three-mesh-bvh, bundled with esbuild, no CDN): main.js, pano.js (Photo mode)
+viewer/pano/      360° panoramas for Photo mode, one <id>.jpg per photo spot in plan.py PANOS
+tools/make_test_panos.py  placeholder panoramas (grid + compass letters) for testing Photo mode without Blender
 shots.mjs         headless screenshots of the viewer (Playwright)
 ```
 
@@ -19,16 +21,30 @@ shots.mjs         headless screenshots of the viewer (Playwright)
 node serve.mjs 8090
 ```
 
-Then open `http://localhost:8090`. To host it, copy the `viewer/` folder to any static host (it needs `model.glb`, `plan.json`, `app.js`, `index.html`).
+Then open `http://localhost:8090`. To host it, copy the `viewer/` folder to any static host (it needs `model.glb`, `plan.json`, `app.js`, `index.html`, and `pano/` for Photo mode).
 
-* **Walk** (default): on desktop, click to look with the mouse, use WASD or the arrow keys to move, Shift to run, Esc to release the mouse.
+* **Photo** (default when panoramas exist): path-traced 360° photos taken at fixed standing points. Drag to look, scroll or pinch to zoom, and click a ring on the floor (or press ↑ / W) to step to the next spot. See "Photo mode" below.
+* **Walk** (default when there are no panoramas): on desktop, click to look with the mouse, use WASD or the arrow keys to move, Shift to run, Esc to release the mouse.
   On a phone, use your left thumb as a joystick and drag on the right side to look.
 * **Overview**: a dollhouse view with the ceiling and upper floor hidden and labels showing each room's size. Click a label, or double-click a floor, to walk there.
 * **Minimap** (top right): drawn the same way as the PDF, with East at the top and North on the left. Tap it to jump to that spot.
 * **Edit**: tap any object (furniture, a false ceiling, a pipe run, a conduit circuit) to select it. Drag the arrows to move it, or use Rotate 90°, Remove and Put back. Restore all undoes everything. Changes are saved in the browser on that device, and Copy layout puts them on the clipboard as JSON.
 * **Layers**: turn Furniture, False ceiling, Water lines and Electric lines on or off. Turning on a services layer also turns on X-ray walls, because those lines are concealed.
 * **Go to…**: jumps to a named viewpoint or a room. **HQ** turns on ambient occlusion and sun shadows (on by default on desktop, off on phones).
-* URL options: `?view=kitchen`, `?room=store2`, `?mode=overview`, `?hq=0`.
+* URL options: `?view=kitchen`, `?room=store2`, `?mode=overview`, `?mode=walk`, `?hq=0`, `?pano=hall_mid` (with optional `&heading=90&pitch=-10&fov=65`; heading is degrees clockwise from north), `?still=4` (render 4 frames and stop, for screenshots).
+
+### Photo mode
+
+* **Spots** come from `PANOS` in `plan.py` (`python3 plan.py` writes them to `plan.json` as `panos: [{id, label, eye: [u, v, z] ft, file, room}]`). The list order is the render priority.
+* **Files**: `viewer/pano/<id>.jpg`, equirectangular 2:1 (4096 × 2048 or 8192 × 4096), from an upright camera at the eye point. The viewer asks for every file once at startup and offers only the ones that exist, so renders can arrive one at a time. With no files at all the Photo button is hidden. The browser prints one "404" network line per missing file in its console; that is expected.
+* **Convention**: the horizontal centre of the image looks **north**, moving right turns toward **east**, the left and right edges are south, and the top is straight up. If the renders come out differently, change the two constants at the top of `viewer/src/pano.js` and rebuild:
+  * `PANO_YAW_OFFSET_DEG`: compass bearing (degrees clockwise from north) that the image centre looks at. `0` = north, `90` = east.
+  * `PANO_FLIP_X`: `true` if moving right in the image turns toward west (a mirrored image).
+  * A single pano can override them through `PANO_OVERRIDES` in `plan.py`: `{"store1": {"yaw_offset_deg": 90, "flip_x": True}}`.
+* **Hotspots**: a ring is shown for every other available spot within 22 ft that has a clear line to it. The line is tested against the model's walls and glazing (not furniture, not the open door leaves), on the straight line between the two eye points and on parallel lines 1'3" to either side.
+* **Switching**: Photo → Walk puts the walker on the photo spot with the same heading. Walk → Photo goes to the nearest spot. In Photo mode the minimap and the Go-to list (group "Photo spots") move between spots. Edit, Layers and HQ are hidden because the photos are fixed renders; those changes show in Walk mode.
+* **Display**: the photo is drawn as-is (sRGB, no tone mapping, no ambient-occlusion or bloom pass), with mipmaps and anisotropic filtering. Images larger than the device's texture limit (or 4096 px on phones) are scaled down first. At most 6 panoramas are kept in memory: the current one and its nearest neighbours, which are preloaded.
+* **Test images**: `python3 tools/make_test_panos.py` writes placeholder panoramas for six spots. It skips files that already exist; `--force` overwrites, `--all` covers every spot. Each has compass letters, a 15° grid and a yellow cross where each neighbouring spot's floor point should be, so the floor rings must land on the crosses.
 
 ## Rebuild
 

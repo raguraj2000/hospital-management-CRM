@@ -180,6 +180,36 @@ VIEWS = {
 }
 SPAWN = "entrance"
 
+# 360-degree photo spots for the viewer's Photo mode (order = Cycles render priority).
+# Each is rendered as an equirectangular 2:1 JPEG to viewer/pano/<id>.jpg from an upright camera at the eye point.
+# Convention: image centre looks NORTH, moving right turns toward EAST, left/right edges are SOUTH, top is up.
+# (The viewer side of that convention is PANO_YAW_OFFSET_DEG / PANO_FLIP_X in viewer/src/pano.js; one pano can
+#  override it here with "yaw_offset_deg": <deg> and/or "flip_x": True.)
+PANO_EYE = 5.2       # eye height (ft above FFL)
+PANOS = [
+    # id,           u,     v,     label,                    room
+    ("entrance",    39.5,  17.0,  "Entrance",               "entrance"),
+    ("hall_south",  31.0,  17.0,  "Main Hall - door end",   "main_hall"),
+    ("hall_mid",    19.0,  17.0,  "Main Hall - dining",     "main_hall"),
+    ("hall_living", 16.6,  17.0,  "Main Hall - living",     "main_hall"),
+    ("bedroom",     25.5,  7.0,   "Master Bedroom",         "master_bedroom"),
+    ("kitchen",     34.5,  7.0,   "Kitchen",                "kitchen"),
+    ("master_bath", 12.6,  2.3,   "Master Bath",            "master_bath"),
+    ("store_room",  5.5,   9.0,   "Store Room",             "store_room"),
+    ("store1",      5.75,  31.0,  "Store 1",                "store1"),
+    ("store2",      16.25, 31.0,  "Store 2",                "store2"),
+    ("store3",      26.75, 30.0,  "Store 3",                "store3"),
+    ("foot_path",   20.0,  40.6,  "West Foot Path",         "west_path"),
+    ("walk_path",   37.5,  28.0,  "Walk Path",              "walk_path"),
+    ("kitchen_out", 41.5,  8.0,   "Kitchen Outside Space",  "kitchen_out"),
+]
+PANO_OVERRIDES = {}  # e.g. {"store1": {"yaw_offset_deg": 90, "flip_x": True}}
+
+
+def panos_json():
+    return [{"id": i, "label": label, "eye": (u, v, PANO_EYE), "file": f"pano/{i}.jpg", "room": room,
+             **PANO_OVERRIDES.get(i, {})} for i, u, v, label, room in PANOS]
+
 
 def to_json():
     return {
@@ -195,6 +225,7 @@ def to_json():
         "stairs": STAIRS,
         "views": VIEWS,
         "spawn": SPAWN,
+        "panos": panos_json(),
     }
 
 

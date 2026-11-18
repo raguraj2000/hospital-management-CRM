@@ -12,6 +12,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
+import { createPano } from './pano.js';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -237,8 +238,24 @@ async function main() {
     setMode('walk');
   }
 
+  // m: 'walk' | 'overview' | 'photo'.  For 'photo', vw may name the pano ({ pano: id }); default = nearest to the walker.
+  // Returns a promise for 'photo' (resolves once the panorama is on screen), otherwise undefined.
   function setMode(m, vw) {
+    const id = m === 'photo' ? (pano.spots.find((s) => s.id === vw?.pano && s.available)?.id
+      ?? pano.nearest(toPlan(feet).u, toPlan(feet).v)) : null;
+    if (m === 'photo' && !id) m = 'walk';
+    if (m === 'photo' && mode === 'photo') return pano.goto(id);
+    if (mode === 'photo') pano.exit();      // the walker already stands at the pano point with its heading (see tick)
     mode = m;
+    document.body.classList.toggle('photo', m === 'photo');
+    $('bPhoto').setAttribute('aria-pressed', String(m === 'photo'));
+    for (const b of ['bHQ', 'bEdit', 'bLayers']) $(b).hidden = m === 'photo';   // panoramas are fixed renders
+    if (m === 'photo') {
+      if (editMode) setEdit(false);
+      $('layers').hidden = true; $('bLayers').setAttribute('aria-pressed', 'false');
+    }
+    $('spot').hidden = m !== 'photo';
+    lastRoom = '';
     $('bWalk').setAttribute('aria-pressed', String(m === 'walk'));
     $('bOver').setAttribute('aria-pressed', String(m === 'overview'));
     for (const o of hideInOverview) o.visible = m === 'walk';
@@ -247,8 +264,8 @@ async function main() {
     orbit.enabled = m === 'overview';
     $('cross').style.display = m === 'walk' ? 'block' : 'none';
     $('labels').style.display = m === 'overview' ? 'block' : 'none';
+    if (m !== 'walk' && document.pointerLockElement) document.exitPointerLock();
     if (m === 'overview') {
-      if (document.pointerLockElement) document.exitPointerLock();
       orbit.target.copy(toWorld(21.75, 21.75, 0));
       const eye = vw ? toWorld(...vw.eye) : (innerWidth < innerHeight ? toWorld(68, 62, 70) : toWorld(52, 50, 40));
       camera.position.copy(eye);
@@ -256,6 +273,9 @@ async function main() {
       orbit.update();
     }
     setHelp();
+    if (m === 'photo') {
+      return pano.enter(id, { yaw, pitch }).then((ok) => { if (!ok && mode === 'photo') setMode('walk'); return ok; });
+    }
   }
 
   // ------------------------------------------------------------- physics ---
@@ -283,6 +303,24 @@ async function main() {
     }
     return false;
   }
+  // Photo mode: is the straight line between two points free of walls and glazing?  Furniture is ignored, and so
+  // are door leaves: they are all modelled standing open, and an open leaf must not hide the room behind it
+  // (the bath door leaf stands between the bedroom and the bath's photo spot).  The wall around a doorway still blocks.
+  const SIGHT_CATS = ['WALL', 'GLASS'];
+  const sightBlockers = colliders.filter((o) => SIGHT_CATS.includes(o.userData.cat) && !itemOf(o));
+  function sightClear(a, b) {
+    const d = new THREE.Vector3().subVectors(b, a), len = d.length();
+    if (len < 1e-4) return true;
+    ray.set(a, d.divideScalar(len));
+    ray.far = len;
+    return ray.intersectObjects(sightBlockers, false).length === 0;
+  }
+  const pano = createPano({ renderer, canvas, plan, toWorld, sightClear,
+    floorY: (p) => floorAt(p, 0),
+    maxSize: Number(params.get('panomax')) || undefined,
+    onChange: (spot) => { feet.copy(spot.floor); vy = 0; lastRoom = ''; } });
+  const panoIds = await pano.ready;        // ids whose image exists right now ([] -> no Photo button at all)
+
   function tryMove(delta) {
     const dist = delta.length();
     if (dist < 1e-5) return;
@@ -448,6 +486,8 @@ async function main() {
   };
 
   // ------------------------------------------------------------- UI --------
+  $('bPhoto').hidden = !panoIds.length;
+  $('bPhoto').onclick = () => setMode('photo');
   $('bWalk').onclick = () => setMode('walk');
   $('bOver').onclick = () => setMode('overview');
   $('bHQ').onclick = () => setHQ(!hq);
@@ -455,16 +495,21 @@ async function main() {
   sel.innerHTML = '<option value="">Go to…</option>' +
     Object.entries(plan.views).map(([k, v]) => `<option value="v:${k}">${v.label}</option>`).join('') +
     '<optgroup label="Rooms">' + plan.rooms.filter((r) => r.kind !== 'stair')
-      .map((r) => `<option value="r:${r.id}">${r.label}${r.size ? ` (${r.size})` : ''}</option>`).join('') + '</optgroup>';
+      .map((r) => `<option value="r:${r.id}">${r.label}${r.size ? ` (${r.size})` : ''}</option>`).join('') + '</optgroup>' +
+    (panoIds.length ? '<optgroup label="Photo spots">' + pano.spots.filter((s) => s.available)
+      .map((s) => `<option value="p:${s.id}">${s.label}</option>`).join('') + '</optgroup>' : '');
   sel.onchange = () => {
     const [t, id] = sel.value.split(':');
-    if (t === 'v') gotoView(id); else if (t === 'r') gotoRoom(id);
+    if (t === 'v') gotoView(id); else if (t === 'r') gotoRoom(id); else if (t === 'p') setMode('photo', { pano: id });
     sel.value = '';
     sel.blur();
   };
   function setHelp() {
     $('help').textContent = editMode
       ? 'Edit: tap an object to select it · drag the arrows to move · Rotate / Remove in the panel · changes are saved on this device'
+      : mode === 'photo'
+      ? (coarse ? 'Drag to look · pinch to zoom · tap a ring to move · Edit / Layers changes show in Walk mode'
+        : 'Drag to look · scroll to zoom · click a floor ring (or ↑ / W) to move · Edit / Layers changes show in Walk mode')
       : mode === 'walk'
       ? (coarse ? 'Left thumb: move · right side: look · tap the map to jump'
         : 'Click to look with the mouse · WASD / arrows to walk · Shift to run · Esc to free the mouse · O = overview')
@@ -520,10 +565,13 @@ async function main() {
   function drawMap() {
     mctx.clearRect(0, 0, MS, MS);
     mctx.drawImage(base, 0, 0);
-    const pp = toPlan(mode === 'walk' ? feet : camera.position);
+    pano.drawMap(mctx, mx, my);
+    // walk and photo: where the walker / the pano point is; overview: where the orbit camera is
+    const pp = toPlan(mode === 'overview' ? camera.position : feet);
     const x = mx(pp.u), y = my(pp.v);
     // forward in plan: three forward (-sin yaw, -cos yaw) in x,z -> (du = fz, dv = -fx)
-    const fx = -Math.sin(mode === 'walk' ? yaw : orbitYaw()), fz = -Math.cos(mode === 'walk' ? yaw : orbitYaw());
+    const hd = mode === 'overview' ? orbitYaw() : yaw;
+    const fx = -Math.sin(hd), fz = -Math.cos(hd);
     const a = Math.atan2(-fx, fz);
     mctx.save();
     mctx.translate(x, y);
@@ -540,6 +588,7 @@ async function main() {
     const u = ((e.clientX - r.left) / r.width * MS - PAD) / SC;
     const v = ((e.clientY - r.top) / r.height * MS - PAD) / SC;
     if (u < 0 || v < 0 || u > 43.5 || v > 43.5) return;
+    if (mode === 'photo') { pano.goto(pano.nearest(u, v)); return; }
     feet.copy(toWorld(u, v, 2));
     snapToFloor(true);
     setMode('walk');
@@ -564,10 +613,12 @@ async function main() {
       return;
     }
     const p = toPlan(feet);
-    const r = roomAt(p.u, p.v);
-    const id = r ? r.id : (feet.y < -1 ? 'ground' : 'outside');
+    const spot = mode === 'photo' ? pano.current : null;
+    const r = (spot && plan.rooms.find((x) => x.id === spot.room)) || roomAt(p.u, p.v);
+    const id = (spot ? `${spot.id}@` : '') + (r ? r.id : (feet.y < -1 ? 'ground' : 'outside'));
     if (id === lastRoom) return;
     lastRoom = id;
+    $('spot').textContent = spot ? `Photo spot: ${spot.label}` : '';
     $('room').textContent = r ? r.label : (id === 'ground' ? 'Ground level (road side)' : 'Outside');
     $('size').textContent = r?.size ? `${r.size} inside` : '';
   }
@@ -577,7 +628,10 @@ async function main() {
   const tmp = new THREE.Vector3();
   function tick() {
     const dt = Math.min(clock.getDelta(), 0.05);
-    if (mode === 'walk') {
+    if (mode === 'photo') {
+      pano.update(dt);
+      yaw = pano.yaw; pitch = pano.pitch;       // one look state: leaving Photo keeps the heading
+    } else if (mode === 'walk') {
       let f = 0, s = 0;
       if (keys.has('KeyW') || keys.has('ArrowUp')) f += 1;
       if (keys.has('KeyS') || keys.has('ArrowDown')) f -= 1;
@@ -609,7 +663,8 @@ async function main() {
       }
     }
     if (selected) selBox.update();
-    if (hq) composer.render(); else renderer.render(scene, camera);
+    if (mode === 'photo') pano.render();        // plain render of the pano scene: no tone mapping, no GTAO / bloom
+    else if (hq) composer.render(); else renderer.render(scene, camera);
     drawMap();
     updateHud();
     window.__frames = (window.__frames || 0) + 1;
@@ -623,15 +678,28 @@ async function main() {
     renderer.setSize(innerWidth, innerHeight);
     composer.setSize(innerWidth, innerHeight);
     bloom.setSize(innerWidth, innerHeight);
+    pano.resize();
   });
 
   applyState();
   select(null);
   if (params.get('layers')) { for (const k of params.get('layers').split(',')) layerOn[k] = true; if (layerOn.water || layerOn.electrical) layerOn.xray = true; applyState(); }
-  window.__viewer = { gotoView, gotoRoom, setMode, setHQ, setEdit, select, items, feet, plan };
+  window.__viewer = { gotoView, gotoRoom, setMode, setHQ, setEdit, select, items, feet, plan, pano,
+    get mode() { return mode; }, get look() { return { yaw, pitch }; } };
   if (params.get('mode') === 'overview') setMode('overview');
   else gotoView(params.get('view') || plan.spawn);
   if (params.get('room')) gotoRoom(params.get('room'));
+  // Photo mode is the default when panoramas exist, unless the URL asks for a walk view / room / mode.
+  // ?pano=<id> opens that pano; ?heading=<deg clockwise from north>&pitch=<deg>&fov=<deg> set the look (for screenshots).
+  const wantPhoto = params.has('pano') || params.get('mode') === 'photo'
+    || !['view', 'room', 'mode'].some((k) => params.has(k));
+  if (wantPhoto && panoIds.length) {
+    if (params.has('heading')) yaw = -THREE.MathUtils.degToRad(Number(params.get('heading')) || 0);
+    if (params.has('pitch')) pitch = THREE.MathUtils.degToRad(Number(params.get('pitch')) || 0);
+    if (params.has('fov')) pano.fov = Number(params.get('fov')) || 65;
+    const first = [params.get('pano'), 'entrance'].find((id) => panoIds.includes(id)) || panoIds[0];
+    await setMode('photo', { pano: first });   // wait for the image so ?still=N frames are not black
+  }
   setHelp();
   tick();
   window.__ready = true;

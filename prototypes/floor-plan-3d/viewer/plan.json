@@ -941,5 +941,161 @@
    ]
   }
  },
- "spawn": "entrance"
+ "spawn": "entrance",
+ "panos": [
+  {
+   "id": "entrance",
+   "label": "Entrance",
+   "eye": [
+    39.5,
+    17.0,
+    5.2
+   ],
+   "file": "pano/entrance.jpg",
+   "room": "entrance"
+  },
+  {
+   "id": "hall_south",
+   "label": "Main Hall - door end",
+   "eye": [
+    31.0,
+    17.0,
+    5.2
+   ],
+   "file": "pano/hall_south.jpg",
+   "room": "main_hall"
+  },
+  {
+   "id": "hall_mid",
+   "label": "Main Hall - dining",
+   "eye": [
+    19.0,
+    17.0,
+    5.2
+   ],
+   "file": "pano/hall_mid.jpg",
+   "room": "main_hall"
+  },
+  {
+   "id": "hall_living",
+   "label": "Main Hall - living",
+   "eye": [
+    16.6,
+    17.0,
+    5.2
+   ],
+   "file": "pano/hall_living.jpg",
+   "room": "main_hall"
+  },
+  {
+   "id": "bedroom",
+   "label": "Master Bedroom",
+   "eye": [
+    25.5,
+    7.0,
+    5.2
+   ],
+   "file": "pano/bedroom.jpg",
+   "room": "master_bedroom"
+  },
+  {
+   "id": "kitchen",
+   "label": "Kitchen",
+   "eye": [
+    34.5,
+    7.0,
+    5.2
+   ],
+   "file": "pano/kitchen.jpg",
+   "room": "kitchen"
+  },
+  {
+   "id": "master_bath",
+   "label": "Master Bath",
+   "eye": [
+    12.6,
+    2.3,
+    5.2
+   ],
+   "file": "pano/master_bath.jpg",
+   "room": "master_bath"
+  },
+  {
+   "id": "store_room",
+   "label": "Store Room",
+   "eye": [
+    5.5,
+    9.0,
+    5.2
+   ],
+   "file": "pano/store_room.jpg",
+   "room": "store_room"
+  },
+  {
+   "id": "store1",
+   "label": "Store 1",
+   "eye": [
+    5.75,
+    31.0,
+    5.2
+   ],
+   "file": "pano/store1.jpg",
+   "room": "store1"
+  },
+  {
+   "id": "store2",
+   "label": "Store 2",
+   "eye": [
+    16.25,
+    31.0,
+    5.2
+   ],
+   "file": "pano/store2.jpg",
+   "room": "store2"
+  },
+  {
+   "id": "store3",
+   "label": "Store 3",
+   "eye": [
+    26.75,
+    30.0,
+    5.2
+   ],
+   "file": "pano/store3.jpg",
+   "room": "store3"
+  },
+  {
+   "id": "foot_path",
+   "label": "West Foot Path",
+   "eye": [
+    20.0,
+    40.6,
+    5.2
+   ],
+   "file": "pano/foot_path.jpg",
+   "room": "west_path"
+  },
+  {
+   "id": "walk_path",
+   "label": "Walk Path",
+   "eye": [
+    37.5,
+    28.0,
+    5.2
+   ],
+   "file": "pano/walk_path.jpg",
+   "room": "walk_path"
+  },
+  {
+   "id": "kitchen_out",
+   "label": "Kitchen Outside Space",
+   "eye": [
+    41.5,
+    8.0,
+    5.2
+   ],
+   "file": "pano/kitchen_out.jpg",
+   "room": "kitchen_out"
+  }
+ ]
 }
