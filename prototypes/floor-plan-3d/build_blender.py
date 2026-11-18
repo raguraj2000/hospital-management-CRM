@@ -1702,7 +1702,7 @@ def render_cam(name, out_dir, res):
         else:                                       # aerial views keep their tilt
             co.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
         sc.render.resolution_x, sc.render.resolution_y = res
-        exposure = 0.0
+        exposure = P.EXPOSURE.get(P.room_at(u, v), 0.0)
     sc.view_settings.exposure = exposure
     sc.camera = co
     if "CEIL" in hide:
@@ -1715,8 +1715,9 @@ def render_cam(name, out_dir, res):
     print("rendered", sc.render.filepath, flush=True)
 
 
-def render_pano(pid, eye, out_dir, res, samples):
-    """Path-traced equirectangular panorama. Image centre looks north (+Y), right of centre = east."""
+def render_pano(pid, eye, out_dir, res, samples, exposure=0.0):
+    """Path-traced equirectangular panorama. Image centre looks north (+Y), right of centre = east.
+    exposure: EV for the view transform (plan.EXPOSURE per room)."""
     sc = bpy.context.scene
     cd = bpy.data.cameras.new("pano_" + pid)
     cd.type = "PANO"
@@ -1729,7 +1730,7 @@ def render_pano(pid, eye, out_dir, res, samples):
     sc.camera = co
     sc.cycles.samples = samples
     sc.render.resolution_x, sc.render.resolution_y = res
-    sc.view_settings.exposure = 0.0
+    sc.view_settings.exposure = exposure
     for o in bpy.data.objects:
         o.hide_render = o.get("layer") in ("water", "electrical")
     sc.render.image_settings.file_format = "JPEG"
@@ -1801,6 +1802,7 @@ def main():
         os.makedirs(pano_dir, exist_ok=True)
         setup_render(ARGS["res"], ARGS["samples"])
         allp = {q["id"]: q["eye"] for q in P.panos_json()}
+        rooms = {q["id"]: q["room"] for q in P.panos_json()}
         ids = list(allp) if ARGS["panos"] == "all" else ARGS["panos"].split(",")
         for pid in ids:
             eye = allp.get(pid)
@@ -1812,7 +1814,8 @@ def main():
                 print("pano skip", pid, flush=True)
                 continue
             t0 = time.time()
-            render_pano(pid, eye, dst, ARGS["pano_res"], ARGS["pano_samples"])
+            render_pano(pid, eye, dst, ARGS["pano_res"], ARGS["pano_samples"],
+                        P.EXPOSURE.get(rooms.get(pid) or P.room_at(eye[0], eye[1]), 0.0))
             print(f"pano time {pid} {time.time() - t0:.0f}s", flush=True)
     if ARGS["renders"] != "none":
         os.makedirs(ARGS["out"], exist_ok=True)

@@ -102,6 +102,7 @@ To change the building, edit `plan.py`, then rebuild. The viewer reads `plan.jso
 * **Walk mode** is real time, so it can't path-trace. The walls, floors and ceilings carry Cycles-baked light (direct and bounced, denoised). Furniture is lit live so it stays movable, with ambient occlusion, bloom and sun shadows on desktop. Expect "good game engine" realism.
 * **Photo mode** is the ultra-realistic part: each spot is a full Cycles path-traced 4096 × 2048 panorama, with 64 samples, adaptive sampling and OpenImageDenoise.
 * **Stills** are 3840 × 2160 Cycles renders from a level camera with lens shift (two-point perspective, as architectural photographers shoot), so walls and door frames stay vertical.
+* **Exposure** is set per room, as a photographer would: the white stores under bare LED panels are shot darker than the warm living spaces, or their walls clip to pure white (`EXPOSURE` in `plan.py`, in EV).
 
 Render cost on the 4-core CPU this was built on (no GPU):
 

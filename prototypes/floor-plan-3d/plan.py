@@ -205,6 +205,19 @@ PANOS = [
 ]
 PANO_OVERRIDES = {}  # e.g. {"store1": {"yaw_offset_deg": 90, "flip_x": True}}
 
+# Photo exposure in EV per room, for the Cycles panoramas and stills only. A photographer exposes a white
+# store under bare LED panels lower than a warm living room; every other room stays at 0 EV.
+EXPOSURE = {"store_room": -1.25, "store1": -1.25, "store2": -1.25, "store3": -1.25}
+
+
+def room_at(u, v):
+    """Id of the first room whose inside rectangle holds plan point (u, v), or None."""
+    for r in ROOMS:
+        u0, u1, v0, v1 = r[2]
+        if u0 <= u <= u1 and v0 <= v <= v1:
+            return r[0]
+    return None
+
 
 def panos_json():
     return [{"id": i, "label": label, "eye": (u, v, PANO_EYE), "file": f"pano/{i}.jpg", "room": room,
