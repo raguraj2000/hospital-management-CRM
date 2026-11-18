@@ -108,7 +108,7 @@ Render cost on the 4-core CPU this was built on (no GPU):
 | Step | Time |
 |---|---|
 | Bake the walls, floors and ceilings | about 20 min (ceilings take 6× samples) |
-| One 4K interior panorama | about 33 min alone (48 min while sharing the CPU) |
+| One 4K interior panorama | 28–36 min alone (48 min while sharing the CPU) |
 | One 4K still | similar to a panorama |
 
 An animated, cinematic walkthrough like the reference video needs 25–30 path-traced frames per second, so about 1,500–1,800 frames per minute of video. At these times that is several weeks of CPU rendering per minute. On a desktop GPU Cycles is typically tens of times faster, so the same scene could render a short walkthrough overnight. The pipeline is ready for that: `build_blender.py` would need a camera path and `sc.cycles.device = "GPU"`.
