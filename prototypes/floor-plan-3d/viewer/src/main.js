@@ -153,8 +153,10 @@ async function main() {
     for (const k of ['map', 'normalMap']) if (m[k]) m[k].anisotropy = maxAniso;
     if (o.userData.lm && lmTex[o.userData.lm]) {
       // shell surfaces: albedo x baked light (unlit), so the soft bounce light and downlight scallops come from Cycles
-      m = o.material = new THREE.MeshBasicMaterial({ name: mname, map: m.map, color: m.color,
-        lightMap: lmTex[o.userData.lm], lightMapIntensity: LM_RANGE * Math.PI });
+      const dbg = params.get('debug');     // ?debug=lm shows the baked light alone, ?debug=albedo the textures alone
+      m = o.material = new THREE.MeshBasicMaterial({ name: mname, map: dbg === 'lm' ? null : m.map,
+        color: dbg === 'lm' ? 0xbfbfbf : m.color, lightMap: dbg === 'albedo' ? null : lmTex[o.userData.lm],
+        lightMapIntensity: LM_RANGE * Math.PI });
     }
     if (mname.startsWith('glass')) {
       m = o.material = new THREE.MeshStandardMaterial({

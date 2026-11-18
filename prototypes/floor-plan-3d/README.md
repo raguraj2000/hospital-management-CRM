@@ -1,17 +1,20 @@
 # First Floor Plan v5 → walkable 3D model
 
-This folder turns `reference/First_Floor_2D_Plan_v5.pdf` into a 3D model you can walk through in a browser, plus photoreal Cycles stills.
+This folder turns `reference/First_Floor_2D_Plan_v5.pdf` into a 3D model you can walk through in a browser, 4K path-traced 360° photos of every main space, and 4K Cycles stills.
 It is a standalone prototype and is not part of the clinic app.
 
 ```
-plan.py           single source of truth: rooms, walls, doors/windows, stairs, viewpoints (feet)
-textures.py       procedural textures (tiles, kota, wood, granite, fabric…) made with numpy, no downloads
-build_blender.py  Blender: geometry + materials + furniture + lights + cameras -> viewer/model.glb + renders/*.jpg
+plan.py           single source of truth: rooms, walls, doors/windows, stairs, viewpoints, photo spots (feet)
+build_blender.py  Blender: geometry + materials + furniture + lights -> web model, baked light, panoramas, stills
+ph_assets.py      Poly Haven (CC0) scanned furniture, PBR textures and HDRI skies: download + import helpers
+textures.py       procedural textures (numpy), used where no scanned set fits and as the offline fallback
 compare.py        overlays the PDF's walls (red) on the top-down render -> renders/compare_plan.jpg
-viewer/           static web viewer (index.html, app.js bundle, model.glb, plan.json); host it anywhere
+viewer/           static web viewer (index.html, app.js bundle, model.glb, lm_*.jpg, plan.json, pano/); host it anywhere
 viewer/src/       viewer source (Three.js + three-mesh-bvh, bundled with esbuild, no CDN): main.js, pano.js (Photo mode)
-viewer/pano/      360° panoramas for Photo mode, one <id>.jpg per photo spot in plan.py PANOS
-tools/make_test_panos.py  placeholder panoramas (grid + compass letters) for testing Photo mode without Blender
+viewer/pano/      4K 360° panoramas for Photo mode, one <id>.jpg per photo spot in plan.py PANOS
+renders/          4K Cycles stills (3840 x 2160) and the plan overlay
+tools/            prep_textures.py, produce.sh (full production run), optimize_glb.sh (web model),
+                  make_artifact.py (static copy for text-only hosts), test_photo_mode.mjs, make_test_panos.py
 shots.mjs         headless screenshots of the viewer (Playwright)
 ```
 
@@ -48,35 +51,48 @@ Then open `http://localhost:8090`. To host it, copy the `viewer/` folder to any 
 
 ## Rebuild
 
-Blender 4.4 is used as a Python module (`pip install bpy==4.4.0` on Python 3.11), or run it with `blender -b -P build_blender.py -- …`.
+Blender 4.4 runs as a Python module: `pip install bpy==4.4.0 "numpy<2" pillow` on Python 3.11 (or run `blender -b -P build_blender.py -- …`). `$BPY` below is that Python.
 
-```bash
-python3 plan.py
-```
+1. Rooms, walls, openings and photo spots go to `viewer/plan.json`:
 
-```bash
-python textures.py build/textures
-```
+   ```bash
+   python3 plan.py
+   ```
 
-```bash
-python build_blender.py --tex build/textures --glb viewer/model.glb --bake 72 --renders all --samples 64 --res 1280x720
-```
+2. Once, download the Poly Haven CC0 assets (scanned furniture and props, PBR texture scans, HDRI skies) into `build/ph/` (git-ignored). This needs network access to `api.polyhaven.com` and `dl.polyhaven.org`. Without it the build falls back to procedural textures and simple box furniture.
 
-```bash
-python3 compare.py
-```
+   ```bash
+   python3 ph_assets.py fetch
+   ```
 
-```bash
-npm install && npm run build:viewer
-```
+3. Run the whole production pipeline:
 
-```bash
-node shots.mjs renders/web
-```
+   ```bash
+   BPY=$BPY tools/produce.sh all
+   ```
 
-`--bake N` bakes the lighting of the fixed shell (walls, floors, ceilings, false ceilings) into `viewer/lm_WALL.jpg`, `lm_FLOOR.jpg` and `lm_CEIL.jpg` with Cycles, then denoises them. The viewer multiplies these onto the surfaces, which is where the soft bounce light, the cove glow and the downlight pools come from. Furniture is left out of the bake so it stays movable; it gets a soft contact shadow that moves with it.
+   It runs these steps in order:
+   * **Textures** (`tools/prep_textures.py`): the procedural set from `textures.py`, replaced by scanned sets where one fits, into `build/tex_final/`.
+   * **Model and baked light** (`build_blender.py --glb build/model_raw.glb --bake 72`): writes `viewer/lm_WALL.jpg`, `lm_FLOOR.jpg` and `lm_CEIL.jpg`.
+   * **Web model** (`tools/optimize_glb.sh`): textures go to 1024 px WebP (scanned props 512 px) and meshes are meshopt-compressed, giving `viewer/model.glb` of about 27 MB (from about 120 MB).
+   * **Panoramas** (`--panos all --pano_res 4096x2048 --pano_samples 64 --skip_existing 1`): into `viewer/pano/`.
+   * **Stills** (`--renders … --res 3840x2160 --samples 64`): into `renders/`.
 
-To change the building, edit `plan.py`, then rebuild. The viewer reads `plan.json` for room names, sizes and the minimap.
+4. Build the viewer and take screenshots:
+
+   ```bash
+   npm install && npm run build:viewer
+   ```
+
+   ```bash
+   node shots.mjs renders/web
+   ```
+
+5. For hosts that serve only text and images, `python3 tools/make_artifact.py` writes a static copy to `build/artifact/`. It carries the model as base64 text parts that the viewer joins.
+
+`--bake N` bakes the lighting of the fixed shell (walls, floors, ceilings, false ceilings) into the three atlases with Cycles, then denoises them. The viewer multiplies them onto the surfaces; that is where the soft bounce light, the cove glow and the downlight pools come from. Furniture is left out of the bake so it stays movable, and gets a soft contact shadow that moves with it. `--bake_groups CEIL` re-bakes one atlas with the same layout, so the web model stays valid.
+
+To change the building, edit `plan.py`, then rebuild. The viewer reads `plan.json` for room names, sizes, photo spots and the minimap.
 
 ---
 

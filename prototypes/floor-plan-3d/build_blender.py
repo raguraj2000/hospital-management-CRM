@@ -15,6 +15,7 @@ Options:
     --panos LIST     render 360-degree equirect panoramas (ids from plan.PANOS, or "all") to viewer/pano/
     --pano_res WxH   panorama size (default 4096x2048)   --pano_samples N (default 96)
     --skip_existing 1  leave panoramas / stills whose .jpg already exists
+    --bake_groups CEIL  re-bake only these lightmap atlases (same packing, so the GLB stays valid)
     --samples N      Cycles samples (default 96)
     --res WxH        render size (default 1600x900)
 """
@@ -41,7 +42,8 @@ def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
     a = {"tex": os.path.join(HERE, "build", "tex_final"), "ph": "1", "hdri": "rustig_koppie_puresky", "glb": None, "blend": None, "renders": "none",
          "out": os.path.join(HERE, "renders"), "samples": 96, "res": "1600x900", "bake": "0",
-         "panos": "none", "pano_res": "4096x2048", "pano_samples": 96, "skip_existing": "0"}
+         "panos": "none", "pano_res": "4096x2048", "pano_samples": 96, "skip_existing": "0",
+         "bake_groups": "all"}
     i = 0
     while i < len(argv):
         k = argv[i].lstrip("-")
@@ -1524,8 +1526,9 @@ def bake_lightmaps(out_dir, samples):
     sc.render.bake.use_clear = False
     for o in bpy.data.objects:
         o.hide_render = o.get("layer") in ("furniture", "water", "electrical") or o.get("cat") in ("MEP", "ELEC")
-    imgs = {g: bpy.data.images.new("LM_" + g, S, S, float_buffer=True, alpha=False) for g, S in LM_SIZE.items()}
-    targets = [o for o in bpy.data.objects if o.type == "MESH" and o.get("lm")]
+    groups = list(LM_SIZE) if ARGS["bake_groups"] == "all" else ARGS["bake_groups"].split(",")
+    imgs = {g: bpy.data.images.new("LM_" + g, LM_SIZE[g], LM_SIZE[g], float_buffer=True, alpha=False) for g in groups}
+    targets = [o for o in bpy.data.objects if o.type == "MESH" and o.get("lm") in imgs]
     for n, ob in enumerate(targets):
         mat = ob.data.materials[0]
         nt = mat.node_tree
@@ -1538,6 +1541,9 @@ def bake_lightmaps(out_dir, samples):
             o.select_set(False)
         ob.select_set(True)
         bpy.context.view_layer.objects.active = ob
+        # ceilings see only bounce light, and their thin false-ceiling bands show any leftover noise as
+        # streaks in the viewer, so they get 6x the samples (72 -> 432)
+        sc.cycles.samples = samples * (6 if ob["lm"] == "CEIL" else 1)
         bpy.ops.object.bake(type="DIFFUSE", pass_filter={"DIRECT", "INDIRECT"}, use_clear=False, margin=4)
         ob.data.uv_layers.active = ob.data.uv_layers["UVMap"]
         print(f"baked {n + 1}/{len(targets)} {ob.name}", flush=True)
@@ -1686,7 +1692,15 @@ def render_cam(name, out_dir, res):
         cd.clip_end = 400
         co.location = W(u, v, z)
         d = W(lu, lv, lz) - co.location
-        co.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
+        pitch = math.atan2(d.z, math.hypot(d.x, d.y))
+        if abs(pitch) < math.radians(20):
+            # architectural two-point perspective: keep the camera level so walls and door frames stay
+            # vertical, and frame the look point with lens shift instead of tilting
+            co.rotation_euler = Vector((d.x, d.y, 0.0)).to_track_quat("-Z", "Y").to_euler()
+            cd.sensor_fit = "HORIZONTAL"
+            cd.shift_y = lens * math.tan(pitch) / cd.sensor_width
+        else:                                       # aerial views keep their tilt
+            co.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
         sc.render.resolution_x, sc.render.resolution_y = res
         exposure = 0.0
     sc.view_settings.exposure = exposure
