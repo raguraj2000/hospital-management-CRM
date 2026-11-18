@@ -37,7 +37,7 @@ CEIL, SLAB = P.CEIL, P.SLAB
 # ============================================================ arguments =====
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
-    a = {"tex": os.path.join(HERE, "build", "textures"), "glb": None, "blend": None, "renders": "none",
+    a = {"tex": os.path.join(HERE, "build", "tex_final"), "ph": "1", "hdri": "rustig_koppie_puresky", "glb": None, "blend": None, "renders": "none",
          "out": os.path.join(HERE, "renders"), "samples": 96, "res": "1600x900", "bake": "0",
          "panos": "none", "pano_res": "4096x2048", "pano_samples": 96}
     i = 0
@@ -285,6 +285,22 @@ MATS = {
 _mat_cache = {}
 
 
+def _apply_scan_tiles():
+    """Real-world repeat sizes of the Poly Haven scans (written by tools/prep_textures.py)."""
+    f = os.path.join(ARGS["tex"], "tiles.json")
+    if not os.path.exists(f):
+        return
+    import json
+    tiles = json.load(open(f))
+    for name, spec in MATS.items():
+        tex = spec[0]
+        if tex in tiles and spec[1] is not None:
+            MATS[name] = (tex, tiles[tex]) + spec[2:]
+
+
+_apply_scan_tiles()
+
+
 def tex_path(name, normal=False):
     p = os.path.join(ARGS["tex"], name + ("_n.jpg" if normal else ".jpg"))
     return p if os.path.exists(p) else None
@@ -314,6 +330,13 @@ def get_mat(name):
             nm.inputs["Strength"].default_value = 0.6
             nt.links.new(nn.outputs["Color"], nm.inputs["Color"])
             nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+        rp = os.path.join(ARGS["tex"], tex + "_r.jpg")
+        if os.path.exists(rp):
+            rimg = bpy.data.images.load(rp, check_existing=True)
+            rimg.colorspace_settings.name = "Non-Color"
+            rn = nt.nodes.new("ShaderNodeTexImage")
+            rn.image = rimg
+            nt.links.new(rn.outputs["Color"], bsdf.inputs["Roughness"])
     elif col:
         bsdf.inputs["Base Color"].default_value = (*col, 1)
     if "emit" in extra:
@@ -660,8 +683,16 @@ def as_item(kind, label, layer="furniture"):
     return deco
 
 
-@as_item("plant", "Plant")
 def plant(u, v, h=3.0, r=0.7):
+    if ph():
+        asset = "potted_plant_01" if h >= 2.9 else ("potted_plant_02" if h >= 2.2 else "potted_plant_04")
+        return place(asset, u, v, 0.0, "south", "Plant", 1.0 if asset != "potted_plant_04" else 1.0,
+                     yaw_extra=(u * 37 + v * 11) % 360)
+    return _plant_box(u, v, h, r)
+
+
+@as_item("plant", "Plant")
+def _plant_box(u, v, h=3.0, r=0.7):
     pcyl("FURN", "pot", u, v, 0, 1.2, r * 0.75, 18, r)
     pcyl("DECO", "soil", u, v, 1.15, 0.06, r * 0.95, 18)
     for i in range(7):
@@ -670,8 +701,14 @@ def plant(u, v, h=3.0, r=0.7):
                  r * FT * 0.75, (1, 1, 1.25), 10, 7)
 
 
-@as_item("fan", "Ceiling fan")
 def fan(u, v):
+    if ph():
+        return place("ceiling_fan", u, v, CEIL - 0.52 / FT, "north", "Ceiling fan")
+    return _fan_box(u, v)
+
+
+@as_item("fan", "Ceiling fan")
+def _fan_box(u, v):
     pcyl("DECO", "steel", u, v, CEIL - 1.2, 1.2, 0.05, 8)
     pcyl("DECO", "pvc_white", u, v, CEIL - 1.55, 0.4, 0.35, 20)
     for i in range(3):
@@ -741,8 +778,14 @@ def rack(u0, u1, v0, v1, h=7.0, levels=5, mat="rack_blue", load=0.7):
             pos += w + 0.1
 
 
+def chair(u, v, face_u, face_v, mat="walnut", seat="fabric_sofa", asset="dining_chair_02"):
+    if ph():
+        return place(asset, u, v, 0.0, face_of(face_u, face_v), "Chair")
+    return _chair_box(u, v, face_u, face_v, mat, seat)
+
+
 @as_item("chair", "Chair")
-def chair(u, v, face_u, face_v, mat="walnut", seat="fabric_sofa"):
+def _chair_box(u, v, face_u, face_v, mat="walnut", seat="fabric_sofa"):
     """Dining chair centred at (u,v) facing direction (face_u, face_v) (unit, axis-aligned)."""
     s = 0.85
     prbox("FURN", seat, u - s, u + s, v - s, v + s, 1.45, 1.6, 0.05)
@@ -754,6 +797,54 @@ def chair(u, v, face_u, face_v, mat="walnut", seat="fabric_sofa"):
         prbox("FURN", mat, bu - 0.06, bu + 0.06, v - s, v + s, 1.6, 3.2, 0.03)
     else:
         prbox("FURN", mat, u - s, u + s, bv - 0.06, bv + 0.06, 1.6, 3.2, 0.03)
+
+
+# ============================================================ real (scanned) models ==
+IMPORTS = []        # (item id, root object)
+FACE = {"north": "+y", "south": "-y", "east": "+x", "west": "-x"}
+_ph = None
+
+
+def ph():
+    global _ph
+    if _ph is None and ARGS["ph"] == "1":
+        try:
+            import ph_assets
+            if os.path.isdir(os.path.join(HERE, "build", "ph", "models")):
+                _ph = ph_assets
+            else:
+                ARGS["ph"] = "0"
+        except Exception as e:  # noqa: BLE001
+            print("Poly Haven assets unavailable:", e, flush=True)
+            ARGS["ph"] = "0"
+    return _ph
+
+
+def place(asset, u, v, z=0.0, face="north", label=None, scale=1.0, yaw_extra=0.0, layer="furniture", sxyz=None):
+    """Put a scanned Poly Haven model at plan (u, v, z ft); its usable front looks toward `face`
+    (north/south/east/west). Becomes one selectable item, or part of the current `with item(...)`."""
+    m = ph()
+    if m is None:
+        return None
+    root = m.import_model(asset)
+    root.location = W(u, v, z)
+    root.rotation_euler = (0.0, 0.0, m.yaw_to_face(asset, FACE[face]) + math.radians(yaw_extra))
+    root.scale = sxyz or (scale, scale, scale)
+    iid = G.cur
+    if iid is None:
+        _auto[asset] = _auto.get(asset, 0) + 1
+        iid = f"{asset.lower()}_{_auto[asset]}"
+        ITEMS[iid] = {"label": label or asset.replace("_", " ").title(), "layer": layer}
+    IMPORTS.append((iid, root))
+    for o in [root] + list(root.children_recursive):
+        o["layer"] = ITEMS[iid]["layer"]
+        o["cat"] = "FURN"
+    return root
+
+
+def face_of(fu, fv):
+    """plan direction (du, dv) -> compass word"""
+    return {(0, 1): "west", (0, -1): "east", (1, 0): "south", (-1, 0): "north"}[(fu, fv)]
 
 
 SPOTS = []   # recessed downlights (u, v, z) -> Blender spot lights + viewer
@@ -808,40 +899,45 @@ def build_false_ceilings():
 def build_furniture():
     # ---------------- Main hall (u 6.25..35.25, v 13..21) -----------------
     with item("tv_unit", "TV unit"):
-        prbox("FURN", "walnut", 6.3, 7.6, 14.0, 20.0, 0.4, 1.7, 0.03)
-        pbox("DECO", "oak_light", 6.28, 6.36, 13.6, 20.4, 1.7, 8.0)          # wood panel behind TV
+        if ph():
+            place("modern_wooden_cabinet", 6.25 + 0.27 / FT + 0.05, 17.0, 0.0, "south", scale=0.96)
+            place("brass_vase_01", 6.9, 13.95, 0.68 / FT)
+            place("carved_wooden_elephant", 7.0, 19.6, 0.68 / FT, "south", scale=1.6)
+            place("brass_diya_lantern", 7.0, 20.3, 0.68 / FT)
+        else:
+            prbox("FURN", "walnut", 6.3, 7.6, 14.0, 20.0, 0.4, 1.7, 0.03)
+        pbox("DECO", "oak_light", 6.28, 6.36, 13.6, 20.4, 2.3, 8.0)          # wood panel behind TV
         pbox("DECO", "screen", 6.4, 6.5, 14.9, 19.1, 3.4, 5.8)                # 55" TV
         pbox("DECO", "black", 6.36, 6.4, 14.85, 19.15, 3.35, 5.85)
         prbox("FURN", "walnut", 6.3, 7.4, 13.8, 15.3, 4.6, 4.8, 0.02)         # floating shelf
     plant(7.3, 20.2, 2.5, 0.55)
     with item("sofa", "Sofa (3-seater)"):
+      if ph():
+        place("sofa_02", 15.0 - 0.41 / FT, 17.0, 0.0, "north")
+        place("throw_pillows_01", 14.15, 17.0, 1.45, "north", scale=0.9)
+      else:
         prbox("FURN", "fabric_sofa", 12.0, 15.0, 14.3, 19.9, 0.35, 1.45, 0.12)    # base
         prbox("FURN", "fabric_sofa", 14.2, 15.0, 14.3, 19.9, 1.45, 3.0, 0.15)     # back
         prbox("FURN", "fabric_sofa", 12.0, 14.15, 14.3, 15.0, 1.45, 2.3, 0.15)    # arms
         prbox("FURN", "fabric_sofa", 12.0, 14.15, 19.2, 19.9, 1.45, 2.3, 0.15)
-        for c in range(3):
-            a = 15.0 + c * 1.4
-            prbox("DECO", "fabric_sofa", 12.1, 14.2, a + 0.02, a + 1.38, 1.45, 1.9, 0.18)
-            prbox("DECO", "fabric_sofa", 13.75, 14.25, a + 0.05, a + 1.35, 1.9, 2.95, 0.2)   # back cushions
-        prbox("DECO", "fabric_throw", 13.45, 13.85, 15.2, 16.3, 1.9, 2.9, 0.2)     # scatter cushions
-        prbox("DECO", "fabric_bed", 13.45, 13.85, 18.0, 19.1, 1.9, 2.9, 0.2)
-        for (a, b) in ((14.4, 14.6), (19.6, 19.8)):
-            for (c, d) in ((12.1, 12.3), (14.7, 14.9)):
-                pbox("FURN", "black", c, d, a, b, 0, 0.35)
     with item("rug_hall", "Rug (hall)"):
         pbox("DECO", "rug", 8.4, 14.2, 14.6, 19.6, 0.03, 0.05)
     with item("coffee_table", "Coffee table"):
-        prbox("FURN", "oak_light", 9.3, 11.0, 15.6, 18.4, 1.25, 1.4, 0.03)
-        for (a, b) in ((9.4, 15.7), (9.4, 18.2), (10.8, 15.7), (10.8, 18.2)):
-            pbox("FURN", "black", a, a + 0.1, b, b + 0.1, 0, 1.25)
-        pcyl("DECO", "ceramic", 10.1, 16.5, 1.4, 0.35, 0.25, 16)
+        if ph():
+            place("modern_coffee_table_01", 10.4, 17.0, 0.0, "north")
+            place("ceramic_vase_02", 10.4, 16.3, 0.39 / FT)
+        else:
+            prbox("FURN", "oak_light", 9.3, 11.0, 15.6, 18.4, 1.25, 1.4, 0.03)
     with item("dining_table", "Dining table"):
         prbox("FURN", "oak_light", 22.0, 26.5, 15.6, 18.4, 2.35, 2.5, 0.03)
         for (a, b) in ((22.2, 15.8), (22.2, 18.1), (26.2, 15.8), (26.2, 18.1)):
             pbox("FURN", "walnut", a, a + 0.12, b, b + 0.12, 0, 2.35)
-        pcyl("DECO", "ceramic", 24.25, 17.0, 2.5, 0.25, 0.45, 20, 0.6)   # fruit bowl
-        for i, (a, b) in enumerate(((24.1, 16.9), (24.4, 17.1), (24.25, 16.75))):
-            G.sphere("DECO", ["plastic_red", "art2", "plastic_green"][i], W(a, b, 2.85), 0.12 * FT * 2, (1, 1, 1), 10, 6)
+        if ph():
+            place("wooden_bowl_01", 24.25, 17.0, 2.5)
+            for (a, b, f) in ((24.15, 16.9, "food_apple_01"), (24.4, 17.15, "food_pomegranate_01"), (24.3, 16.75, "food_apple_01")):
+                place(f, a, b, 2.56, yaw_extra=a * 90)
+        else:
+            pcyl("DECO", "ceramic", 24.25, 17.0, 2.5, 0.25, 0.45, 20, 0.6)
     for u in (23.1, 25.4):
         chair(u, 14.9, 0, 1)
         chair(u, 19.1, 0, -1)
@@ -849,13 +945,20 @@ def build_furniture():
     chair(27.4, 17.0, -1, 0)
     with item("pendants", "Pendant lights (dining)"):
         for u in (23.0, 25.5):
-            pcyl("DECO", "black", u, 17.0, 6.2, CEIL - 6.2, 0.02, 6)
-            pcyl("LIGHT", "lamp_shade", u, 17.0, 5.6, 0.8, 0.7, 20, 0.25)
+            if ph():
+                place("modern_ceiling_lamp_01", u, 17.0, CEIL - 0.95 / FT)
+                G.sphere("LIGHT", "lamp_shade", W(u, 17.0, CEIL - 0.95 / FT + 0.42), 0.06, (1, 1, 1), 12, 8)
+            else:
+                pcyl("DECO", "black", u, 17.0, 6.2, CEIL - 6.2, 0.02, 6)
+                pcyl("LIGHT", "lamp_shade", u, 17.0, 5.6, 0.8, 0.7, 20, 0.25)
     with item("shoe_cabinet", "Shoe cabinet + mirror"):
         prbox("FURN", "walnut", 28.6, 31.4, 19.7, 21.0, 0.3, 3.0, 0.03)
         pbox("DECO", "mirror", 28.9, 31.1, 20.92, 21.0, 4.0, 6.5)
     plant(33.9, 13.9, 3.0, 0.7)
-    for (u0, u1, m) in ((16.0, 19.5, "art1"), (20.2, 21.6, "art2")):
+    if ph():
+        place("fancy_picture_frame_01", 17.75, 21.0 - 0.03 - 0.01 / FT, 4.3, "east", "Painting")
+        place("wall_clock", 21.4, 21.0 - 0.03 - 0.025 / FT, 5.6, "east", "Wall clock")
+    for (u0, u1, m) in (() if ph() else ((16.0, 19.5, "art1"), (20.2, 21.6, "art2"))):
         with auto_item("art", "Wall art"):
             pbox("DECO", "walnut", u0, u1, 20.9, 21.0, 4.0, 6.6)
             pbox("DECO", m, u0 + 0.12, u1 - 0.12, 20.86, 20.9, 4.12, 6.48)
@@ -873,9 +976,18 @@ def build_furniture():
             prbox("DECO", "fabric_bed", bu0 + 0.5, bu0 + 1.7, a, b, 2.0, 2.55, 0.25)
     for (a, b) in ((2.2, 3.8), (9.4, 11.0)):
         with auto_item("bedside", "Bedside table + lamp"):
-            prbox("FURN", "walnut", 15.8, 17.3, a, b, 0.0, 1.9, 0.03)
-            pcyl("DECO", "ceramic", 16.5, (a + b) / 2, 1.9, 0.9, 0.18, 14, 0.08)
-            pcyl("LIGHT", "lamp_shade", 16.5, (a + b) / 2, 2.7, 0.8, 0.45, 18, 0.3)
+            top = 1.9
+            if ph():
+                place("side_table_01", 15.8 + 0.225 / FT, (a + b) / 2, 0.0, "south")
+                top = 0.55 / FT
+            else:
+                prbox("FURN", "walnut", 15.8, 17.3, a, b, 0.0, 1.9, 0.03)
+            pcyl("DECO", "ceramic", 16.5, (a + b) / 2, top, 0.9, 0.18, 14, 0.08)
+            pcyl("LIGHT", "lamp_shade", 16.5, (a + b) / 2, top + 0.8, 0.8, 0.45, 18, 0.3)
+    if ph():
+        place("throw_pillows_01", 17.55, 6.6, 2.0, "south", "Cushions (bed)")
+        place("mid_century_lounge_chair", 25.2, 10.4, 0.0, "east", "Lounge chair", yaw_extra=-20)
+        place("potted_plant_02", 27.6, 11.6, 0.0, "south")
     with item("rug_bed", "Rug (bedroom)"):
         pbox("DECO", "rug", 21.5, 26.0, 3.2, 10.0, 0.03, 0.05)
     with item("wardrobe", "Wardrobe"):
@@ -891,13 +1003,19 @@ def build_furniture():
         prbox("FURN", "oak_light", 23.0, 23.6, 0.8, 2.8, 0.0, 2.35, 0.02)
         pbox("DECO", "black", 24.2, 25.8, 1.0, 1.1, 2.5, 3.6)         # monitor
     chair(25.0, 3.6, 0, -1, "black", "fabric_throw")
+    if ph():
+        place("book_encyclopedia_set_01", 26.0, 1.0, 2.5, "west", "Books")
+        place("desk_lamp_arm_01", 23.6, 1.3, 2.5, "west", "Desk lamp")
     with item("curtains", "Curtains (bedroom)"):
         for (a, b) in ((19.2, 20.4), (25.1, 26.3)):
             prbox("DECO", "fabric_curtain", a, b, 0.85, 1.15, 0.2, 8.2, 0.12)
         pbox("DECO", "chrome", 19.0, 26.5, 0.97, 1.03, 8.3, 8.36)
     with item("art_bed", "Wall art (bedroom)"):
-        pbox("DECO", "walnut", 15.75, 15.85, 4.8, 8.4, 4.8, 6.6)
-        pbox("DECO", "art2", 15.85, 15.88, 4.95, 8.25, 4.95, 6.45)
+        if ph():
+            place("fancy_picture_frame_02", 15.78 + 0.045 / FT, 6.6, 4.6, "south")
+        else:
+            pbox("DECO", "walnut", 15.75, 15.85, 4.8, 8.4, 4.8, 6.6)
+            pbox("DECO", "art2", 15.85, 15.88, 4.95, 8.25, 4.95, 6.45)
     fan(23.25, 6.6)
 
     # ---------------- Master bath (u 11.25..15.25, v 0.75..12.5) ----------
@@ -954,11 +1072,16 @@ def build_furniture():
         pbox("DECO", "black", 37.6, 38.9, 7.8, 10.2, ct + 0.13, ct + 0.17)       # hob
         for (a, b) in ((38.0, 8.3), (38.0, 9.6), (38.5, 9.0)):
             pcyl("DECO", "steel", a, b, ct + 0.17, 0.04, 0.22, 16)
-        pcyl("DECO", "steel", 38.0, 8.3, ct + 0.21, 0.5, 0.35, 20)
-        pcyl("DECO", "black", 38.0, 9.6, ct + 0.21, 0.12, 0.42, 20)
-        for i in range(5):
-            pcyl("DECO", ["ceramic", "plastic_red", "steel", "plastic_green", "ceramic"][i], 31.7 + i * 0.35, 1.3, ct + 0.13, 0.45, 0.13, 12)
-        pbox("DECO", "oak_light", 36.6, 37.1, 1.0, 2.3, ct + 0.13, ct + 0.2)
+        if ph():
+            place("brass_pot_01", 38.0, 8.3, ct + 0.17)
+            place("brass_pan_01", 38.0, 9.6, ct + 0.17, "east")
+        else:
+            pcyl("DECO", "steel", 38.0, 8.3, ct + 0.21, 0.5, 0.35, 20)
+            pcyl("DECO", "black", 38.0, 9.6, ct + 0.21, 0.12, 0.42, 20)
+        if not ph():
+            for i in range(5):
+                pcyl("DECO", ["ceramic", "plastic_red", "steel", "plastic_green", "ceramic"][i], 31.7 + i * 0.35, 1.3, ct + 0.13, 0.45, 0.13, 12)
+            pbox("DECO", "oak_light", 36.6, 37.1, 1.0, 2.3, ct + 0.13, ct + 0.2)
     pbox("WALL", "kitchen_dado", 31.25, 39.25, 0.78, 0.82, ct + 0.13, 5.0)       # dado tiles (fixed)
     pbox("WALL", "kitchen_dado", 39.18, 39.22, 0.82, 12.5, ct + 0.13, 5.0)
     with item("chimney", "Chimney hood"):
@@ -967,6 +1090,15 @@ def build_furniture():
     for n, (u0, u1) in enumerate(((31.3, 32.9), (37.3, 39.2))):
         with item(f"upper_cab_{n + 1}", "Upper cabinet"):
             prbox("FURN", "kitchen_shutter", u0, u1, 0.84, 1.9, 5.0, 7.4, 0.02)
+    if ph():
+        top = ct + 0.13
+        place("vintage_electric_kettle", 32.0, 1.6, top, "west", "Kettle")
+        place("plastic_thermos", 32.7, 1.3, top, label="Flask")
+        place("wooden_cutting_board", 36.9, 1.7, top, "west", "Cutting board")
+        place("lemon", 36.8, 1.5, top + 0.04 / FT)
+        place("yellow_onion", 37.0, 1.9, top + 0.04 / FT)
+        place("tea_set_01", 38.5, 4.6, top, "west", "Tea set", scale=0.8)
+        place("small_lpg_tank", 38.3, 8.9, 0.35, "west", "LPG cylinder")
     with item("fridge", "Fridge"):
         prbox("FURN", "fridge", 31.3, 33.6, 3.0, 5.6, 0.0, 6.1, 0.08)
         pbox("DECO", "chrome", 33.6, 33.68, 5.2, 5.3, 2.5, 5.5)
@@ -978,8 +1110,16 @@ def build_furniture():
         prbox("FURN", "almirah", 0.8, 2.6, 0.8, 3.3, 0.0, 6.5, 0.03)
         pbox("DECO", "black", 2.6, 2.62, 2.03, 2.07, 0.3, 6.3)
         pbox("DECO", "chrome", 2.6, 2.68, 1.8, 1.9, 3.0, 3.6)
-    boxes_stack(1.0, 4.5, 2, 2, 2, (1.3, 1.5, 1.1))
-    for i in range(3):
+    if ph():
+        for i, (u, v, z, yw) in enumerate(((1.75, 5.2, 0, 0), (3.05, 5.2, 0, 4), (1.75, 6.95, 0, -3), (3.05, 6.95, 0, 2),
+                                         (1.75, 5.2, 0.34 / FT, 6), (3.05, 6.95, 0.34 / FT, -5), (2.4, 6.1, 0.68 / FT, 9))):
+            place("cardboard_box_01", u, v, z, "south", "Carton", yaw_extra=yw)
+        for i, (u, v, a) in enumerate(((6.3, 1.7, "plastic_crate_02"), (6.3, 3.4, "plastic_crate_01"), (6.3, 3.4, "plastic_crate_03"))):
+            place(a, u, v, 0.0 if i < 2 else 0.25 / FT, "south", "Plastic crate")
+        place("plastic_broom", 4.2, 12.1, 0.0, "west", "Broom", yaw_extra=8)
+    else:
+        boxes_stack(1.0, 4.5, 2, 2, 2, (1.3, 1.5, 1.1))
+    for i in range(0 if ph() else 3):
         with auto_item("crate", "Plastic crate"):
             pbox("FURN", ["plastic_blue", "plastic_green", "plastic_red"][i], 5.6 + i * 0.05, 6.9 + i * 0.05,
                  1.0 + i * 1.6, 2.4 + i * 1.6, 0.0, 1.0)
@@ -999,14 +1139,24 @@ def build_furniture():
         rack(u1 - 2.55, u1 - 0.05, 29.8, 35.8, 8.5, 6, "rack_blue")
         with auto_item("pallet", "Pallet with cartons"):
             pbox("FURN", "oak_light", u0 + 3.2, u1 - 3.2, 21.6, 25.0, 0.0, 0.45)
-            boxes_stack(u0 + 3.25, 21.65, 2, 2, 3, ((u1 - u0 - 6.5) / 2, 1.65, 1.2), 0.45)
+            if ph():
+                cu = (u0 + u1) / 2
+                for k, (du, dv, dz) in enumerate(((-0.65, 22.5, 0), (0.65, 22.5, 0), (-0.65, 24.2, 0), (0.65, 24.2, 0),
+                                                 (-0.65, 22.5, 1), (0.65, 24.2, 1), (0.0, 23.35, 2))):
+                    place("cardboard_box_01", cu + du, dv, 0.45 + dz * 0.34 / FT, "south", yaw_extra=(k * 7) % 11 - 5)
+            else:
+                boxes_stack(u0 + 3.25, 21.65, 2, 2, 3, ((u1 - u0 - 6.5) / 2, 1.65, 1.2), 0.45)
         led((u0 + u1) / 2, 26.0, 2.0)
         led((u0 + u1) / 2, 33.0, 2.0)
     with item("store3_desk", "Desk (Store 3)"):
         prbox("FURN", "oak_light", 26.0, 27.5, 35.0, 37.4, 2.4, 2.55, 0.02)
         pbox("FURN", "steel", 26.0, 26.1, 35.0, 37.4, 0, 2.4)
         pbox("FURN", "steel", 27.4, 27.5, 35.0, 37.4, 0, 2.4)
-    chair(26.8, 34.2, 0, 1, "black", "black")
+    chair(26.8, 34.2, 0, 1, "black", "black", asset="plastic_monobloc_chair_01")
+    if ph():
+        place("hand_truck", 13.0, 36.4, 0.0, "west", "Hand truck", yaw_extra=15)
+        place("barrel_03", 19.6, 36.6, 0.0, label="Drum")
+        place("plastic_container", 6.0, 36.3, 0.0, "west", "Storage box")
 
     # ---------------- Kitchen outside space, entrance, walk path, foot path ----
     with item("washing_machine", "Washing machine"):
@@ -1019,6 +1169,8 @@ def build_furniture():
         pbox("DECO", "black", 40.9, 42.3, 4.3, 5.7, 2.76, 2.765)
     with item("door_mat", "Door mat"):
         pbox("DECO", "rug", 37.0, 38.8, 17.3, 20.2, 0.03, 0.06)
+    if ph():
+        place("planter_box_01", 37.6, 37.6, 0.0, "north", "Planter box")
     for (u, v) in ((42.2, 14.0), (42.2, 20.2), (41.8, 1.8), (36.8, 22.2)):
         plant(u, v, 2.6, 0.6)
     for u in (4.5, 15.5, 25.5, 35.0):                                             # foot path planters
@@ -1239,6 +1391,28 @@ def make_objects():
         col_for("ITEMS").objects.link(e)
         parents[it] = e
 
+    for it, root in IMPORTS:                       # items made only of scanned models
+        if it not in parents:
+            e = bpy.data.objects.new(f"ITEM__{it}", None)
+            e.location = root.location.copy()
+            e.location.z = root.location.z
+            e["label"] = ITEMS[it]["label"]
+            e["layer"] = ITEMS[it]["layer"]
+            e["cat"] = "ITEM"
+            col_for("ITEMS").objects.link(e)
+            parents[it] = e
+    n_imp = 0
+    for it, root in IMPORTS:
+        e = parents[it]
+        root.parent = e
+        root.matrix_parent_inverse = Matrix.Translation(e.location).inverted()
+        for o in root.children_recursive:
+            if o.type == "MESH":
+                n_imp += 1
+                o.name = f"FURN__ph__{it}__{n_imp}"
+    if IMPORTS:
+        print("scanned models placed:", len(IMPORTS), "meshes:", n_imp, flush=True)
+
     for (cat, mat, it), p in G.parts.items():
         if not p["f"]:
             continue
@@ -1426,6 +1600,12 @@ def add_lights():
     d = Vector((1.0, 0.35, -0.75)).normalized()  # light travels toward east-north, downward
     so.rotation_euler = Vector((0, 0, -1)).rotation_difference(d).to_euler()
     col.objects.link(so)
+    if ph() and ARGS["hdri"] != "none":
+        # real sky photo: sun from the west-south-west (road side), late afternoon
+        m = ph()
+        m.set_world_hdri(ARGS["hdri"], 1.0, m.hdri_rotation_for_sun(ARGS["hdri"], 250.0))
+        so.hide_render = True          # the HDRI carries the sun
+        return
     # world: soft sky gradient
     wd = bpy.data.worlds.new("Sky")
     bpy.context.scene.world = wd
@@ -1552,12 +1732,22 @@ def main():
     make_objects()
     print("objects:", len(bpy.data.objects), "faces:", sum(len(p["f"]) for p in G.parts.values()), flush=True)
     if ARGS["glb"]:
-        for o in bpy.data.objects:
-            o.select_set(True)
+        web = os.path.join(os.path.dirname(ARGS["tex"]), "tex_web")
+        swapped = []
+        if os.path.isdir(web):                      # 1k copies of our textures for the web model
+            for img in bpy.data.images:
+                fp = bpy.path.abspath(img.filepath)
+                if fp.startswith(ARGS["tex"]) and os.path.exists(os.path.join(web, os.path.basename(fp))):
+                    swapped.append((img, img.filepath))
+                    img.filepath = os.path.join(web, os.path.basename(fp))
+                    img.reload()
         bpy.ops.export_scene.gltf(filepath=ARGS["glb"], export_format="GLB", use_selection=False,
                                   export_lights=False, export_cameras=False, export_image_format="AUTO",
                                   export_apply=True, export_yup=True, export_extras=True)
         print("glb:", ARGS["glb"], os.path.getsize(ARGS["glb"]) // 1024, "KB", flush=True)
+        for img, fp in swapped:
+            img.filepath = fp
+            img.reload()
     add_lights()
     if ARGS["bake"] != "0":
         bake_lightmaps(os.path.dirname(ARGS["glb"]) if ARGS["glb"] else ARGS["out"], int(ARGS["bake"]))

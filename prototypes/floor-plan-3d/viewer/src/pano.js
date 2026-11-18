@@ -42,6 +42,7 @@ const RADIUS = 50;            // sphere radius (m); only has to sit between the 
  *   sightClear  (a, b) -> true when the straight segment between two world points hits no wall / door / glass
  *   floorY      (world point) -> floor height (m) under that point, or null          [optional, default 0]
  *   onChange    (spot) called whenever the current pano changes                      [optional]
+ *   onLost      (id) called when a pano that probed fine then fails to load (dropped) [optional]
  *   maxSize     cap for the texture width in px (default: GPU limit, 4096 on phones) [optional]
  *
  * controller
@@ -55,14 +56,14 @@ const RADIUS = 50;            // sphere radius (m); only has to sit between the 
  *   exit()           stop drawing / listening; returns { id, feet, yaw, pitch } for putting the walker there
  *   goto(id)         Promise<bool>  cross-fade to another pano, heading preserved
  *   step(sign)       go to the hotspot nearest the view centre (+1) or directly behind (-1)
- *   nearest(u, v)    id of the closest available pano to a plan point, or null
+ *   nearest(u, v)    id of the closest available pano to a plan point (in sight of it if possible), or null
  *   links(id)        ids reachable from `id` (within REACH_FT and line of sight clear), nearest first
  *   update(dt)       per-frame: keys, fade, hotspot labels
  *   render()         draw the panorama (plain renderer.render of a private scene: no tone mapping, no post)
  *   resize()         call after the window size changes
  *   drawMap(g, mx, my)  draw the pano dots on the minimap (mx(u), my(v) give canvas pixels)
  */
-export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY, onChange, maxSize }) {
+export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY, onChange, onLost, maxSize }) {
   const coarse = matchMedia('(pointer: coarse)').matches;
   const texLimit = Math.min(renderer.capabilities.maxTextureSize, maxSize || (coarse ? 4096 : 8192));
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
@@ -144,7 +145,7 @@ export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY
         renderer.initTexture(t);                      // upload now, so the step itself does not hitch
         return t;
       })());
-      cache.get(s.id).catch(() => { cache.delete(s.id); s.available = false; rebuildHotspots(); });
+      cache.get(s.id).catch(() => { cache.delete(s.id); s.available = false; rebuildHotspots(); onLost?.(s.id); });
     }
     return cache.get(s.id);
   }
@@ -190,11 +191,15 @@ export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY
     return spots.filter((b) => b !== a && b.available && reachable(a, b))
       .sort((p, q) => Math.hypot(p.u - a.u, p.v - a.v) - Math.hypot(q.u - a.u, q.v - a.v)).map((b) => b.id);
   }
+  // Closest available pano to a plan point, preferring one that can be seen from there (eye height), so the
+  // kitchen does not jump to the bedroom's photo through the wall when the hall's is only a little further away.
   function nearest(u, v) {
+    const from = toWorld(u, v, plan.panos?.[0]?.eye[2] ?? 5.2);
     let best = null, bd = Infinity;
     for (const s of spots) {
-      const d = Math.hypot(s.u - u, s.v - v);
-      if (s.available && d < bd) { best = s; bd = d; }
+      if (!s.available) continue;
+      const d = Math.hypot(s.u - u, s.v - v) + (sightClear(from, s.eye) ? 0 : 1000);
+      if (d < bd) { best = s; bd = d; }
     }
     return best ? best.id : null;
   }
@@ -250,9 +255,13 @@ export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY
   }
   const right = () => new THREE.Vector3(Math.cos(state.yaw), 0, -Math.sin(state.yaw));
   function placeLabels() {
+    const placed = [];          // label boxes already shown; hotspots come nearest first, so the nearer label wins
     for (const h of hotspots) {
       const c = fade ? null : project(h.mesh.position);
-      h.el.style.display = c ? 'block' : 'none';
+      const wHalf = (h.el.offsetWidth || 100) / 2 + 4, top = c && c.y - 14 - 26;
+      const clash = c && placed.some((b) => Math.abs(b.x - c.x) < b.w + wHalf && Math.abs(b.top - top) < 26);
+      if (c && !clash) placed.push({ x: c.x, w: wHalf, top });
+      h.el.style.display = c && !clash ? 'block' : 'none';     // the ring itself stays visible and tappable
       if (c) h.el.style.transform = `translate(-50%, -100%) translate(${c.x.toFixed(1)}px, ${(c.y - 14).toFixed(1)}px)`;
       h.mesh.visible = !fade;
       h.mesh.material.opacity = h === hover ? 1 : 0.85;

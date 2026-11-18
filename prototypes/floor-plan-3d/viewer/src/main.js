@@ -318,7 +318,8 @@ async function main() {
   const pano = createPano({ renderer, canvas, plan, toWorld, sightClear,
     floorY: (p) => floorAt(p, 0),
     maxSize: Number(params.get('panomax')) || undefined,
-    onChange: (spot) => { feet.copy(spot.floor); vy = 0; lastRoom = ''; } });
+    onChange: (spot) => { feet.copy(spot.floor); vy = 0; lastRoom = ''; },
+    onLost: (id) => $('goto').querySelector(`option[value="p:${id}"]`)?.remove() });
   const panoIds = await pano.ready;        // ids whose image exists right now ([] -> no Photo button at all)
 
   function tryMove(delta) {
