@@ -3,6 +3,7 @@
 // three.js: x = -v*FT, z = u*FT, y = up (metres).  North = -z, East = +x.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -92,7 +93,7 @@ async function main() {
 
   // ------------------------------------------------------------- model -----
   const colliders = [], floors = [], hideInOverview = [], meshes = [];
-  const loader = new GLTFLoader();
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);   // tools/optimize_glb.sh compresses meshes
   // Hosts that will not serve .glb get the same bytes as base64 text (<meta name="model" content="model.glb.b64.txt">).
   const modelUrl = document.querySelector('meta[name="model"]')?.content || 'model.glb';
   let gltf;

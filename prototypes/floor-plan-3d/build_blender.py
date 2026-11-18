@@ -986,7 +986,7 @@ def build_furniture():
             pcyl("LIGHT", "lamp_shade", 16.5, (a + b) / 2, top + 0.8, 0.8, 0.45, 18, 0.3)
     if ph():
         place("throw_pillows_01", 17.55, 6.6, 2.0, "south", "Cushions (bed)")
-        place("mid_century_lounge_chair", 25.2, 10.4, 0.0, "east", "Lounge chair", yaw_extra=-20)
+        place("mid_century_lounge_chair", 20.4, 10.8, 0.0, "east", "Lounge chair", yaw_extra=-25)
         place("potted_plant_02", 27.6, 11.6, 0.0, "south")
     with item("rug_bed", "Rug (bedroom)"):
         pbox("DECO", "rug", 21.5, 26.0, 3.2, 10.0, 0.03, 0.05)
@@ -1637,6 +1637,8 @@ def setup_render(res, samples):
     sc.cycles.device = "CPU"
     sc.cycles.samples = samples
     sc.cycles.use_denoising = True
+    sc.cycles.use_adaptive_sampling = True
+    sc.cycles.adaptive_threshold = 0.015
     try:
         sc.cycles.denoiser = "OPENIMAGEDENOISE"
     except Exception:
@@ -1735,17 +1737,34 @@ def main():
         web = os.path.join(os.path.dirname(ARGS["tex"]), "tex_web")
         swapped = []
         if os.path.isdir(web):                      # 1k copies of our textures for the web model
+            from PIL import Image as _PI
+            small = os.path.join(HERE, "build", "ph_web")
+            os.makedirs(small, exist_ok=True)
             for img in bpy.data.images:
                 fp = bpy.path.abspath(img.filepath)
+                if not fp or not os.path.exists(fp):
+                    continue
                 if fp.startswith(ARGS["tex"]) and os.path.exists(os.path.join(web, os.path.basename(fp))):
-                    swapped.append((img, img.filepath))
-                    img.filepath = os.path.join(web, os.path.basename(fp))
-                    img.reload()
+                    dst = os.path.join(web, os.path.basename(fp))
+                else:                               # scanned model maps -> 512 px JPEG for the web
+                    rel = os.path.relpath(fp, os.path.join(HERE, "build", "ph")).replace(os.sep, "_")
+                    im = _PI.open(fp)
+                    alpha = "A" in im.getbands() and im.getchannel("A").getextrema()[0] < 250
+                    dst = os.path.join(small, os.path.splitext(rel)[0] + (".png" if alpha else ".jpg"))
+                    if not os.path.exists(dst):
+                        im = im.convert("RGBA" if alpha else "RGB")
+                        if max(im.size) > 512:
+                            im = im.resize((512, 512 * im.size[1] // im.size[0]), _PI.LANCZOS)
+                        im.save(dst, **({} if alpha else {"quality": 82}))
+                swapped.append((img, img.filepath, img.file_format))
+                img.filepath = dst
+                img.reload()
         bpy.ops.export_scene.gltf(filepath=ARGS["glb"], export_format="GLB", use_selection=False,
                                   export_lights=False, export_cameras=False, export_image_format="AUTO",
-                                  export_apply=True, export_yup=True, export_extras=True)
+                                  export_apply=True, export_yup=True, export_extras=True,
+                                  export_draco_mesh_compression_enable=True, export_draco_mesh_compression_level=6)
         print("glb:", ARGS["glb"], os.path.getsize(ARGS["glb"]) // 1024, "KB", flush=True)
-        for img, fp in swapped:
+        for img, fp, ff in swapped:
             img.filepath = fp
             img.reload()
     add_lights()
