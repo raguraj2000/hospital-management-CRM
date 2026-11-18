@@ -94,15 +94,25 @@ async function main() {
   // ------------------------------------------------------------- model -----
   const colliders = [], floors = [], hideInOverview = [], meshes = [];
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);   // tools/optimize_glb.sh compresses meshes
-  // Hosts that will not serve .glb get the same bytes as base64 text (<meta name="model" content="model.glb.b64.txt">).
+  // Hosts that will not serve .glb get the same bytes as base64 text, optionally split into parts that each
+  // decode on their own: <meta name="model" content="model.glb.b64.0.txt,model.glb.b64.1.txt">.
   const modelUrl = document.querySelector('meta[name="model"]')?.content || 'model.glb';
   let gltf;
-  if (modelUrl.endsWith('.b64.txt')) {
-    $('prog').firstChild.style.width = '30%';
-    const b64 = (await (await fetch(modelUrl)).text()).trim();
-    const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    $('prog').firstChild.style.width = '80%';
-    gltf = await loader.parseAsync(bin.buffer, '');
+  if (modelUrl.includes('.b64')) {
+    const parts = modelUrl.split(',').map((s) => s.trim()).filter(Boolean);
+    let done = 0;
+    const bins = await Promise.all(parts.map(async (url) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`model part ${url}: HTTP ${r.status}`);
+      const s = atob((await r.text()).trim());
+      const bin = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) bin[i] = s.charCodeAt(i);
+      $('prog').firstChild.style.width = `${10 + (75 * ++done) / parts.length}%`;
+      return bin;
+    }));
+    const all = new Uint8Array(bins.reduce((n, b) => n + b.length, 0));
+    bins.reduce((o, b) => (all.set(b, o), o + b.length), 0);
+    gltf = await loader.parseAsync(all.buffer, '');
   } else {
     gltf = await loader.loadAsync(modelUrl, (e) => {
       if (e.total) $('prog').firstChild.style.width = `${(100 * e.loaded) / e.total}%`;
@@ -349,7 +359,7 @@ async function main() {
   const joyEl = $('joy');
   canvas.addEventListener('click', () => {
     if (mode === 'walk' && !editMode && !coarse && !document.pointerLockElement && canvas.requestPointerLock) {
-      try { canvas.requestPointerLock(); } catch { /* not allowed */ }
+      try { canvas.requestPointerLock()?.catch?.(() => {}); } catch { /* not allowed */ }
     }
   });
   document.addEventListener('mousemove', (e) => {

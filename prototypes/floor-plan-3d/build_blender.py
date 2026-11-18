@@ -14,12 +14,14 @@ Options:
     --bake N         bake GI lightmaps (viewer/lm_*.jpg) with N samples; 0 = skip (default)
     --panos LIST     render 360-degree equirect panoramas (ids from plan.PANOS, or "all") to viewer/pano/
     --pano_res WxH   panorama size (default 4096x2048)   --pano_samples N (default 96)
+    --skip_existing 1  leave panoramas / stills whose .jpg already exists
     --samples N      Cycles samples (default 96)
     --res WxH        render size (default 1600x900)
 """
 import math
 import os
 import sys
+import time
 from contextlib import contextmanager, nullcontext
 
 import bpy  # noqa: I001  (bpy must be imported before bmesh when used as a module)
@@ -39,7 +41,7 @@ def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
     a = {"tex": os.path.join(HERE, "build", "tex_final"), "ph": "1", "hdri": "rustig_koppie_puresky", "glb": None, "blend": None, "renders": "none",
          "out": os.path.join(HERE, "renders"), "samples": 96, "res": "1600x900", "bake": "0",
-         "panos": "none", "pano_res": "4096x2048", "pano_samples": 96}
+         "panos": "none", "pano_res": "4096x2048", "pano_samples": 96, "skip_existing": "0"}
     i = 0
     while i < len(argv):
         k = argv[i].lstrip("-")
@@ -1638,7 +1640,15 @@ def setup_render(res, samples):
     sc.cycles.samples = samples
     sc.cycles.use_denoising = True
     sc.cycles.use_adaptive_sampling = True
-    sc.cycles.adaptive_threshold = 0.015
+    # Tuned on a 1024x512 hall panorama: these halve the time of the old 128 spp / 0.015 / caustics-on setup
+    # with no visible difference after denoising (noise measure equal, image ~2% darker). Path guiding was
+    # 15% slower for no gain, so it stays off.
+    sc.cycles.adaptive_threshold = 0.02
+    sc.cycles.caustics_reflective = False
+    sc.cycles.caustics_refractive = False
+    sc.cycles.blur_glossy = 1.0
+    sc.cycles.sample_clamp_indirect = 10.0
+    sc.render.use_persistent_data = True          # keep BVH and textures between panoramas / stills
     try:
         sc.cycles.denoiser = "OPENIMAGEDENOISE"
     except Exception:
@@ -1783,13 +1793,24 @@ def main():
             if eye is None and ":" in pid:      # ad-hoc "name:u:v:z"
                 pid, *xyz = pid.split(":")
                 eye = [float(x) for x in xyz]
-            render_pano(pid, eye, pano_dir if pid in allp else ARGS["out"], ARGS["pano_res"], ARGS["pano_samples"])
+            dst = pano_dir if pid in allp else ARGS["out"]
+            if ARGS["skip_existing"] == "1" and os.path.exists(os.path.join(dst, pid + ".jpg")):
+                print("pano skip", pid, flush=True)
+                continue
+            t0 = time.time()
+            render_pano(pid, eye, dst, ARGS["pano_res"], ARGS["pano_samples"])
+            print(f"pano time {pid} {time.time() - t0:.0f}s", flush=True)
     if ARGS["renders"] != "none":
         os.makedirs(ARGS["out"], exist_ok=True)
         setup_render(ARGS["res"], ARGS["samples"])
         names = list(CAMS) if ARGS["renders"] == "all" else ARGS["renders"].split(",")
         for n in names:
+            if ARGS["skip_existing"] == "1" and os.path.exists(os.path.join(ARGS["out"], n + ".jpg")):
+                print("render skip", n, flush=True)
+                continue
+            t0 = time.time()
             render_cam(n, ARGS["out"], ARGS["res"])
+            print(f"render time {n} {time.time() - t0:.0f}s", flush=True)
 
 
 main()

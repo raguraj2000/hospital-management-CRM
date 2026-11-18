@@ -191,7 +191,7 @@ PANOS = [
     ("entrance",    39.5,  17.0,  "Entrance",               "entrance"),
     ("hall_south",  31.0,  17.0,  "Main Hall - door end",   "main_hall"),
     ("hall_mid",    19.0,  17.0,  "Main Hall - dining",     "main_hall"),
-    ("hall_living", 16.6,  17.0,  "Main Hall - living",     "main_hall"),
+    ("hall_living", 8.8,   17.0,  "Main Hall - living",     "main_hall"),
     ("bedroom",     25.5,  7.0,   "Master Bedroom",         "master_bedroom"),
     ("kitchen",     34.5,  7.0,   "Kitchen",                "kitchen"),
     ("master_bath", 12.6,  2.3,   "Master Bath",            "master_bath"),
