@@ -166,7 +166,7 @@ CEIL_HOLES = [(32.25, 35.25, 27.375, 37.5)]
 VIEWS = {
     "entrance":    {"label": "Entrance (main door)", "eye": (42.5, 13.6, 5.2), "look": (36.0, 19.0, 4.5), "lens": 18},
     "hall":        {"label": "Main Hall", "eye": (33.8, 14.2, 5.2), "look": (8.0, 18.5, 3.8), "lens": 18},
-    "living":      {"label": "Living / TV", "eye": (20.6, 19.4, 5.0), "look": (7.0, 15.8, 3.3), "lens": 18},
+    "living":      {"label": "Living / TV", "eye": (20.8, 14.6, 5.0), "look": (7.0, 18.0, 3.4), "lens": 18},
     "bedroom":     {"label": "Master Bedroom", "eye": (28.0, 11.5, 5.3), "look": (16.5, 4.0, 2.5), "lens": 16},
     "master_bath": {"label": "Master Bath", "eye": (13.6, 2.0, 5.2), "look": (12.8, 12.5, 3.2), "lens": 14},
     "kitchen":     {"label": "Kitchen", "eye": (34.2, 11.8, 5.2), "look": (37.5, 1.0, 3.0), "lens": 16},

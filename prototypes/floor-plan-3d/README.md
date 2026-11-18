@@ -34,7 +34,7 @@ Then open `http://localhost:8090`. To host it, copy the `viewer/` folder to any 
 * **Edit**: tap any object (furniture, a false ceiling, a pipe run, a conduit circuit) to select it. Drag the arrows to move it, or use Rotate 90°, Remove and Put back. Restore all undoes everything. Changes are saved in the browser on that device, and Copy layout puts them on the clipboard as JSON.
 * **Layers**: turn Furniture, False ceiling, Water lines and Electric lines on or off. Turning on a services layer also turns on X-ray walls, because those lines are concealed.
 * **Go to…**: jumps to a named viewpoint or a room. **HQ** turns on ambient occlusion and sun shadows (on by default on desktop, off on phones).
-* URL options: `?view=kitchen`, `?room=store2`, `?mode=overview`, `?mode=walk`, `?hq=0`, `?pano=hall_mid` (with optional `&heading=90&pitch=-10&fov=65`; heading is degrees clockwise from north), `?still=4` (render 4 frames and stop, for screenshots).
+* URL options: `?view=kitchen`, `?room=store2`, `?mode=overview`, `?mode=walk`, `?hq=0`, `?pano=hall_mid` (with optional `&heading=90&pitch=-10&fov=65`; heading is degrees clockwise from north), `?still=4` (render 4 frames and stop, for screenshots), `?debug=lm` or `?debug=albedo` (show only the baked light or only the textures on walls, floors and ceilings).
 
 ### Photo mode
 
@@ -93,6 +93,25 @@ Blender 4.4 runs as a Python module: `pip install bpy==4.4.0 "numpy<2" pillow` o
 `--bake N` bakes the lighting of the fixed shell (walls, floors, ceilings, false ceilings) into the three atlases with Cycles, then denoises them. The viewer multiplies them onto the surfaces; that is where the soft bounce light, the cove glow and the downlight pools come from. Furniture is left out of the bake so it stays movable, and gets a soft contact shadow that moves with it. `--bake_groups CEIL` re-bakes one atlas with the same layout, so the web model stays valid.
 
 To change the building, edit `plan.py`, then rebuild. The viewer reads `plan.json` for room names, sizes, photo spots and the minimap.
+
+## How the realism is made, and its limits
+
+* **Materials** are Poly Haven CC0 photo scans with colour, roughness and normal maps: oak and herringbone floors, vitrified and kota tiles, granite, kitchen dado tile, fabrics, concrete and asphalt. The painted walls and ceilings are a plaster scan tinted per room. Procedural textures (`textures.py`) fill the few slots with no fitting scan.
+* **Furniture and props**: 89 scanned models are placed, including the sofa, lounge chair, coffee and side tables, TV cabinet, dining chairs, pendant and desk lamps, brass and steel kitchenware, plants, books, frames, cartons, crates, barrels and a hand truck. Poly Haven has no CC0 scan of a modern bed, flat TV, curtains, rugs, bathroom fittings, modular kitchen or fridge, so those are modelled to size here and given scanned materials.
+* **Light**: an HDRI sky photo (`rustig_koppie_puresky`) supplies the sun and sky light. It is rotated so the sun, 28° high, comes from the west-south-west (the road side), as on a late afternoon. Indoors there are recessed downlights, LED coves in the false ceilings, pendants and lamps. Everything goes through the AgX view transform ("Medium High Contrast" look), as in photographic arch-viz.
+* **Walk mode** is real time, so it can't path-trace. The walls, floors and ceilings carry Cycles-baked light (direct and bounced, denoised). Furniture is lit live so it stays movable, with ambient occlusion, bloom and sun shadows on desktop. Expect "good game engine" realism.
+* **Photo mode** is the ultra-realistic part: each spot is a full Cycles path-traced 4096 × 2048 panorama, with 64 samples, adaptive sampling and OpenImageDenoise.
+* **Stills** are 3840 × 2160 Cycles renders from a level camera with lens shift (two-point perspective, as architectural photographers shoot), so walls and door frames stay vertical.
+
+Render cost on the 4-core CPU this was built on (no GPU):
+
+| Step | Time |
+|---|---|
+| Bake the walls, floors and ceilings | about 20 min (ceilings take 6× samples) |
+| One 4K interior panorama | about 33 min alone (48 min while sharing the CPU) |
+| One 4K still | similar to a panorama |
+
+An animated, cinematic walkthrough like the reference video needs 25–30 path-traced frames per second, so about 1,500–1,800 frames per minute of video. At these times that is several weeks of CPU rendering per minute. On a desktop GPU Cycles is typically tens of times faster, so the same scene could render a short walkthrough overnight. The pipeline is ready for that: `build_blender.py` would need a camera path and `sc.cycles.device = "GPU"`.
 
 ---
 
