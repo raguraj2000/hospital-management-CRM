@@ -1077,13 +1077,24 @@
   },
   {
    "id": "foot_path",
-   "label": "West Foot Path",
+   "label": "Foot Path - Stores 1 & 2",
    "eye": [
-    20.0,
+    11.0,
     40.6,
     5.2
    ],
    "file": "pano/foot_path.jpg",
+   "room": "west_path"
+  },
+  {
+   "id": "foot_path_s",
+   "label": "Foot Path - Store 3",
+   "eye": [
+    30.5,
+    40.6,
+    5.2
+   ],
+   "file": "pano/foot_path_s.jpg",
    "room": "west_path"
   },
   {

@@ -199,7 +199,12 @@ PANOS = [
     ("store1",      5.75,  31.0,  "Store 1",                "store1"),
     ("store2",      16.25, 31.0,  "Store 2",                "store2"),
     ("store3",      26.75, 30.0,  "Store 3",                "store3"),
-    ("foot_path",   20.0,  40.6,  "West Foot Path",         "west_path"),
+    # The stores open only onto the foot path, so its spots must see into every store or Photo mode cannot reach
+    # them: the one at u 11 sees through both shutters (stores 1 and 2), the one at u 30.5 through Store 3's door
+    # and round the corner to the walk path. (Spots link within 22 ft with a clear line; check with the viewer's
+    # pano.links() before moving one.)
+    ("foot_path",   11.0,  40.6,  "Foot Path - Stores 1 & 2", "west_path"),
+    ("foot_path_s", 30.5,  40.6,  "Foot Path - Store 3",    "west_path"),
     ("walk_path",   37.5,  28.0,  "Walk Path",              "walk_path"),
     ("kitchen_out", 41.5,  8.0,   "Kitchen Outside Space",  "kitchen_out"),
 ]

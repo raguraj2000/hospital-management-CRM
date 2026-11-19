@@ -14,7 +14,8 @@ viewer/src/       viewer source (Three.js + three-mesh-bvh, bundled with esbuild
 viewer/pano/      4K 360° panoramas for Photo mode, one <id>.jpg per photo spot in plan.py PANOS
 renders/          4K Cycles stills (3840 x 2160) and the plan overlay
 tools/            prep_textures.py, produce.sh (full production run), optimize_glb.sh (web model),
-                  make_artifact.py (static copy for text-only hosts), test_photo_mode.mjs, make_test_panos.py
+                  make_artifact.py (static copy for text-only hosts), test_photo_mode.mjs, make_test_panos.py,
+                  check_spot_links.mjs (every photo spot reachable by hotspots)
 shots.mjs         headless screenshots of the viewer (Playwright)
 ```
 
@@ -46,6 +47,7 @@ Then open `http://localhost:8090`. To host it, copy the `viewer/` folder to any 
   * `PANO_FLIP_X`: `true` if moving right in the image turns toward west (a mirrored image).
   * A single pano can override them through `PANO_OVERRIDES` in `plan.py`: `{"store1": {"yaw_offset_deg": 90, "flip_x": True}}`.
 * **Hotspots**: a ring is shown for every other available spot within 22 ft that has a clear line to it. The line is tested against the model's walls and glazing (not furniture, not the open door leaves), on the straight line between the two eye points and on parallel lines 1'3" to either side.
+* **Reachability**: every spot must be reachable from every other through hotspots. `node tools/check_spot_links.mjs` prints the links (as if every panorama existed) and fails when the spots split into separate groups, so run it after moving or adding a spot and before rendering it. The stores open only onto the foot path, so it has two spots: one at u 11 that sees through both shutters (stores 1 and 2) and one at u 30.5 that sees through Store 3's door and round the corner to the walk path.
 * **Switching**: Photo → Walk puts the walker on the photo spot with the same heading. Walk → Photo goes to the nearest spot, preferring one in sight (so the kitchen goes to the hall's spot, not to the bedroom's through the wall). In Photo mode the minimap and the Go-to list (group "Photo spots") move between spots, turning to each spot's opening view; the outgoing photo turns with the camera, so the two framed views dissolve into each other. Edit, Layers and HQ are hidden because the photos are fixed renders; those changes show in Walk mode.
 * **Display**: the photo is drawn as-is (sRGB, no tone mapping, no ambient-occlusion or bloom pass), with mipmaps and anisotropic filtering. Images larger than the device's texture limit (or 4096 px on phones) are scaled down first. At most 6 panoramas are kept in memory: the current one and its nearest neighbours, which are preloaded.
 * **Test images**: `python3 tools/make_test_panos.py` writes placeholder panoramas for six spots. It skips files that already exist; `--force` overwrites, `--all` covers every spot. Each has compass letters, a 15° grid and a yellow cross where each neighbouring spot's floor point should be, so the floor rings must land on the crosses.
