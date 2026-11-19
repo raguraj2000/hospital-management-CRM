@@ -213,7 +213,7 @@ PANO_OVERRIDES = {}  # e.g. {"store1": {"yaw_offset_deg": 90, "flip_x": True}}
 # minimap, first load), picked from the renders like a photographer's hero shot. Stepping between spots keeps the
 # heading. A spot without an entry keeps the heading on jumps too.
 PANO_LOOK = {"entrance": 320, "hall_south": 0, "hall_mid": 180, "hall_living": 180, "bedroom": 0, "kitchen": 135,
-             "master_bath": 270, "store_room": 90, "store1": 90, "store2": 90, "store3": 90}
+             "master_bath": 270, "store_room": 90, "store1": 90, "store2": 90, "store3": 90, "foot_path": 165}
 
 # Photo exposure in EV per room, for the Cycles panoramas and stills only. A photographer exposes a white
 # store under bare LED panels lower than a warm living room; every other room stays at 0 EV.
