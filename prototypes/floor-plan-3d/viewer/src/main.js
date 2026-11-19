@@ -252,12 +252,14 @@ async function main() {
   }
 
   // m: 'walk' | 'overview' | 'photo'.  For 'photo', vw may name the pano ({ pano: id }); default = nearest to the walker.
+  // { hero: true } also turns to that spot's opening view (plan.panos[].look) instead of keeping the heading.
   // Returns a promise for 'photo' (resolves once the panorama is on screen), otherwise undefined.
   function setMode(m, vw) {
     const id = m === 'photo' ? (pano.spots.find((s) => s.id === vw?.pano && s.available)?.id
       ?? pano.nearest(toPlan(feet).u, toPlan(feet).v)) : null;
     if (m === 'photo' && !id) m = 'walk';
-    if (m === 'photo' && mode === 'photo') return pano.goto(id);
+    const look = id && vw?.hero ? pano.heroLook(id) : null;
+    if (m === 'photo' && mode === 'photo') return pano.goto(id, look);
     if (mode === 'photo') pano.exit();      // the walker already stands at the pano point with its heading (see tick)
     mode = m;
     document.body.classList.toggle('photo', m === 'photo');
@@ -287,7 +289,7 @@ async function main() {
     }
     setHelp();
     if (m === 'photo') {
-      return pano.enter(id, { yaw, pitch }).then((ok) => { if (!ok && mode === 'photo') setMode('walk'); return ok; });
+      return pano.enter(id, look ?? { yaw, pitch }).then((ok) => { if (!ok && mode === 'photo') setMode('walk'); return ok; });
     }
   }
 
@@ -514,7 +516,7 @@ async function main() {
       .map((s) => `<option value="p:${s.id}">${s.label}</option>`).join('') + '</optgroup>' : '');
   sel.onchange = () => {
     const [t, id] = sel.value.split(':');
-    if (t === 'v') gotoView(id); else if (t === 'r') gotoRoom(id); else if (t === 'p') setMode('photo', { pano: id });
+    if (t === 'v') gotoView(id); else if (t === 'r') gotoRoom(id); else if (t === 'p') setMode('photo', { pano: id, hero: true });
     sel.value = '';
     sel.blur();
   };
@@ -602,7 +604,7 @@ async function main() {
     const u = ((e.clientX - r.left) / r.width * MS - PAD) / SC;
     const v = ((e.clientY - r.top) / r.height * MS - PAD) / SC;
     if (u < 0 || v < 0 || u > 43.5 || v > 43.5) return;
-    if (mode === 'photo') { pano.goto(pano.nearest(u, v)); return; }
+    if (mode === 'photo') { const id = pano.nearest(u, v); pano.goto(id, pano.heroLook(id)); return; }
     feet.copy(toWorld(u, v, 2));
     snapToFloor(true);
     setMode('walk');
@@ -704,7 +706,8 @@ async function main() {
   else gotoView(params.get('view') || plan.spawn);
   if (params.get('room')) gotoRoom(params.get('room'));
   // Photo mode is the default when panoramas exist, unless the URL asks for a walk view / room / mode.
-  // ?pano=<id> opens that pano; ?heading=<deg clockwise from north>&pitch=<deg>&fov=<deg> set the look (for screenshots).
+  // ?pano=<id> opens that pano at its opening view; ?heading=<deg clockwise from north>&pitch=<deg>&fov=<deg> set the
+  // look instead (for screenshots).
   const wantPhoto = params.has('pano') || params.get('mode') === 'photo'
     || !['view', 'room', 'mode'].some((k) => params.has(k));
   if (wantPhoto && panoIds.length) {
@@ -712,7 +715,8 @@ async function main() {
     if (params.has('pitch')) pitch = THREE.MathUtils.degToRad(Number(params.get('pitch')) || 0);
     if (params.has('fov')) pano.fov = Number(params.get('fov')) || 65;
     const first = [params.get('pano'), 'entrance'].find((id) => panoIds.includes(id)) || panoIds[0];
-    await setMode('photo', { pano: first });   // wait for the image so ?still=N frames are not black
+    const hero = !params.has('heading') && !params.has('pitch');
+    await setMode('photo', { pano: first, hero });   // wait for the image so ?still=N frames are not black
   }
   setHelp();
   tick();

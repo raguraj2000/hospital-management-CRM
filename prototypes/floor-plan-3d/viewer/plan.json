@@ -952,7 +952,8 @@
     5.2
    ],
    "file": "pano/entrance.jpg",
-   "room": "entrance"
+   "room": "entrance",
+   "look": 320
   },
   {
    "id": "hall_south",
@@ -963,7 +964,8 @@
     5.2
    ],
    "file": "pano/hall_south.jpg",
-   "room": "main_hall"
+   "room": "main_hall",
+   "look": 0
   },
   {
    "id": "hall_mid",
@@ -974,7 +976,8 @@
     5.2
    ],
    "file": "pano/hall_mid.jpg",
-   "room": "main_hall"
+   "room": "main_hall",
+   "look": 180
   },
   {
    "id": "hall_living",
@@ -985,7 +988,8 @@
     5.2
    ],
    "file": "pano/hall_living.jpg",
-   "room": "main_hall"
+   "room": "main_hall",
+   "look": 180
   },
   {
    "id": "bedroom",
@@ -996,7 +1000,8 @@
     5.2
    ],
    "file": "pano/bedroom.jpg",
-   "room": "master_bedroom"
+   "room": "master_bedroom",
+   "look": 0
   },
   {
    "id": "kitchen",
@@ -1007,7 +1012,8 @@
     5.2
    ],
    "file": "pano/kitchen.jpg",
-   "room": "kitchen"
+   "room": "kitchen",
+   "look": 135
   },
   {
    "id": "master_bath",
@@ -1018,7 +1024,8 @@
     5.2
    ],
    "file": "pano/master_bath.jpg",
-   "room": "master_bath"
+   "room": "master_bath",
+   "look": 270
   },
   {
    "id": "store_room",
@@ -1029,7 +1036,8 @@
     5.2
    ],
    "file": "pano/store_room.jpg",
-   "room": "store_room"
+   "room": "store_room",
+   "look": 90
   },
   {
    "id": "store1",
@@ -1040,7 +1048,8 @@
     5.2
    ],
    "file": "pano/store1.jpg",
-   "room": "store1"
+   "room": "store1",
+   "look": 90
   },
   {
    "id": "store2",
@@ -1051,7 +1060,8 @@
     5.2
    ],
    "file": "pano/store2.jpg",
-   "room": "store2"
+   "room": "store2",
+   "look": 90
   },
   {
    "id": "store3",
@@ -1062,7 +1072,8 @@
     5.2
    ],
    "file": "pano/store3.jpg",
-   "room": "store3"
+   "room": "store3",
+   "look": 90
   },
   {
    "id": "foot_path",

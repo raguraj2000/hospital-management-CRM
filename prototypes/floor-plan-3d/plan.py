@@ -204,6 +204,11 @@ PANOS = [
     ("kitchen_out", 41.5,  8.0,   "Kitchen Outside Space",  "kitchen_out"),
 ]
 PANO_OVERRIDES = {}  # e.g. {"store1": {"yaw_offset_deg": 90, "flip_x": True}}
+# Opening direction of each spot in degrees clockwise from north: the framed view a jump lands on (Go to, the
+# minimap, first load), picked from the renders like a photographer's hero shot. Stepping between spots keeps the
+# heading. A spot without an entry keeps the heading on jumps too.
+PANO_LOOK = {"entrance": 320, "hall_south": 0, "hall_mid": 180, "hall_living": 180, "bedroom": 0, "kitchen": 135,
+             "master_bath": 270, "store_room": 90, "store1": 90, "store2": 90, "store3": 90}
 
 # Photo exposure in EV per room, for the Cycles panoramas and stills only. A photographer exposes a white
 # store under bare LED panels lower than a warm living room; every other room stays at 0 EV.
@@ -221,6 +226,7 @@ def room_at(u, v):
 
 def panos_json():
     return [{"id": i, "label": label, "eye": (u, v, PANO_EYE), "file": f"pano/{i}.jpg", "room": room,
+             **({"look": PANO_LOOK[i]} if i in PANO_LOOK else {}),
              **PANO_OVERRIDES.get(i, {})} for i, u, v, label, room in PANOS]
 
 

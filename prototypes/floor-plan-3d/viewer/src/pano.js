@@ -30,6 +30,7 @@ const FOV_MIN = 35, FOV_MAX = 95, FOV_V_MAX = 112;
 const PITCH_MAX = 1.35;       // same limit as walk mode, so the look state carries over unchanged
 const MAX_GPU = 6;            // panoramas kept on the GPU: the current one + its nearest neighbours
 const RADIUS = 50;            // sphere radius (m); only has to sit between the camera's near and far planes
+const HERO_PITCH = -0.09;     // a spot's opening view looks ~5° down: more floor and furniture than ceiling
 
 /**
  * createPano(opts) -> controller.  Nothing is drawn or listened to until enter() is called.
@@ -37,7 +38,8 @@ const RADIUS = 50;            // sphere radius (m); only has to sit between the 
  * opts
  *   renderer    THREE.WebGLRenderer (shared with walk mode)
  *   canvas      the canvas that receives pointer / wheel input
- *   plan        plan.json; uses plan.panos = [{ id, label, eye: [u, v, z] ft, file, room, yaw_offset_deg?, flip_x? }]
+ *   plan        plan.json; uses plan.panos = [{ id, label, eye: [u, v, z] ft, file, room, look?, yaw_offset_deg?, flip_x? }]
+ *               (look = the spot's opening direction in degrees clockwise from north)
  *   toWorld     (u, v, z) feet -> THREE.Vector3 (three.js metres)
  *   sightClear  (a, b) -> true when the straight segment between two world points hits no wall / door / glass
  *   floorY      (world point) -> floor height (m) under that point, or null          [optional, default 0]
@@ -47,14 +49,15 @@ const RADIUS = 50;            // sphere radius (m); only has to sit between the 
  *
  * controller
  *   ready            Promise<string[]>   resolves with the ids whose image file exists (probed once at startup)
- *   spots            all panos: { id, label, room, u, v, eye, floor, available }
+ *   spots            all panos: { id, label, room, u, v, eye, floor, look, available }
  *   available        ids that can be shown right now (getter)
  *   active           true between enter() and exit()
  *   current          the spot being shown, or null
  *   yaw, pitch, fov  look state (radians, radians, degrees); yaw/pitch use walk mode's convention (yaw 0 = north)
  *   enter(id, look)  Promise<bool>  show pano `id` without a fade; look = { yaw, pitch } carried over from walk mode
  *   exit()           stop drawing / listening; returns { id, feet, yaw, pitch } for putting the walker there
- *   goto(id)         Promise<bool>  cross-fade to another pano, heading preserved
+ *   goto(id, look)   Promise<bool>  cross-fade to another pano; heading preserved unless look = { yaw, pitch } is given
+ *   heroLook(id)     { yaw, pitch } of the spot's opening direction (plan look), or null when it has none
  *   step(sign)       go to the hotspot nearest the view centre (+1) or directly behind (-1)
  *   nearest(u, v)    id of the closest available pano to a plan point (in sight of it if possible), or null
  *   links(id)        ids reachable from `id` (within REACH_FT and line of sight clear), nearest first
@@ -70,7 +73,7 @@ export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY
 
   const spots = (plan.panos || []).map((p) => {
     const eye = toWorld(...p.eye);
-    return { id: p.id, label: p.label, room: p.room, file: p.file, u: p.eye[0], v: p.eye[1], eye,
+    return { id: p.id, label: p.label, room: p.room, file: p.file, u: p.eye[0], v: p.eye[1], eye, look: p.look ?? null,
       floor: new THREE.Vector3(eye.x, 0, eye.z), available: false,
       yawOffset: p.yaw_offset_deg ?? PANO_YAW_OFFSET_DEG, flipX: p.flip_x ?? PANO_FLIP_X };
   });
@@ -332,7 +335,11 @@ export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY
     canvas.style.cursor = '';
     return current ? { id: current.id, feet: current.floor.clone(), yaw: state.yaw, pitch: state.pitch } : null;
   }
-  async function goto(id) {
+  function heroLook(id) {
+    const look = byId.get(id)?.look;
+    return look == null ? null : { yaw: wrap(-THREE.MathUtils.degToRad(look)), pitch: HERO_PITCH };
+  }
+  async function goto(id, look) {
     const spot = byId.get(id);
     if (!active || busy || fade || !spot?.available || spot === current) return false;
     busy = true;
@@ -345,6 +352,13 @@ export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY
     if (!tex || !active) return false;
     dress(ballNext, spot, tex);
     ballNext.material.opacity = 0;
+    if (look) {
+      // A jump turns to the new spot's framed view. Turn the outgoing photo with the camera, so it holds still
+      // on screen and the two framed views dissolve into each other instead of the old one swinging round.
+      ball.rotation.y += look.yaw - state.yaw;
+      state.yaw = wrap(look.yaw);
+      state.pitch = THREE.MathUtils.clamp(look.pitch, -PITCH_MAX, PITCH_MAX);
+    }
     fade = { t0: performance.now() };
     setCurrent(spot);
     return true;
@@ -456,7 +470,7 @@ export function createPano({ renderer, canvas, plan, toWorld, sightClear, floorY
     get fov() { return state.fov; }, set fov(v) { state.fov = THREE.MathUtils.clamp(v, FOV_MIN, FOV_MAX); },
     get transitioning() { return busy || !!fade; },
     get loaded() { return [...cache.keys()]; },
-    enter, exit, goto, step, nearest, links, update, render, resize: applyCamera, drawMap,
+    enter, exit, goto, heroLook, step, nearest, links, update, render, resize: applyCamera, drawMap,
     hotspots: () => hotspots.map((h) => ({ id: h.spot.id, screen: project(h.mesh.position) })),
   };
 }
