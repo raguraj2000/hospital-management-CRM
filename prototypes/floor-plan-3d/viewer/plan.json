@@ -1108,7 +1108,8 @@
     5.2
    ],
    "file": "pano/walk_path.jpg",
-   "room": "walk_path"
+   "room": "walk_path",
+   "look": 270
   },
   {
    "id": "kitchen_out",
