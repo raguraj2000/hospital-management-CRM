@@ -1,11 +1,20 @@
 // Photo-mode regression test (Playwright, software WebGL, ~10 min on 4 cores).
-// Needs the test panoramas (python3 tools/make_test_panos.py) and a server: node serve.mjs 8090. Run from the project dir:
+// Runs on the six placeholder panoramas in build/test_pano (python3 tools/make_test_panos.py), never on the real
+// renders: it starts its own server on port 8096 that serves that folder as /pano/. Run from the project dir:
 //   node tools/test_photo_mode.mjs     -> PASS/FAIL lines, screenshots in renders/web/photo/
 import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+const TEST_PANOS = ['entrance', 'hall_south', 'hall_mid', 'hall_living', 'bedroom', 'store2'];
+const missing = TEST_PANOS.filter((id) => !existsSync(`build/test_pano/${id}.jpg`));
+if (missing.length) { console.log(`missing test panoramas (${missing.join(', ')}): run python3 tools/make_test_panos.py`); process.exit(2); }
+const srv = spawn(process.execPath, ['serve.mjs', '8096'], { stdio: 'ignore', env: { ...process.env, PANO_DIR: 'build/test_pano' } });
+process.on('exit', () => srv.kill());
 process.on('unhandledRejection', (e) => { console.log('UNHANDLED', e); process.exit(2); });
+await new Promise((r) => setTimeout(r, 600));
 const { chromium } = createRequire(import.meta.url)('playwright');
 const out = 'renders/web/photo';
-const B = 'http://localhost:8090/index.html';
+const B = 'http://localhost:8096/index.html';
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 let fails = 0;
 const ok = (c, msg, extra = '') => { console.log(c ? '  PASS' : '  FAIL', msg, extra); if (!c) fails++; };
@@ -21,10 +30,14 @@ async function open(ctxOpts, url, tag) {
 }
 const st = (page) => page.evaluate(() => { const v = window.__viewer, p = v.pano; return { mode: v.mode, cur: p.current?.id, yaw: p.yaw, pitch: p.pitch, fov: p.fov,
   wyaw: v.look.yaw, feet: [v.feet.z / 0.3048, -v.feet.x / 0.3048, v.feet.y], links: p.current ? p.links(p.current.id) : [], hs: p.hotspots(), loaded: p.loaded,
+  hero: p.current ? p.heroLook(p.current.id) : null,
   avail: p.available, busy: p.transitioning, room: document.getElementById('room').textContent, size: document.getElementById('size').textContent,
   spot: document.getElementById('spot').textContent, photoBtn: !document.getElementById('bPhoto').hidden,
   hidden: ['bHQ', 'bEdit', 'bLayers'].map((b) => document.getElementById(b).hidden), help: document.getElementById('help').textContent,
   opts: [...document.querySelectorAll('#goto optgroup[label="Photo spots"] option')].map((o) => o.value) }; });
+// same direction (radians, any number of turns apart)
+const near = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 1e-6;
+const atHero = (s) => !!s.hero && near(s.yaw, s.hero.yaw) && near(s.pitch, s.hero.pitch);
 const settle = async (page) => { await page.waitForFunction(() => !window.__viewer.pano.transitioning, null, { timeout: 30000 }); await page.waitForTimeout(150); };
 const shot = (page, path) => page.screenshot({ path, timeout: 90000 }).catch((e) => console.log('  (screenshot skipped: headless GPU stall)', path));
 const D = { viewport: { width: 1280, height: 720 } };
@@ -35,6 +48,7 @@ for (const [name, opts] of [['desktop', D], ['mobile', M]]) {
   let page = await open(opts, `${B}?still=4`, name);
   let s = await st(page);
   ok(s.mode === 'photo' && s.cur === 'entrance', 'default start is Photo at entrance', JSON.stringify([s.mode, s.cur]));
+  ok(atHero(s), "default start faces the entrance's opening view (plan look)", JSON.stringify([s.yaw, s.pitch, s.hero]));
   ok(s.photoBtn && s.hidden.every(Boolean), 'Photo button shown; HQ/Edit/Layers hidden');
   ok(s.avail.length === 6 && s.opts.length === 6, 'only the 6 existing panos are offered', s.opts.join(','));
   ok(s.room === 'Entrance Space', 'HUD room from the pano', `${s.room} | ${s.size} | ${s.spot}`);
@@ -145,11 +159,15 @@ for (const [name, opts] of [['desktop', D], ['mobile', M]]) {
   await settle(page);
   s = await st(page);
   ok(s.mode === 'photo' && s.cur === 'store2', 'minimap tap goes to the nearest pano (store2), stays in Photo', `${s.mode} ${s.cur}`);
+  ok(atHero(s), "a minimap jump turns to that spot's opening view (store2: east, down the aisle)", JSON.stringify([s.yaw, s.pitch, s.hero]));
   ok(s.links.length === 0, 'store2 has no available neighbour (foot_path file is missing)', s.links.join(','));
   await shot(page, `${out}/${name}_store2_via_minimap.png`);
-  await page.selectOption('#goto', 'p:entrance'); await settle(page);
+  await page.selectOption('#goto', 'p:entrance'); await page.waitForTimeout(170);
+  await shot(page, `${out}/${name}_jump_midfade.png`);
+  await settle(page);
   s = await st(page);
   ok(s.cur === 'entrance' && s.mode === 'photo', 'Go to > Photo spots > Entrance', s.cur);
+  ok(atHero(s), "a Go-to jump turns to that spot's opening view", JSON.stringify([s.yaw, s.pitch, s.hero]));
   ok(s.loaded.length <= 6, 'at most 6 panoramas kept', s.loaded.join(','));
   const tex = await page.evaluate(() => window.__viewer.pano.loaded.length);
   await page.selectOption('#goto', 'r:kitchen'); await page.waitForTimeout(2500);

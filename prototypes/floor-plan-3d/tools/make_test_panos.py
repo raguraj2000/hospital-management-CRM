@@ -2,9 +2,12 @@
 
     python3 tools/make_test_panos.py                 # the default six ids, skipping files that already exist
     python3 tools/make_test_panos.py store1 kitchen  # chosen ids
-    python3 tools/make_test_panos.py --all --force   # every pano in plan.py, overwriting (this DESTROYS real renders)
+    python3 tools/make_test_panos.py --all --force   # every pano in plan.py, overwriting the placeholders
 
-Writes viewer/pano/<id>.jpg (equirectangular, 2:1) following the contract in plan.py / viewer/src/pano.js:
+Writes build/test_pano/<id>.jpg (equirectangular, 2:1), NOT viewer/pano: the real renders live there, and a
+placeholder in viewer/pano would also make `build_blender.py --skip_existing 1` skip that spot's real render.
+tools/test_photo_mode.mjs serves this folder as /pano/ (PANO_DIR, see serve.mjs). The images follow the contract
+in plan.py / viewer/src/pano.js:
 the image centre looks NORTH, moving right turns toward EAST, the left/right edges are SOUTH, the top is up.
 Each image has a 15-degree lat/long grid, compass letters at their longitudes, the pano id, its own colour, and a
 cross + id at the spot where every other pano's floor point should appear (the viewer's floor rings must land on them).
@@ -19,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import plan  # noqa: E402
 
-OUT = os.path.join(os.path.dirname(HERE), "viewer", "pano")
+OUT = os.path.join(os.path.dirname(HERE), "build", "test_pano")
 DEFAULT = ["entrance", "hall_south", "hall_mid", "hall_living", "bedroom", "store2"]
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 COLOURS = [(196, 86, 72), (70, 130, 180), (86, 160, 96), (214, 160, 60), (140, 100, 180), (60, 160, 160),
