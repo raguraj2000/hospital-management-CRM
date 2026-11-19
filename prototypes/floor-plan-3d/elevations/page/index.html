@@ -1,0 +1,231 @@
+<title>First Floor Elevations</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: a drafting-table page. Sheet tabs on top, the sheet itself big in a pannable frame, notes beside it. */
+  :root {
+    --paper: #f4f5f3; --sheet: #ffffff; --ink: #1c1f24; --muted: #5e656e; --rule: #d6d9dc;
+    --accent: #c4622d; --accent-ink: #ffffff; --well: #e9ebe8;
+    --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --paper: #15181b; --sheet: #ffffff; --ink: #e8eaec; --muted: #9ba3ab;
+      --rule: #2c3136; --accent: #e07a43; --accent-ink: #1a0f08; --well: #1d2125; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --paper: #15181b; --sheet: #ffffff; --ink: #e8eaec; --muted: #9ba3ab;
+    --rule: #2c3136; --accent: #e07a43; --accent-ink: #1a0f08; --well: #1d2125; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 var(--body);
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 20px 40px; }
+  .wrap { max-width: 1480px; margin: 0 auto; display: grid; gap: 18px; }
+  header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+  h1 { font: 700 clamp(26px, 4vw, 40px)/1.05 var(--display); letter-spacing: .01em; margin: 0; text-wrap: balance; }
+  .sub { color: var(--muted); margin: 4px 0 0; max-width: 70ch; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--well); }
+  .seg button { font: 600 14px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--ink);
+    background: transparent; border: 0; padding: 11px 14px; cursor: pointer; min-height: 40px; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .seg button:focus-visible, .zoom button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .seg small { display: block; font: 400 11px/1.2 var(--body); letter-spacing: 0; text-transform: none; opacity: .8; margin-top: 3px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+  @media (max-width: 980px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .frame { position: relative; background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  .view { overflow: auto; cursor: grab; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .view.zoomed { max-height: 78vh; }
+  .view.drag { cursor: grabbing; }
+  .view img { display: block; width: 100%; max-width: none; height: auto; user-select: none; -webkit-user-drag: none; }
+  .zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; }
+  .zoom button { font: 500 13px/1 var(--mono); min-width: 44px; min-height: 40px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #c9cdd1; background: rgba(255,255,255,.92); color: #1c1f24; }
+  @media (max-width: 640px) { .zoom { position: static; justify-content: flex-end; padding: 8px; border-top: 1px solid #e3e5e7; } }
+  .zoom button[aria-pressed="true"] { background: #1c1f24; color: #fff; border-color: #1c1f24; }
+  .cap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; color: var(--muted);
+    font-size: 13px; margin-top: 8px; }
+  .cap code, aside code { font: 12.5px var(--mono); }
+  aside { display: grid; gap: 14px; min-width: 0; }
+  .card { border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; background: var(--paper); }
+  .card h2 { font: 600 13px/1.2 var(--display); letter-spacing: .1em; text-transform: uppercase; margin: 0 0 8px; color: var(--muted); }
+  .card p { margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  td { padding: 5px 0; border-top: 1px solid var(--rule); vertical-align: top; }
+  td:last-child { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 10px; }
+  tr:first-child td { border-top: 0; }
+  .tags { display: grid; gap: 6px; font-size: 13.5px; }
+  .tags div { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; }
+  .tags b { font: 600 13px var(--mono); color: var(--accent); }
+  .thumbs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 640px) { .thumbs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .thumbs button { padding: 0; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--sheet);
+    cursor: pointer; text-align: left; color: #1c1f24; }
+  .thumbs button[aria-current="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .thumbs img { display: block; width: 100%; aspect-ratio: 4810 / 3404; object-fit: cover; }
+  .thumbs span { display: block; font: 600 12px var(--display); letter-spacing: .08em; text-transform: uppercase; padding: 6px 8px;
+    border-top: 1px solid #e3e5e7; }
+  @media (prefers-reduced-motion: no-preference) { .view img { transition: opacity .15s; } }
+  .loading img { opacity: .55; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>First Floor Elevations</h1>
+      <p class="sub">The four outer faces of First_Floor_2D_Plan_v5, drawn from the same 3D model as the walkthrough.
+        Openings and widths are from the plan; heights are assumed (listed on the right).</p>
+    </div>
+    <div class="bar">
+      <div class="seg" role="group" aria-label="Face">
+        <button id="f-south" data-face="south">South<small>main entrance</small></button>
+        <button id="f-west" data-face="west">West<small>road side</small></button>
+        <button id="f-north" data-face="north">North<small>rear</small></button>
+        <button id="f-east" data-face="east">East<small>side</small></button>
+      </div>
+      <div class="seg" role="group" aria-label="Sheet">
+        <button id="m-drawing" data-mode="drawing">Drawing</button>
+        <button id="m-render" data-mode="render">Render</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div>
+      <div class="frame">
+        <div class="view" id="view" tabindex="0" aria-label="Elevation sheet, drag or scroll to pan">
+          <img id="sheet" alt="">
+        </div>
+        <div class="zoom" role="group" aria-label="Zoom">
+          <button id="z1" data-z="1">Fit</button>
+          <button id="z2" data-z="2">2×</button>
+          <button id="z4" data-z="4">4×</button>
+        </div>
+      </div>
+      <div class="cap"><span id="caption"></span><span>Double-click to zoom there · drag to pan</span></div>
+    </div>
+
+    <aside>
+      <div class="card">
+        <h2>Openings on this face</h2>
+        <div class="tags" id="tags"></div>
+      </div>
+      <div class="card">
+        <h2>Levels (from first-floor FFL)</h2>
+        <table>
+          <tr><td>Stair head room top (2nd floor not shown)</td><td>+19'-0"</td></tr>
+          <tr><td>Roof slab top / 2nd floor FFL</td><td>+10'-6"</td></tr>
+          <tr><td>Ceiling</td><td>+10'-0"</td></tr>
+          <tr><td>Rolling-shutter head</td><td>+8'-0"</td></tr>
+          <tr><td>Door / window head</td><td>+7'-0"</td></tr>
+          <tr><td>Ventilator sill</td><td>+5'-0"</td></tr>
+          <tr><td>Parapet top · kitchen window sill</td><td>+3'-6"</td></tr>
+          <tr><td>Window sill</td><td>+3'-0"</td></tr>
+          <tr><td>First floor FFL</td><td>±0'-0"</td></tr>
+          <tr><td>Ground level</td><td>−10'-6"</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h2>Assumed, not on the PDF</h2>
+        <p>The plan gives positions and widths only. Every height above is a working assumption, set in one place
+          (<code>plan.py</code>) so the sheets, renders and walkthrough change together.</p>
+        <p>The ground floor and the stair head room are context, not drawn from the plan. The upper storey is left off.</p>
+      </div>
+      <div class="card">
+        <h2>Files in the repo</h2>
+        <p><code>prototypes/floor-plan-3d/elevations/out/</code>: the four sheets as PNG, the renders as JPG and
+          <code>first_floor_elevations.pdf</code> (A3 landscape, one sheet per page).</p>
+      </div>
+    </aside>
+  </main>
+
+  <div class="thumbs" id="thumbs"></div>
+</div>
+
+<script>
+const FACES = {
+  south: { name: 'South elevation', note: 'main entrance side, looking north', tags: [
+    ['D1', 'Main door 3\'-6" × 7\'-0", hall (behind the 3\'-6" parapet)'],
+    ['W1', 'Kitchen window 3\'-0" × 3\'-6", sill +3\'-6"']] },
+  west: { name: 'West elevation', note: 'road side, looking east', tags: [
+    ['RS1', 'Store 1 rolling shutter 7\'-0" × 8\'-0"'],
+    ['RS2', 'Store 2 rolling shutter 7\'-0" × 8\'-0"'],
+    ['D1', 'Store 3 door 3\'-0" × 7\'-0"']] },
+  north: { name: 'North elevation', note: 'rear, looking south', tags: [
+    ['W1', 'Store room window 5\'-0" × 4\'-0"'],
+    ['V1', 'Store-room bath ventilator 2\'-0" × 2\'-0"'],
+    ['W2', 'Store 1 window 6\'-0" × 4\'-0"']] },
+  east: { name: 'East elevation', note: 'side, looking west', tags: [
+    ['W1', 'Kitchen window 4\'-0" × 3\'-6", sill +3\'-6" (above the counter)'],
+    ['W2', 'Master bedroom window 6\'-0" × 4\'-0"'],
+    ['V1', 'Master bath ventilator 2\'-0" × 2\'-0"'],
+    ['W3', 'Store room window 4\'-0" × 4\'-0"']] },
+};
+const ORDER = ['south', 'west', 'north', 'east'];
+let face = 'south', mode = 'drawing', zoom = 1;
+const $ = (id) => document.getElementById(id);
+const view = $('view'), img = $('sheet');
+const src = (f, m, full) => `elev/${f}_${m}${full ? '' : '_s'}.${full && m === 'drawing' ? 'png' : 'jpg'}`;
+
+function show(keepView) {
+  const fx = view.scrollLeft / Math.max(1, view.scrollWidth), fy = view.scrollTop / Math.max(1, view.scrollHeight);
+  view.parentElement.classList.add('loading');
+  img.onload = () => {
+    view.parentElement.classList.remove('loading');
+    if (keepView) { view.scrollLeft = fx * view.scrollWidth; view.scrollTop = fy * view.scrollHeight; }
+  };
+  img.src = src(face, mode, zoom > 1);
+  img.style.width = (zoom * 100) + '%';
+  view.classList.toggle('zoomed', zoom > 1);
+  img.alt = `${FACES[face].name}, ${mode === 'drawing' ? 'dimensioned drawing' : 'path-traced render'}`;
+  for (const f of ORDER) $('f-' + f).setAttribute('aria-pressed', String(f === face));
+  for (const m of ['drawing', 'render']) $('m-' + m).setAttribute('aria-pressed', String(m === mode));
+  for (const z of [1, 2, 4]) $('z' + z).setAttribute('aria-pressed', String(z === zoom));
+  for (const b of $('thumbs').children) b.setAttribute('aria-current', String(b.dataset.face === face));
+  $('caption').textContent = `${FACES[face].name} · ${FACES[face].note} · ` +
+    (mode === 'drawing' ? 'orthographic line drawing, feet-inches' : 'Cycles path-traced, orthographic, 3840 px');
+  $('tags').innerHTML = FACES[face].tags.map(([t, d]) => `<div><b>${t}</b><span>${d}</span></div>`).join('');
+}
+function setZoom(z, cx, cy) {
+  const r = view.getBoundingClientRect();
+  const px = cx ?? r.width / 2, py = cy ?? r.height / 2;
+  const ax = (view.scrollLeft + px) / view.scrollWidth, ay = (view.scrollTop + py) / view.scrollHeight;
+  const needFull = z > 1 && zoom === 1;
+  zoom = z;
+  img.style.width = (z * 100) + '%';
+  view.classList.toggle('zoomed', z > 1);
+  if (needFull || z === 1) img.src = src(face, mode, z > 1);
+  view.scrollLeft = ax * view.scrollWidth - px;
+  view.scrollTop = ay * view.scrollHeight - py;
+  for (const k of [1, 2, 4]) $('z' + k).setAttribute('aria-pressed', String(k === zoom));
+}
+function route() {
+  const h = location.hash.replace('#', '');
+  const [f, m] = h.split('-');
+  if (ORDER.includes(f)) face = f;
+  if (m === 'render' || m === 'drawing') mode = m;
+  show(false);
+}
+for (const f of ORDER) $('f-' + f).onclick = () => { face = f; location.hash = mode === 'render' ? `${f}-render` : f; };
+for (const m of ['drawing', 'render']) $('m-' + m).onclick = () => { mode = m; location.hash = m === 'render' ? `${face}-render` : face; };
+for (const z of [1, 2, 4]) $('z' + z).onclick = () => setZoom(z);
+view.addEventListener('dblclick', (e) => {
+  const r = view.getBoundingClientRect();
+  setZoom(zoom === 1 ? 2 : zoom === 2 ? 4 : 1, e.clientX - r.left, e.clientY - r.top);
+});
+let drag = null;
+view.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'mouse') return;                 // touch pans natively
+  drag = { x: e.clientX, y: e.clientY, l: view.scrollLeft, t: view.scrollTop };
+  view.classList.add('drag');
+});
+addEventListener('pointermove', (e) => { if (drag) { view.scrollLeft = drag.l - (e.clientX - drag.x); view.scrollTop = drag.t - (e.clientY - drag.y); } });
+addEventListener('pointerup', () => { drag = null; view.classList.remove('drag'); });
+$('thumbs').innerHTML = ORDER.map((f) => `<button data-face="${f}" aria-label="${FACES[f].name}">` +
+  `<img src="elev/${f}_drawing_s.jpg" alt="" loading="lazy"><span>${f}</span></button>`).join('');
+for (const b of $('thumbs').children) b.onclick = () => { face = b.dataset.face; location.hash = mode === 'render' ? `${face}-render` : face; };
+addEventListener('hashchange', route);
+route();
+</script>
