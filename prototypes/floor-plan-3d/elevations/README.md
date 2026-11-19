@@ -48,3 +48,8 @@ python3 elevations/annotate.py
   the rolling shutters (horizontal slats every 3") and the glass (pale blue with glints).
 - **Tags and chains**: the openings come from `plan.W`, using the outer walls that face each way, and their sills
   and heads add the levels.
+
+## Page
+
+`page/index.html` is the elevations page (face tabs, Drawing / Render, zoom to 4×). `python3 elevations/page/build_assets.py`
+fills `page/elev/` with the full-size images and 2400 px previews; serve `elevations/page/` with any static server.
