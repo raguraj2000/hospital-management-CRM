@@ -335,7 +335,8 @@ def draw_render(face, frame):
     bg.alpha_composite(ph)
     out = bg.convert("RGB")
     d = ImageDraw.Draw(out)
-    text(d, (40 * s, H - 40 * s), f"{frame['title']} · first floor · Cycles path-traced, orthographic",
+    text(d, (40 * s, H - 40 * s), f"{frame['title']} · first floor · Cycles path-traced, orthographic · "
+         f"{frame.get('sun_note', 'late-afternoon sun from the west-south-west')}",
          font(34 * s, True), fill=(255, 255, 255), anchor="lb")
     out.save(os.path.join(OUT, f"{face}_render.jpg"), quality=92)
     print(face, "render", out.size)

@@ -57,11 +57,18 @@ SPAN, Z_LO, Z_HI = 51.5, P.GROUND - 1.5, 20.5
 CENTRE = 43.5 / 2
 DIST = 150.0                       # camera distance (ft); orthographic, so it only has to clear the building
 # looking direction in Blender world (X east, Y north) and the plan axis that runs across the image
+# sun: compass bearing it shines from. The stills use 250 (late afternoon, west-south-west), which leaves the north and
+# east faces in shade, so those two are lit the way presentation elevations are, by a sun that really reaches them at
+# Indian latitudes: a summer evening from the west-north-west, and the morning from the east-south-east.
 FACES = {
-    "south": {"dir": (0, 1, 0), "axis": "v", "title": "South elevation", "note": "main entrance side"},
-    "west": {"dir": (1, 0, 0), "axis": "u", "title": "West elevation", "note": "road side"},
-    "north": {"dir": (0, -1, 0), "axis": "v", "title": "North elevation", "note": "rear"},
-    "east": {"dir": (-1, 0, 0), "axis": "u", "title": "East elevation", "note": "side"},
+    "south": {"dir": (0, 1, 0), "axis": "v", "title": "South elevation", "note": "main entrance side",
+              "sun": 250, "sun_note": "late-afternoon sun from the west-south-west"},
+    "west": {"dir": (1, 0, 0), "axis": "u", "title": "West elevation", "note": "road side",
+             "sun": 250, "sun_note": "late-afternoon sun from the west-south-west"},
+    "north": {"dir": (0, -1, 0), "axis": "v", "title": "North elevation", "note": "rear",
+              "sun": 300, "sun_note": "summer-evening sun from the west-north-west"},
+    "east": {"dir": (-1, 0, 0), "axis": "u", "title": "East elevation", "note": "side",
+             "sun": 100, "sun_note": "morning sun from the east-south-east"},
 }
 
 
@@ -97,7 +104,8 @@ def camera(face, width):
         x1, _ = px(43.5, CENTRE, 0.0)
     _, y0 = px(CENTRE, CENTRE, 0.0)
     _, y1 = px(CENTRE, CENTRE, 10.0)
-    frame = {"face": face, "title": f["title"], "note": f["note"], "axis": f["axis"], "width": width,
+    frame = {"face": face, "title": f["title"], "note": f["note"], "sun": f["sun"], "sun_note": f["sun_note"],
+             "axis": f["axis"], "width": width,
              "height": height, "x_at_0": x0, "x_per_ft": (x1 - x0) / 43.5, "y_at_0": y0, "y_per_ft": (y1 - y0) / 10.0}
     return co, frame
 
@@ -246,6 +254,9 @@ def photo(face, frame, samples):
     vl = bpy.context.view_layer
     vl.use_pass_z = vl.use_pass_normal = vl.use_pass_diffuse_color = vl.use_pass_material_index = False
     sc.view_settings.exposure = 0.0
+    m = BB.ph()
+    if m and BB.ARGS["hdri"] != "none":                 # the sky photo carries the sun: turn it to this face's bearing
+        m.set_world_hdri(BB.ARGS["hdri"], 1.0, m.hdri_rotation_for_sun(BB.ARGS["hdri"], float(frame["sun"])))
     sc.render.film_transparent = True
     sc.render.image_settings.file_format = "PNG"
     sc.render.image_settings.color_mode = "RGBA"
