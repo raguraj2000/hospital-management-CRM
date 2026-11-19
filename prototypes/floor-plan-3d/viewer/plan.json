@@ -1096,7 +1096,8 @@
     5.2
    ],
    "file": "pano/foot_path_s.jpg",
-   "room": "west_path"
+   "room": "west_path",
+   "look": 35
   },
   {
    "id": "walk_path",
