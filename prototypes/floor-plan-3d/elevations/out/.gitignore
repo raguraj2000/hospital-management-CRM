@@ -1,0 +1,6 @@
+# intermediate passes (rebuilt by render_elevations.py)
+*_lines.png
+*_albedo.png
+*_mask.png
+*_matid.png
+*_photo.png

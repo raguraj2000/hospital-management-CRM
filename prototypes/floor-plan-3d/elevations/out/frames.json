@@ -1,0 +1,50 @@
+{
+ "south": {
+  "face": "south",
+  "title": "South elevation",
+  "note": "main entrance side",
+  "axis": "v",
+  "width": 3840,
+  "height": 2424,
+  "x_at_0": 3541.747512817383,
+  "x_per_ft": -74.56310469528725,
+  "y_at_0": 1528.8937175273895,
+  "y_per_ft": -74.56310484409332
+ },
+ "west": {
+  "face": "west",
+  "title": "West elevation",
+  "note": "road side",
+  "axis": "u",
+  "width": 3840,
+  "height": 2424,
+  "x_at_0": 298.25328826904297,
+  "x_per_ft": 74.56310666840652,
+  "y_at_0": 1528.8923449516296,
+  "y_per_ft": -74.56311206817627
+ },
+ "north": {
+  "face": "north",
+  "title": "North elevation",
+  "note": "rear",
+  "axis": "v",
+  "width": 3840,
+  "height": 2424,
+  "x_at_0": 298.25340270996094,
+  "x_per_ft": 74.56310403758081,
+  "y_at_0": 1528.8937175273895,
+  "y_per_ft": -74.56310484409332
+ },
+ "east": {
+  "face": "east",
+  "title": "East elevation",
+  "note": "side",
+  "axis": "u",
+  "width": 3840,
+  "height": 2424,
+  "x_at_0": 3541.746826171875,
+  "x_per_ft": -74.56310732611294,
+  "y_at_0": 1528.8923449516296,
+  "y_per_ft": -74.56311206817627
+ }
+}
